@@ -8,6 +8,7 @@ and metadata tagging.
 import os
 import re
 import time
+import threading
 import subprocess
 from typing import Optional, Dict, Any, Callable
 
@@ -197,32 +198,48 @@ def convert_media(
 
     proc = subprocess.Popen(
         cmd,
-        stdout=subprocess.PIPE,
+        stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
         creationflags=no_window
     )
+
+    stderr_chunks = []
+
+    def read_stderr():
+        try:
+            stderr_chunks.append(proc.stderr.read())
+        except Exception:
+            pass
+
+    reader_thread = threading.Thread(target=read_stderr, daemon=True)
+    reader_thread.start()
 
     try:
         while proc.poll() is None:
             if abort_event and abort_event.is_set():
                 proc.kill()
                 proc.wait()
+                reader_thread.join(timeout=1.0)
                 if os.path.exists(destination_path):
                     try:
                         os.remove(destination_path)
                     except Exception:
                         pass
                 raise KeyboardInterrupt("Conversion aborted by user.")
-            time.sleep(0.1)
+            time.sleep(0.05)
 
-        stdout, stderr = proc.communicate()
+        proc.wait()
+        reader_thread.join(timeout=2.0)
+        stderr = stderr_chunks[0] if stderr_chunks else b""
+
         if proc.returncode != 0:
-            raise subprocess.CalledProcessError(proc.returncode, cmd, output=stdout, stderr=stderr)
+            raise subprocess.CalledProcessError(proc.returncode, cmd, output=b"", stderr=stderr)
 
     except KeyboardInterrupt:
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+            reader_thread.join(timeout=1.0)
         if os.path.exists(destination_path):
             try:
                 os.remove(destination_path)
