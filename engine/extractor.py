@@ -256,6 +256,7 @@ def fetch_media_stream(
     audio_only: bool = False,
     fallback_title: Optional[str] = None,
     fallback_artist: Optional[str] = None,
+    abort_event: Optional[Any] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None
 ) -> Dict[str, Any]:
     """
@@ -332,6 +333,8 @@ def fetch_media_stream(
     report(0.15, "Connecting to stream provider and parsing media formats...")
 
     def progress_hook(d):
+        if abort_event and abort_event.is_set():
+            raise KeyboardInterrupt("Stream download aborted by user.")
         if progress_callback and d.get("status") == "downloading":
             total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
             downloaded = d.get("downloaded_bytes", 0)
@@ -362,6 +365,8 @@ def fetch_media_stream(
         last_error = None
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             for query_item in candidates:
+                if abort_event and abort_event.is_set():
+                    raise KeyboardInterrupt("Stream extraction aborted by user.")
                 try:
                     cand_info = ydl.extract_info(query_item, download=True)
                     if not cand_info:
@@ -373,6 +378,8 @@ def fetch_media_stream(
                         cand_info = sub_entries[0]
                     info = cand_info
                     break
+                except KeyboardInterrupt:
+                    raise
                 except Exception as ex:
                     last_error = ex
                     continue

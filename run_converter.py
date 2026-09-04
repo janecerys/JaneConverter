@@ -113,12 +113,16 @@ def process_conversion(
     save_metadata: bool = True,
     keep_temp: bool = False,
     check_updates: bool = True,
+    abort_event: Optional[Any] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None
 ) -> str:
     """
     Orchestrates downloading/extracting stream, embedding cover art, exporting credits,
     and transcoding into the desired format.
     """
+    if abort_event and abort_event.is_set():
+        raise KeyboardInterrupt("Conversion aborted by user.")
+
     if check_updates:
         update_engine(status_callback=lambda m: print(f"[AutoUpdate] {m}"))
 
@@ -155,6 +159,7 @@ def process_conversion(
             source=source,
             output_dir=work_dir,
             audio_only=is_audio_target,
+            abort_event=abort_event,
             progress_callback=report
         )
 
@@ -209,6 +214,7 @@ def process_conversion(
             use_nvenc=use_nvenc,
             metadata=metadata,
             cover_path=cover_path if save_cover_art else None,
+            abort_event=abort_event,
             progress_callback=report
         )
 
@@ -239,12 +245,16 @@ def process_playlist_conversion(
     save_metadata: bool = True,
     keep_temp: bool = False,
     check_updates: bool = True,
+    abort_event: Optional[Any] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None
 ) -> Dict[str, Any]:
     """
     Batch-downloads and transcodes selected playlist items into a dedicated playlist folder.
     Embeds cover art, writes credits files, and names output files strictly by playlist order.
     """
+    if abort_event and abort_event.is_set():
+        raise KeyboardInterrupt("Playlist conversion aborted by user.")
+
     if check_updates:
         update_engine(status_callback=lambda m: print(f"[AutoUpdate] {m}"))
 
@@ -296,6 +306,9 @@ def process_playlist_conversion(
     failed_files = []
 
     for i, entry in enumerate(selected_entries):
+        if abort_event and abort_event.is_set():
+            raise KeyboardInterrupt("Playlist conversion aborted by user.")
+
         idx = entry.get("index", i + 1)
         raw_title = entry.get("title", f"Track_{idx}")
         artist = entry.get("artist", "")
@@ -311,6 +324,8 @@ def process_playlist_conversion(
         slice_pct = 1.0 / total_items
 
         def item_progress_hook(sub_frac: float, sub_msg: str):
+            if abort_event and abort_event.is_set():
+                raise KeyboardInterrupt("Playlist conversion aborted by user.")
             scaled_pct = base_pct + (sub_frac * slice_pct)
             report_overall(scaled_pct, f"[{i+1}/{total_items}] #{idx}: {clean_title} ({int(sub_frac * 100)}%)")
 
@@ -327,6 +342,7 @@ def process_playlist_conversion(
                 audio_only=is_audio_target,
                 fallback_title=raw_title,
                 fallback_artist=artist,
+                abort_event=abort_event,
                 progress_callback=item_progress_hook
             )
 
@@ -378,13 +394,18 @@ def process_playlist_conversion(
                 use_nvenc=use_nvenc,
                 metadata=metadata,
                 cover_path=track_cover if save_cover_art else None,
+                abort_event=abort_event,
                 progress_callback=item_progress_hook
             )
 
             converted_files.append(result_path)
             print(f"[+] Converted: {os.path.basename(result_path)}")
 
+        except KeyboardInterrupt:
+            raise
         except Exception as e:
+            if abort_event and abort_event.is_set():
+                raise KeyboardInterrupt("Playlist conversion aborted by user.")
             failed_files.append({"index": idx, "title": raw_title, "error": str(e)})
             print(f"[!] Error converting track #{idx} '{raw_title}': {e}")
         finally:

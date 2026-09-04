@@ -7,6 +7,7 @@ and metadata tagging.
 
 import os
 import re
+import time
 import subprocess
 from typing import Optional, Dict, Any, Callable
 
@@ -157,6 +158,7 @@ def convert_media(
     use_nvenc: bool = True,
     metadata: Optional[Dict[str, str]] = None,
     cover_path: Optional[str] = None,
+    abort_event: Optional[Any] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None
 ) -> str:
     """
@@ -168,6 +170,9 @@ def convert_media(
     target_format = target_format.lower().strip(".")
     final_output_name = f"{output_filename}.{target_format}"
     destination_path = get_unique_target_path(output_dir, final_output_name)
+
+    if abort_event and abort_event.is_set():
+        raise KeyboardInterrupt("Conversion aborted by user.")
 
     def report(frac: float, msg: str):
         if progress_callback:
@@ -190,14 +195,41 @@ def convert_media(
 
     no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        creationflags=no_window
+    )
+
     try:
-        subprocess.run(
-            cmd,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            creationflags=no_window
-        )
+        while proc.poll() is None:
+            if abort_event and abort_event.is_set():
+                proc.kill()
+                proc.wait()
+                if os.path.exists(destination_path):
+                    try:
+                        os.remove(destination_path)
+                    except Exception:
+                        pass
+                raise KeyboardInterrupt("Conversion aborted by user.")
+            time.sleep(0.1)
+
+        stdout, stderr = proc.communicate()
+        if proc.returncode != 0:
+            raise subprocess.CalledProcessError(proc.returncode, cmd, output=stdout, stderr=stderr)
+
+    except KeyboardInterrupt:
+        if proc.poll() is None:
+            proc.kill()
+            proc.wait()
+        if os.path.exists(destination_path):
+            try:
+                os.remove(destination_path)
+            except Exception:
+                pass
+        raise
+
     except subprocess.CalledProcessError as e:
         # If NVENC failed, retry with CPU libx264
         if use_nvenc and target_format in ("mp4", "mkv", "mov"):
@@ -214,6 +246,7 @@ def convert_media(
                 use_nvenc=False,
                 metadata=metadata,
                 cover_path=cover_path,
+                abort_event=abort_event,
                 progress_callback=progress_callback
             )
         # If cover art embedding failed, retry without cover art
@@ -231,6 +264,7 @@ def convert_media(
                 use_nvenc=use_nvenc,
                 metadata=metadata,
                 cover_path=None,
+                abort_event=abort_event,
                 progress_callback=progress_callback
             )
         err_detail = e.stderr.decode("utf-8", errors="ignore")

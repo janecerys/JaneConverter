@@ -456,6 +456,7 @@ class JaneConverterApp(ctk.CTk):
         # State tracking
         self.log_queue = queue.Queue()
         self.is_converting = False
+        self.abort_requested = threading.Event()
         self.start_conversion_time = 0
         self.last_converted_file = None
         self.last_output_dir = DEFAULT_CONVERTED_DIR
@@ -578,7 +579,7 @@ class JaneConverterApp(ctk.CTk):
 
         self.tab_studio = self.tabview.add("⚡ Converter")
         self.tab_library = self.tabview.add("📁 Converted Library")
-        self.tab_console = self.tabview.add("💻 Diagnostic Log")
+        self.tab_console = self.tabview.add("💻 Console")
 
         self.tabview.set("⚡ Converter")
 
@@ -896,23 +897,10 @@ class JaneConverterApp(ctk.CTk):
         )
         self.status_label.pack(side="left")
 
-        self.play_btn = ctk.CTkButton(
-            stat_row,
-            text="▶ Play Result",
-            width=110,
-            height=26,
-            fg_color=THEME["card_inner"],
-            hover_color=THEME["cyan_hover"],
-            text_color=THEME["cyan"],
-            font=ctk.CTkFont(size=11, weight="bold"),
-            command=self._play_latest_file
-        )
-        self.play_btn.pack(side="right", padx=(6, 0))
-
         self.open_folder_btn = ctk.CTkButton(
             stat_row,
             text="📂 Open Folder",
-            width=110,
+            width=105,
             height=26,
             fg_color=THEME["card_inner"],
             hover_color=THEME["card_border_glow"],
@@ -921,6 +909,33 @@ class JaneConverterApp(ctk.CTk):
             command=self._open_output_folder
         )
         self.open_folder_btn.pack(side="right")
+
+        self.clear_logs_btn = ctk.CTkButton(
+            stat_row,
+            text="🧹 Clear Logs",
+            width=95,
+            height=26,
+            fg_color=THEME["card_inner"],
+            hover_color=THEME["card_border_glow"],
+            text_color=THEME["text_primary"],
+            font=ctk.CTkFont(size=11),
+            command=self._clear_logs
+        )
+        self.clear_logs_btn.pack(side="right", padx=(0, 6))
+
+        self.abort_btn = ctk.CTkButton(
+            stat_row,
+            text="🛑 Abort",
+            width=85,
+            height=26,
+            fg_color="#7f1d1d",
+            hover_color="#b91c1c",
+            text_color="#ffffff",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            state="disabled",
+            command=self._abort_conversion
+        )
+        self.abort_btn.pack(side="right", padx=(0, 6))
 
     # -------------------------------------------------------------
     # 4. TAB 2: LIBRARY / RECENT FILES
@@ -1138,7 +1153,7 @@ class JaneConverterApp(ctk.CTk):
                 pass
 
     # -------------------------------------------------------------
-    # 5. TAB 3: DIAGNOSTIC CONSOLE
+    # 5. TAB 3: CONSOLE
     # -------------------------------------------------------------
     def _build_console_tab(self):
         tab = self.tab_console
@@ -1150,7 +1165,7 @@ class JaneConverterApp(ctk.CTk):
 
         ctk.CTkLabel(
             c_top,
-            text="Diagnostic Output Stream",
+            text="Console",
             font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
             text_color=THEME["text_primary"]
         ).pack(side="left")
@@ -1211,6 +1226,11 @@ class JaneConverterApp(ctk.CTk):
             self.clipboard_append(txt)
 
     def _clear_logs(self):
+        while not self.log_queue.empty():
+            try:
+                self.log_queue.get_nowait()
+            except queue.Empty:
+                break
         self.log_box.delete("1.0", "end")
 
     # -------------------------------------------------------------
@@ -1459,6 +1479,8 @@ class JaneConverterApp(ctk.CTk):
             sample_rate = 48000
 
         self.is_converting = True
+        self.abort_requested.clear()
+        self.abort_btn.configure(state="normal")
         self.start_conversion_time = time.time()
         self.convert_btn.configure(state="disabled", text="⏳ CONVERTING PLAYLIST...")
         self.playlist_btn.configure(state="disabled")
@@ -1491,20 +1513,28 @@ class JaneConverterApp(ctk.CTk):
                 use_nvenc=use_nvenc,
                 save_cover_art=save_cover_art,
                 save_metadata=save_metadata,
+                abort_event=self.abort_requested,
                 progress_callback=lambda f, m: self.after(0, lambda: self._apply_progress(f, m))
             )
             self.last_converted_file = summary["converted_files"][0] if summary["converted_files"] else None
             self.after(0, lambda: self._on_playlist_conversion_success(summary))
+        except KeyboardInterrupt:
+            self.after(0, self._on_conversion_aborted)
         except Exception as e:
-            import traceback
-            traceback.print_exc()
-            self.after(0, lambda: self._on_conversion_error(str(e)))
+            if self.abort_requested.is_set() or "aborted" in str(e).lower():
+                self.after(0, self._on_conversion_aborted)
+            else:
+                import traceback
+                traceback.print_exc()
+                self.after(0, lambda: self._on_conversion_error(str(e)))
         finally:
             sys.stdout = old_stdout
             sys.stderr = old_stderr
 
     def _on_playlist_conversion_success(self, summary: Dict[str, Any]):
         self.is_converting = False
+        self.abort_requested.clear()
+        self.abort_btn.configure(state="disabled")
         self.convert_btn.configure(state="normal", text="✨ CONVERT MEDIA")
         self.playlist_btn.configure(state="normal")
         self.progress_bar.set(1.0)
@@ -1581,6 +1611,8 @@ class JaneConverterApp(ctk.CTk):
             sample_rate = 48000
 
         self.is_converting = True
+        self.abort_requested.clear()
+        self.abort_btn.configure(state="normal")
         self.start_conversion_time = time.time()
         self.convert_btn.configure(state="disabled", text="⏳ PROCESSING MEDIA...")
         self.playlist_btn.configure(state="disabled")
@@ -1612,14 +1644,20 @@ class JaneConverterApp(ctk.CTk):
                 use_nvenc=use_nvenc,
                 save_cover_art=save_cover_art,
                 save_metadata=save_metadata,
+                abort_event=self.abort_requested,
                 progress_callback=lambda f, m: self.after(0, lambda: self._apply_progress(f, m))
             )
             self.last_converted_file = result_path
             self.after(0, lambda: self._on_conversion_success(result_path))
+        except KeyboardInterrupt:
+            self.after(0, self._on_conversion_aborted)
         except Exception as e:
-            import traceback
-            traceback.print_exc()
-            self.after(0, lambda: self._on_conversion_error(str(e)))
+            if self.abort_requested.is_set() or "aborted" in str(e).lower():
+                self.after(0, self._on_conversion_aborted)
+            else:
+                import traceback
+                traceback.print_exc()
+                self.after(0, lambda: self._on_conversion_error(str(e)))
         finally:
             sys.stdout = old_stdout
             sys.stderr = old_stderr
@@ -1630,6 +1668,8 @@ class JaneConverterApp(ctk.CTk):
 
     def _on_conversion_success(self, result_path: str):
         self.is_converting = False
+        self.abort_requested.clear()
+        self.abort_btn.configure(state="disabled")
         self.convert_btn.configure(state="normal", text="✨ CONVERT MEDIA")
         self.playlist_btn.configure(state="normal")
         self.progress_bar.set(1.0)
@@ -1644,6 +1684,8 @@ class JaneConverterApp(ctk.CTk):
 
     def _on_conversion_error(self, err_msg: str):
         self.is_converting = False
+        self.abort_requested.clear()
+        self.abort_btn.configure(state="disabled")
         self.convert_btn.configure(state="normal", text="✨ CONVERT MEDIA")
         self.playlist_btn.configure(state="normal")
         self.progress_bar.set(0.0)
@@ -1651,6 +1693,24 @@ class JaneConverterApp(ctk.CTk):
 
         from tkinter import messagebox
         messagebox.showerror("Conversion Failed", f"An error occurred during transcode:\n{err_msg}")
+
+    def _abort_conversion(self):
+        if self.is_converting:
+            self.abort_requested.set()
+            self.status_label.configure(text="Aborting conversion...")
+            self.abort_btn.configure(state="disabled")
+            print("\n[!] Abort requested. Stopping pipeline...\n")
+
+    def _on_conversion_aborted(self):
+        self.is_converting = False
+        self.abort_requested.clear()
+        self.convert_btn.configure(state="normal", text="✨ CONVERT MEDIA")
+        self.playlist_btn.configure(state="normal")
+        self.abort_btn.configure(state="disabled")
+        self.progress_bar.set(0.0)
+        self.status_label.configure(text="Conversion aborted by user.")
+        from tkinter import messagebox
+        messagebox.showinfo("Aborted", "Conversion was aborted by user.")
 
 def main():
     app = JaneConverterApp()
