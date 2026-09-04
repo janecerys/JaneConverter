@@ -5,6 +5,7 @@ Orchestrates stream fetching, Spotify resolution, and FFmpeg transcode.
 
 import os
 import sys
+import re
 import uuid
 import shutil
 import argparse
@@ -21,7 +22,10 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_CONVERTED_DIR = os.path.join(BASE_DIR, "converted")
 DEFAULT_TEMP_DIR = os.path.join(BASE_DIR, "temp")
 
-from engine.extractor import is_url, sanitize_filename, fetch_media_stream, identify_source_type
+from engine.extractor import (
+    is_url, sanitize_filename, fetch_media_stream, identify_source_type,
+    is_playlist_url, fetch_playlist_entries
+)
 from engine.converter import convert_media, SUPPORTED_AUDIO_FORMATS, SUPPORTED_VIDEO_FORMATS
 from engine.updater import update_engine
 
@@ -121,6 +125,142 @@ def process_conversion(
             except Exception:
                 pass
 
+def process_playlist_conversion(
+    playlist_title: str,
+    selected_entries: list,
+    output_dir: Optional[str] = None,
+    target_format: str = "mp3",
+    bitrate: str = "320k",
+    sample_rate: int = 48000,
+    normalize_audio: bool = False,
+    resolution: str = "original",
+    use_nvenc: bool = True,
+    keep_temp: bool = False,
+    check_updates: bool = True,
+    progress_callback: Optional[Callable[[float, str], None]] = None
+) -> Dict[str, Any]:
+    """
+    Batch-downloads and transcodes selected playlist items into a dedicated playlist folder.
+    Names output files strictly according to their playlist order (e.g. '1. Song1.mp3', '2. Song2.mp3').
+    """
+    if check_updates:
+        update_engine(status_callback=lambda m: print(f"[AutoUpdate] {m}"))
+
+    if not output_dir:
+        output_dir = DEFAULT_CONVERTED_DIR
+
+    safe_folder = sanitize_filename(playlist_title) or "Playlist_Media"
+    playlist_dir = os.path.join(output_dir, safe_folder)
+    os.makedirs(playlist_dir, exist_ok=True)
+    os.makedirs(DEFAULT_TEMP_DIR, exist_ok=True)
+
+    target_format = target_format.lower().strip(".")
+    is_audio_target = target_format in SUPPORTED_AUDIO_FORMATS
+
+    total_items = len(selected_entries)
+    if total_items == 0:
+        raise ValueError("No playlist items selected for conversion.")
+
+    def report_overall(frac: float, msg: str):
+        if progress_callback:
+            progress_callback(frac, msg)
+        print(f"[{int(frac * 100)}%] {msg}")
+
+    print("=" * 60)
+    print(f"[*] JANECONVERTER PLAYLIST BATCH PIPELINE")
+    print(f"Playlist: {playlist_title}")
+    print(f"Selected Items: {total_items}")
+    print(f"Target Directory: {playlist_dir}")
+    print(f"Format: {target_format.upper()}")
+    print("=" * 60)
+
+    converted_files = []
+    failed_files = []
+
+    for i, entry in enumerate(selected_entries):
+        idx = entry.get("index", i + 1)
+        raw_title = entry.get("title", f"Track_{idx}")
+        artist = entry.get("artist", "")
+        item_url = entry.get("url", "")
+
+        # Clean any preexisting numeric prefixes to guarantee clean '1. Song1' format
+        clean_title = re.sub(r'^\d+[\.\s\-_]+\s*', '', sanitize_filename(raw_title)).strip()
+        if not clean_title:
+            clean_title = sanitize_filename(raw_title)
+
+        ordered_filename = f"{idx}. {clean_title}"
+        base_pct = i / total_items
+        slice_pct = 1.0 / total_items
+
+        def item_progress_hook(sub_frac: float, sub_msg: str):
+            scaled_pct = base_pct + (sub_frac * slice_pct)
+            report_overall(scaled_pct, f"[{i+1}/{total_items}] #{idx}: {clean_title} ({int(sub_frac * 100)}%)")
+
+        report_overall(base_pct, f"[{i+1}/{total_items}] Fetching #{idx}: {clean_title}...")
+
+        track_job_id = uuid.uuid4().hex[:8]
+        track_work_dir = os.path.join(DEFAULT_TEMP_DIR, f"track_{track_job_id}")
+        os.makedirs(track_work_dir, exist_ok=True)
+
+        try:
+            stream_info = fetch_media_stream(
+                source=item_url,
+                output_dir=track_work_dir,
+                audio_only=is_audio_target,
+                progress_callback=item_progress_hook
+            )
+
+            input_media = stream_info["media_path"]
+            track_artist = artist or stream_info.get("artist", "")
+            metadata = {
+                "title": clean_title,
+                "artist": track_artist,
+                "album": playlist_title,
+                "track": f"{idx}"
+            }
+
+            result_path = convert_media(
+                input_path=input_media,
+                output_dir=playlist_dir,
+                output_filename=ordered_filename,
+                target_format=target_format,
+                bitrate=bitrate,
+                sample_rate=sample_rate,
+                normalize_audio=normalize_audio,
+                resolution=resolution,
+                use_nvenc=use_nvenc,
+                metadata=metadata,
+                progress_callback=item_progress_hook
+            )
+
+            converted_files.append(result_path)
+            print(f"[+] Converted: {os.path.basename(result_path)}")
+
+        except Exception as e:
+            failed_files.append({"index": idx, "title": raw_title, "error": str(e)})
+            print(f"[!] Error converting track #{idx} '{raw_title}': {e}")
+        finally:
+            if not keep_temp and os.path.exists(track_work_dir):
+                try:
+                    shutil.rmtree(track_work_dir, ignore_errors=True)
+                except Exception:
+                    pass
+
+    report_overall(1.0, f"Completed playlist! {len(converted_files)}/{total_items} tracks converted.")
+    print("=" * 60)
+    print(f"PLAYLIST SUMMARY: {len(converted_files)} succeeded, {len(failed_files)} failed.")
+    print(f"Export Directory: {playlist_dir}")
+    print("=" * 60)
+
+    return {
+        "playlist_dir": playlist_dir,
+        "total_selected": total_items,
+        "successful_count": len(converted_files),
+        "failed_count": len(failed_files),
+        "converted_files": converted_files,
+        "failed_files": failed_files
+    }
+
 def main():
     parser = argparse.ArgumentParser(description="JaneConverter: Universal Media Downloader & Converter")
     parser.add_argument("--source", "-s", required=True, help="Media URL (YouTube, Spotify, SoundCloud, TikTok, Twitter, etc.) or local file path")
@@ -132,19 +272,38 @@ def main():
     parser.add_argument("--resolution", default="original", help="Video resolution (original, 4k, 1440p, 1080p, 720p, 480p)")
     parser.add_argument("--no-nvenc", action="store_true", help="Disable NVIDIA NVENC GPU acceleration (use CPU libx264)")
     parser.add_argument("--keep-temp", action="store_true", help="Keep intermediate downloaded stream files in temp directory")
+    parser.add_argument("--playlist", "-p", action="store_true", help="Force treat input source as playlist")
 
     args = parser.parse_args()
-    process_conversion(
-        source=args.source,
-        output_dir=args.output,
-        target_format=args.format,
-        bitrate=args.bitrate,
-        sample_rate=args.sample_rate,
-        normalize_audio=args.normalize,
-        resolution=args.resolution,
-        use_nvenc=not args.no_nvenc,
-        keep_temp=args.keep_temp
-    )
+
+    if args.playlist or is_playlist_url(args.source):
+        print(f"[*] Detected playlist source. Fetching items...")
+        pdata = fetch_playlist_entries(args.source)
+        print(f"[*] Found {len(pdata['entries'])} tracks in '{pdata['playlist_title']}'. Converting all...")
+        process_playlist_conversion(
+            playlist_title=pdata["playlist_title"],
+            selected_entries=pdata["entries"],
+            output_dir=args.output,
+            target_format=args.format,
+            bitrate=args.bitrate,
+            sample_rate=args.sample_rate,
+            normalize_audio=args.normalize,
+            resolution=args.resolution,
+            use_nvenc=not args.no_nvenc,
+            keep_temp=args.keep_temp
+        )
+    else:
+        process_conversion(
+            source=args.source,
+            output_dir=args.output,
+            target_format=args.format,
+            bitrate=args.bitrate,
+            sample_rate=args.sample_rate,
+            normalize_audio=args.normalize,
+            resolution=args.resolution,
+            use_nvenc=not args.no_nvenc,
+            keep_temp=args.keep_temp
+        )
 
 if __name__ == "__main__":
     main()

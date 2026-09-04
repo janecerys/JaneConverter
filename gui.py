@@ -44,10 +44,10 @@ ICON_PNG = os.path.join(ASSETS_DIR, "icon.png")
 for d in (DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR, ASSETS_DIR):
     os.makedirs(d, exist_ok=True)
 
-from engine.extractor import identify_source_type, is_url
+from engine.extractor import identify_source_type, is_url, is_playlist_url, fetch_playlist_entries
 from engine.converter import SUPPORTED_AUDIO_FORMATS, SUPPORTED_VIDEO_FORMATS
 from engine.updater import update_engine, get_current_engine_version
-from run_converter import process_conversion
+from run_converter import process_conversion, process_playlist_conversion
 
 THEME = {
     "bg_main": "#02000a",          # Deep space obsidian
@@ -126,6 +126,306 @@ class StdoutRedirector:
 
     def flush(self):
         pass
+
+class PlaylistSelectionWindow(ctk.CTkToplevel):
+    """
+    Interactive modal dialog allowing users to inspect playlist tracks,
+    filter by title/artist, select or deselect specific items, and initiate batch transcode.
+    """
+    def __init__(self, parent, playlist_data: Dict[str, Any], on_confirm: Callable[[list, str], None]):
+        super().__init__(parent)
+
+        self.playlist_data = playlist_data
+        self.on_confirm = on_confirm
+        self.entries = playlist_data.get("entries", [])
+        self.playlist_title = playlist_data.get("playlist_title", "Playlist")
+        self.check_vars = {}
+        self.row_widgets = []
+
+        self.title(f"Select Tracks: {self.playlist_title}")
+        self.geometry("820x660")
+        self.minsize(700, 500)
+        self.configure(fg_color=THEME["bg_main"])
+
+        if os.path.exists(ICON_ICO):
+            try:
+                self.iconbitmap(ICON_ICO)
+            except Exception:
+                pass
+
+        self.transient(parent)
+        self.grab_set()
+
+        self._build_ui()
+        self._center_window(parent)
+
+    def _center_window(self, parent):
+        self.update_idletasks()
+        try:
+            pw = parent.winfo_width()
+            ph = parent.winfo_height()
+            px = parent.winfo_rootx()
+            py = parent.winfo_rooty()
+            w = 820
+            h = 660
+            x = max(0, px + (pw - w) // 2)
+            y = max(0, py + (ph - h) // 2)
+            self.geometry(f"{w}x{h}+{x}+{y}")
+        except Exception:
+            pass
+
+    def _build_ui(self):
+        header = ctk.CTkFrame(self, fg_color=THEME["card_bg"], corner_radius=0, height=75)
+        header.pack(fill="x", padx=0, pady=(0, 8))
+        header.pack_propagate(False)
+
+        h_inner = ctk.CTkFrame(header, fg_color="transparent")
+        h_inner.pack(fill="both", expand=True, padx=16, pady=10)
+
+        title_lbl = ctk.CTkLabel(
+            h_inner,
+            text=f"📑 {self.playlist_title}",
+            font=ctk.CTkFont(family="Segoe UI", size=16, weight="bold"),
+            text_color=THEME["text_primary"],
+            anchor="w"
+        )
+        title_lbl.pack(fill="x")
+
+        source_type = self.playlist_data.get("source_type", "web").replace("_", " ").upper()
+        total_dur_sec = sum(e.get("duration", 0) for e in self.entries)
+        dur_str = ""
+        if total_dur_sec > 0:
+            m, s = divmod(total_dur_sec, 60)
+            h, m = divmod(m, 60)
+            dur_str = f" • Approx {h}h {m}m" if h > 0 else f" • Approx {m}m {s}s"
+
+        sub_lbl = ctk.CTkLabel(
+            h_inner,
+            text=f"{len(self.entries)} tracks found [{source_type}]{dur_str}",
+            font=ctk.CTkFont(family="Segoe UI", size=11),
+            text_color=THEME["magenta"],
+            anchor="w"
+        )
+        sub_lbl.pack(fill="x")
+
+        # Toolbar Card
+        toolbar = ctk.CTkFrame(self, fg_color=THEME["card_inner"], corner_radius=8, border_width=1, border_color=THEME["card_border"])
+        toolbar.pack(fill="x", padx=14, pady=(0, 8))
+
+        tb_inner = ctk.CTkFrame(toolbar, fg_color="transparent")
+        tb_inner.pack(fill="x", padx=10, pady=8)
+
+        self.search_entry = ctk.CTkEntry(
+            tb_inner,
+            placeholder_text="🔍 Filter tracks...",
+            width=220,
+            height=30,
+            font=ctk.CTkFont(size=11),
+            fg_color=THEME["input_bg"],
+            border_color=THEME["card_border"],
+            border_width=1,
+            text_color=THEME["text_primary"]
+        )
+        self.search_entry.pack(side="left", padx=(0, 10))
+        self.search_entry.bind("<KeyRelease>", self._filter_tracks)
+
+        select_all_btn = ctk.CTkButton(
+            tb_inner,
+            text="Select All",
+            width=85,
+            height=30,
+            fg_color=THEME["input_bg"],
+            hover_color=THEME["card_border_glow"],
+            font=ctk.CTkFont(size=11, weight="bold"),
+            command=self._select_all
+        )
+        select_all_btn.pack(side="left", padx=(0, 6))
+
+        deselect_all_btn = ctk.CTkButton(
+            tb_inner,
+            text="Deselect All",
+            width=95,
+            height=30,
+            fg_color=THEME["input_bg"],
+            hover_color=THEME["card_border_glow"],
+            font=ctk.CTkFont(size=11),
+            command=self._deselect_all
+        )
+        deselect_all_btn.pack(side="left", padx=(0, 6))
+
+        invert_btn = ctk.CTkButton(
+            tb_inner,
+            text="Invert",
+            width=70,
+            height=30,
+            fg_color=THEME["input_bg"],
+            hover_color=THEME["card_border_glow"],
+            font=ctk.CTkFont(size=11),
+            command=self._invert_selection
+        )
+        invert_btn.pack(side="left", padx=(0, 6))
+
+        self.counter_badge = ctk.CTkLabel(
+            tb_inner,
+            text=f"Selected: {len(self.entries)} / {len(self.entries)}",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            text_color=THEME["cyan"]
+        )
+        self.counter_badge.pack(side="right", padx=6)
+
+        # Scrollable Track List
+        self.scroll_frame = ctk.CTkScrollableFrame(
+            self,
+            fg_color=THEME["input_bg"],
+            border_color=THEME["card_border"],
+            border_width=1,
+            corner_radius=8
+        )
+        self.scroll_frame.pack(fill="both", expand=True, padx=14, pady=(0, 8))
+
+        for entry in self.entries:
+            idx = entry.get("index", 1)
+            var = ctk.BooleanVar(value=True)
+            self.check_vars[idx] = var
+
+            row = ctk.CTkFrame(self.scroll_frame, fg_color=THEME["card_inner"], corner_radius=6, height=38)
+            row.pack(fill="x", padx=2, pady=2)
+            row.pack_propagate(False)
+
+            cb = ctk.CTkCheckBox(
+                row,
+                text="",
+                variable=var,
+                width=24,
+                checkbox_width=18,
+                checkbox_height=18,
+                fg_color=THEME["magenta"],
+                hover_color=THEME["magenta_hover"],
+                border_color=THEME["card_border_glow"],
+                command=self._update_counter
+            )
+            cb.pack(side="left", padx=(8, 4))
+
+            idx_badge = ctk.CTkLabel(
+                row,
+                text=f"#{idx}",
+                width=36,
+                font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+                text_color=THEME["cyan"],
+                fg_color=THEME["cyan_subtle"],
+                corner_radius=4
+            )
+            idx_badge.pack(side="left", padx=(0, 8))
+
+            title_str = entry.get("title", f"Track {idx}")
+            t_lbl = ctk.CTkLabel(
+                row,
+                text=title_str,
+                font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+                text_color=THEME["text_primary"],
+                anchor="w"
+            )
+            t_lbl.pack(side="left", fill="x", expand=True, padx=4)
+
+            artist_str = entry.get("artist", "")
+            if artist_str:
+                a_lbl = ctk.CTkLabel(
+                    row,
+                    text=artist_str,
+                    font=ctk.CTkFont(family="Segoe UI", size=10),
+                    text_color=THEME["text_muted"],
+                    anchor="e",
+                    width=160
+                )
+                a_lbl.pack(side="left", padx=6)
+
+            dur_str = entry.get("duration_str", "")
+            d_lbl = ctk.CTkLabel(
+                row,
+                text=dur_str,
+                font=ctk.CTkFont(family="Consolas", size=10),
+                text_color=THEME["text_dark"],
+                width=48
+            )
+            d_lbl.pack(side="right", padx=(4, 10))
+
+            self.row_widgets.append((row, entry, var))
+
+        # Bottom Action Bar
+        bottom_bar = ctk.CTkFrame(self, fg_color=THEME["card_bg"], corner_radius=0, height=58)
+        bottom_bar.pack(fill="x", padx=0, pady=0)
+        bottom_bar.pack_propagate(False)
+
+        b_inner = ctk.CTkFrame(bottom_bar, fg_color="transparent")
+        b_inner.pack(fill="both", expand=True, padx=16, pady=8)
+
+        cancel_btn = ctk.CTkButton(
+            b_inner,
+            text="Cancel",
+            width=90,
+            height=38,
+            fg_color=THEME["card_inner"],
+            hover_color=THEME["card_border_glow"],
+            text_color=THEME["text_primary"],
+            font=ctk.CTkFont(size=12),
+            command=self.destroy
+        )
+        cancel_btn.pack(side="left")
+
+        self.confirm_btn = ctk.CTkButton(
+            b_inner,
+            text=f"⚡ CONVERT SELECTED TRACKS ({len(self.entries)} ITEMS)",
+            height=38,
+            fg_color=THEME["magenta"],
+            hover_color=THEME["magenta_hover"],
+            text_color="#ffffff",
+            font=ctk.CTkFont(family="Segoe UI", size=13, weight="bold"),
+            corner_radius=8,
+            command=self._on_confirm_click
+        )
+        self.confirm_btn.pack(side="right", fill="x", expand=True, padx=(12, 0))
+
+    def _filter_tracks(self, event=None):
+        q = self.search_entry.get().strip().lower()
+        for row, entry, _ in self.row_widgets:
+            t = entry.get("title", "").lower()
+            a = entry.get("artist", "").lower()
+            if not q or q in t or q in a:
+                row.pack(fill="x", padx=2, pady=2)
+            else:
+                row.pack_forget()
+
+    def _select_all(self):
+        for var in self.check_vars.values():
+            var.set(True)
+        self._update_counter()
+
+    def _deselect_all(self):
+        for var in self.check_vars.values():
+            var.set(False)
+        self._update_counter()
+
+    def _invert_selection(self):
+        for var in self.check_vars.values():
+            var.set(not var.get())
+        self._update_counter()
+
+    def _update_counter(self):
+        sel_count = sum(1 for v in self.check_vars.values() if v.get())
+        total = len(self.entries)
+        self.counter_badge.configure(text=f"Selected: {sel_count} / {total}")
+        self.confirm_btn.configure(text=f"⚡ CONVERT SELECTED TRACKS ({sel_count} ITEMS)")
+        if sel_count == 0:
+            self.confirm_btn.configure(state="disabled", fg_color=THEME["card_inner"])
+        else:
+            self.confirm_btn.configure(state="normal", fg_color=THEME["magenta"])
+
+    def _on_confirm_click(self):
+        selected = [e for e in self.entries if self.check_vars.get(e.get("index", 1), ctk.BooleanVar(value=False)).get()]
+        if not selected:
+            return
+        self.destroy()
+        self.on_confirm(selected, self.playlist_title)
 
 class JaneConverterApp(ctk.CTk):
     def __init__(self):
@@ -347,7 +647,20 @@ class JaneConverterApp(ctk.CTk):
             font=ctk.CTkFont(size=12, weight="bold"),
             command=self._browse_local_file
         )
-        browse_btn.pack(side="left")
+        browse_btn.pack(side="left", padx=(0, 6))
+
+        self.playlist_btn = ctk.CTkButton(
+            input_row,
+            text="📑 Playlist Tracks",
+            width=140,
+            height=38,
+            fg_color=THEME["card_inner"],
+            hover_color=THEME["magenta_hover"],
+            text_color=THEME["text_muted"],
+            font=ctk.CTkFont(size=12, weight="bold"),
+            command=self._fetch_and_open_playlist_selector
+        )
+        self.playlist_btn.pack(side="left")
 
         # 3.2 Conversion Settings Card
         settings_card = ctk.CTkFrame(
@@ -624,19 +937,30 @@ class JaneConverterApp(ctk.CTk):
         if not os.path.exists(dest_dir):
             return
 
-        files = []
+        items = []
         try:
             for entry in os.scandir(dest_dir):
                 if entry.is_file():
                     ext = os.path.splitext(entry.name)[1].lower().strip(".")
                     if ext in SUPPORTED_AUDIO_FORMATS or ext in SUPPORTED_VIDEO_FORMATS:
-                        files.append((entry.stat().st_mtime, entry.path, entry.name, entry.stat().st_size, ext))
+                        items.append((entry.stat().st_mtime, entry.path, entry.name, entry.stat().st_size, ext, False, 0))
+                elif entry.is_dir():
+                    count = 0
+                    sub_sz = 0
+                    for sub in os.scandir(entry.path):
+                        if sub.is_file():
+                            sub_ext = os.path.splitext(sub.name)[1].lower().strip(".")
+                            if sub_ext in SUPPORTED_AUDIO_FORMATS or sub_ext in SUPPORTED_VIDEO_FORMATS:
+                                count += 1
+                                sub_sz += sub.stat().st_size
+                    if count > 0:
+                        items.append((entry.stat().st_mtime, entry.path, entry.name, sub_sz, "folder", True, count))
         except Exception:
             pass
 
-        files.sort(key=lambda x: x[0], reverse=True)
+        items.sort(key=lambda x: x[0], reverse=True)
 
-        if not files:
+        if not items:
             empty_lbl = ctk.CTkLabel(
                 self.library_scroll,
                 text="No converted media files found in export directory.",
@@ -646,63 +970,123 @@ class JaneConverterApp(ctk.CTk):
             empty_lbl.pack(pady=40)
             return
 
-        for _, path, name, sz, ext in files:
+        for _, path, name, sz, ext, is_dir, count in items:
             row = ctk.CTkFrame(self.library_scroll, fg_color=THEME["card_inner"], corner_radius=6, height=44)
             row.pack(fill="x", padx=4, pady=3)
             row.pack_propagate(False)
 
-            is_video = ext in SUPPORTED_VIDEO_FORMATS
-            icon_tag = "🎬" if is_video else "🎵"
-            badge_color = THEME["magenta"] if is_video else THEME["cyan"]
+            if is_dir:
+                tag_lbl = ctk.CTkLabel(
+                    row,
+                    text="📁 PLAYLIST",
+                    font=ctk.CTkFont(size=10, weight="bold"),
+                    text_color="#ffffff",
+                    fg_color=THEME["magenta"],
+                    corner_radius=4,
+                    width=78,
+                    height=22
+                )
+                tag_lbl.pack(side="left", padx=(10, 8))
 
-            tag_lbl = ctk.CTkLabel(
-                row,
-                text=f"{icon_tag} {ext.upper()}",
-                font=ctk.CTkFont(size=10, weight="bold"),
-                text_color="#ffffff",
-                fg_color=badge_color,
-                corner_radius=4,
-                width=64,
-                height=22
-            )
-            tag_lbl.pack(side="left", padx=(10, 8))
+                name_lbl = ctk.CTkLabel(
+                    row,
+                    text=f"{name} ({count} tracks)",
+                    font=ctk.CTkFont(size=12, weight="bold"),
+                    text_color=THEME["text_primary"],
+                    anchor="w"
+                )
+                name_lbl.pack(side="left", fill="x", expand=True, padx=4)
 
-            name_lbl = ctk.CTkLabel(
-                row,
-                text=name,
-                font=ctk.CTkFont(size=12, weight="bold"),
-                text_color=THEME["text_primary"],
-                anchor="w"
-            )
-            name_lbl.pack(side="left", fill="x", expand=True, padx=4)
+                sz_str = f"{sz / (1024 * 1024):.1f} MB"
+                ctk.CTkLabel(row, text=sz_str, font=ctk.CTkFont(size=11), text_color=THEME["text_dark"]).pack(side="left", padx=8)
 
-            sz_str = f"{sz / (1024 * 1024):.1f} MB"
-            ctk.CTkLabel(row, text=sz_str, font=ctk.CTkFont(size=11), text_color=THEME["text_dark"]).pack(side="left", padx=8)
+                open_b = ctk.CTkButton(
+                    row,
+                    text="📂 Open",
+                    width=65,
+                    height=24,
+                    fg_color=THEME["input_bg"],
+                    hover_color=THEME["cyan_hover"],
+                    text_color=THEME["cyan"],
+                    font=ctk.CTkFont(size=11),
+                    command=lambda p=path: os.startfile(p)
+                )
+                open_b.pack(side="right", padx=(4, 10))
 
-            play_b = ctk.CTkButton(
-                row,
-                text="▶ Play",
-                width=65,
-                height=24,
-                fg_color=THEME["input_bg"],
-                hover_color=THEME["cyan_hover"],
-                text_color=THEME["cyan"],
-                font=ctk.CTkFont(size=11),
-                command=lambda p=path: self._play_file(p)
-            )
-            play_b.pack(side="right", padx=(4, 10))
+                del_b = ctk.CTkButton(
+                    row,
+                    text="🗑️",
+                    width=32,
+                    height=24,
+                    fg_color=THEME["input_bg"],
+                    hover_color="#991b1b",
+                    font=ctk.CTkFont(size=11),
+                    command=lambda p=path: self._delete_library_dir(p)
+                )
+                del_b.pack(side="right", padx=2)
 
-            del_b = ctk.CTkButton(
-                row,
-                text="🗑️",
-                width=32,
-                height=24,
-                fg_color=THEME["input_bg"],
-                hover_color="#991b1b",
-                font=ctk.CTkFont(size=11),
-                command=lambda p=path: self._delete_library_file(p)
-            )
-            del_b.pack(side="right", padx=2)
+            else:
+                is_video = ext in SUPPORTED_VIDEO_FORMATS
+                icon_tag = "🎬" if is_video else "🎵"
+                badge_color = THEME["magenta"] if is_video else THEME["cyan"]
+
+                tag_lbl = ctk.CTkLabel(
+                    row,
+                    text=f"{icon_tag} {ext.upper()}",
+                    font=ctk.CTkFont(size=10, weight="bold"),
+                    text_color="#ffffff",
+                    fg_color=badge_color,
+                    corner_radius=4,
+                    width=64,
+                    height=22
+                )
+                tag_lbl.pack(side="left", padx=(10, 8))
+
+                name_lbl = ctk.CTkLabel(
+                    row,
+                    text=name,
+                    font=ctk.CTkFont(size=12, weight="bold"),
+                    text_color=THEME["text_primary"],
+                    anchor="w"
+                )
+                name_lbl.pack(side="left", fill="x", expand=True, padx=4)
+
+                sz_str = f"{sz / (1024 * 1024):.1f} MB"
+                ctk.CTkLabel(row, text=sz_str, font=ctk.CTkFont(size=11), text_color=THEME["text_dark"]).pack(side="left", padx=8)
+
+                play_b = ctk.CTkButton(
+                    row,
+                    text="▶ Play",
+                    width=65,
+                    height=24,
+                    fg_color=THEME["input_bg"],
+                    hover_color=THEME["cyan_hover"],
+                    text_color=THEME["cyan"],
+                    font=ctk.CTkFont(size=11),
+                    command=lambda p=path: self._play_file(p)
+                )
+                play_b.pack(side="right", padx=(4, 10))
+
+                del_b = ctk.CTkButton(
+                    row,
+                    text="🗑️",
+                    width=32,
+                    height=24,
+                    fg_color=THEME["input_bg"],
+                    hover_color="#991b1b",
+                    font=ctk.CTkFont(size=11),
+                    command=lambda p=path: self._delete_library_file(p)
+                )
+                del_b.pack(side="right", padx=2)
+
+    def _delete_library_dir(self, dir_path: str):
+        if os.path.exists(dir_path):
+            import shutil
+            try:
+                shutil.rmtree(dir_path, ignore_errors=True)
+                self._refresh_library()
+            except Exception:
+                pass
 
     def _play_file(self, file_path: str):
         if os.path.exists(file_path):
@@ -853,19 +1237,36 @@ class JaneConverterApp(ctk.CTk):
     def _on_source_text_changed(self, event=None):
         txt = self.src_entry.get().strip()
         stype = identify_source_type(txt)
-        type_labels = {
-            "spotify": "Spotify Track (Auto Search)",
-            "youtube": "YouTube Video / Stream",
-            "soundcloud": "SoundCloud Audio",
-            "tiktok": "TikTok Short Video",
-            "twitter": "Twitter / X Media",
-            "facebook": "Facebook Video",
-            "reddit": "Reddit Media",
-            "twitch": "Twitch Stream / Clip",
-            "generic_url": "Web Media Stream",
-            "local_file": "Local Media File" if txt else "Ready for URL"
-        }
-        self.source_badge.configure(text=type_labels.get(stype, "Ready for URL"))
+        is_playlist = is_playlist_url(txt)
+
+        if is_playlist:
+            self.source_badge.configure(text="📑 Playlist / Album Detected", text_color=THEME["yellow"])
+            self.playlist_btn.configure(
+                text="📑 Select Playlist",
+                fg_color=THEME["magenta"],
+                hover_color=THEME["magenta_hover"],
+                text_color="#ffffff"
+            )
+        else:
+            type_labels = {
+                "spotify": "Spotify Track (Auto Search)",
+                "youtube": "YouTube Video / Stream",
+                "soundcloud": "SoundCloud Audio",
+                "tiktok": "TikTok Short Video",
+                "twitter": "Twitter / X Media",
+                "facebook": "Facebook Video",
+                "reddit": "Reddit Media",
+                "twitch": "Twitch Stream / Clip",
+                "generic_url": "Web Media Stream",
+                "local_file": "Local Media File" if txt else "Ready for URL"
+            }
+            self.source_badge.configure(text=type_labels.get(stype, "Ready for URL"), text_color=THEME["cyan"])
+            self.playlist_btn.configure(
+                text="📑 Playlist Tracks",
+                fg_color=THEME["card_inner"],
+                hover_color=THEME["card_border_glow"],
+                text_color=THEME["text_muted"]
+            )
 
     def _on_mode_toggled(self, selected_mode: str):
         if "Audio" in selected_mode:
@@ -933,8 +1334,155 @@ class JaneConverterApp(ctk.CTk):
                 pass
 
     # -------------------------------------------------------------
-    # 8. CONVERSION RUNNER
+    # 8. CONVERSION RUNNER & PLAYLIST WORKFLOW
     # -------------------------------------------------------------
+    def _fetch_and_open_playlist_selector(self):
+        if self.is_converting:
+            return
+
+        source = self.src_entry.get().strip()
+        if not source:
+            from tkinter import messagebox
+            messagebox.showwarning("Input Required", "Please paste a playlist or album link first.")
+            return
+
+        self.playlist_btn.configure(state="disabled", text="⏳ Inspecting...")
+        self.status_label.configure(text="Fetching playlist track catalog...")
+        self.progress_bar.set(0.05)
+
+        def worker():
+            old_stdout = sys.stdout
+            old_stderr = sys.stderr
+            redirector = StdoutRedirector(self.log_queue)
+            sys.stdout = redirector
+            sys.stderr = redirector
+            try:
+                pdata = fetch_playlist_entries(
+                    url=source,
+                    progress_callback=lambda f, m: self.after(0, lambda: self._apply_progress(f, m))
+                )
+                self.after(0, lambda: self._on_playlist_fetched(pdata))
+            except Exception as e:
+                self.after(0, lambda: self._on_playlist_fetch_error(str(e)))
+            finally:
+                sys.stdout = old_stdout
+                sys.stderr = old_stderr
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_playlist_fetched(self, pdata: Dict[str, Any]):
+        self.playlist_btn.configure(state="normal", text="📑 Select Playlist")
+        self.progress_bar.set(0.0)
+        self.status_label.configure(text=f"Loaded {pdata['total_count']} tracks from '{pdata['playlist_title']}'.")
+
+        if not pdata.get("entries"):
+            from tkinter import messagebox
+            messagebox.showwarning("No Items Found", f"No tracks could be found in this playlist:\n{pdata.get('playlist_title')}")
+            return
+
+        PlaylistSelectionWindow(self, pdata, self._start_playlist_batch_conversion)
+
+    def _on_playlist_fetch_error(self, err_msg: str):
+        self.playlist_btn.configure(state="normal", text="📑 Playlist Tracks")
+        self.progress_bar.set(0.0)
+        self.status_label.configure(text="Failed to fetch playlist catalog.")
+        from tkinter import messagebox
+        messagebox.showerror("Playlist Extraction Failed", f"Could not extract playlist information:\n{err_msg}")
+
+    def _start_playlist_batch_conversion(self, selected_entries: list, playlist_title: str):
+        if self.is_converting:
+            return
+
+        output_dir = self.dest_entry.get().strip() or DEFAULT_CONVERTED_DIR
+
+        raw_fmt = self.format_menu.get().split()[0].lower()
+        normalize_audio = bool(self.norm_switch.get())
+        use_nvenc = bool(self.gpu_switch.get())
+
+        raw_bitrate = self.quality_menu.get().split()[0].lower()
+        bitrate = raw_bitrate.replace("kbps", "k") if "kbps" in raw_bitrate else "320k"
+
+        raw_res = self.quality_menu.get().lower()
+        if "4k" in raw_res:
+            resolution = "4k"
+        elif "1080p" in raw_res:
+            resolution = "1080p"
+        elif "720p" in raw_res:
+            resolution = "720p"
+        elif "480p" in raw_res:
+            resolution = "480p"
+        else:
+            resolution = "original"
+
+        raw_sr = self.sr_menu.get()
+        if "44.1" in raw_sr:
+            sample_rate = 44100
+        elif "96.0" in raw_sr:
+            sample_rate = 96000
+        else:
+            sample_rate = 48000
+
+        self.is_converting = True
+        self.start_conversion_time = time.time()
+        self.convert_btn.configure(state="disabled", text="⏳ CONVERTING PLAYLIST...")
+        self.playlist_btn.configure(state="disabled")
+        self.progress_bar.set(0.01)
+        self.status_label.configure(text=f"Batch converting {len(selected_entries)} playlist items...")
+
+        threading.Thread(
+            target=self._run_playlist_worker,
+            args=(playlist_title, selected_entries, output_dir, raw_fmt, bitrate, sample_rate, normalize_audio, resolution, use_nvenc),
+            daemon=True
+        ).start()
+
+    def _run_playlist_worker(self, playlist_title, selected_entries, output_dir, target_format, bitrate, sample_rate, normalize_audio, resolution, use_nvenc):
+        old_stdout = sys.stdout
+        old_stderr = sys.stderr
+        redirector = StdoutRedirector(self.log_queue)
+        sys.stdout = redirector
+        sys.stderr = redirector
+
+        try:
+            summary = process_playlist_conversion(
+                playlist_title=playlist_title,
+                selected_entries=selected_entries,
+                output_dir=output_dir,
+                target_format=target_format,
+                bitrate=bitrate,
+                sample_rate=sample_rate,
+                normalize_audio=normalize_audio,
+                resolution=resolution,
+                use_nvenc=use_nvenc,
+                progress_callback=lambda f, m: self.after(0, lambda: self._apply_progress(f, m))
+            )
+            self.last_converted_file = summary["converted_files"][0] if summary["converted_files"] else None
+            self.after(0, lambda: self._on_playlist_conversion_success(summary))
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.after(0, lambda: self._on_conversion_error(str(e)))
+        finally:
+            sys.stdout = old_stdout
+            sys.stderr = old_stderr
+
+    def _on_playlist_conversion_success(self, summary: Dict[str, Any]):
+        self.is_converting = False
+        self.convert_btn.configure(state="normal", text="✨ CONVERT MEDIA")
+        self.playlist_btn.configure(state="normal")
+        self.progress_bar.set(1.0)
+        p_dir = summary.get("playlist_dir", "")
+        folder_name = os.path.basename(p_dir)
+        succ = summary.get("successful_count", 0)
+        tot = summary.get("total_selected", 0)
+        self.status_label.configure(text=f"Playlist exported: {succ}/{tot} tracks saved to '{folder_name}'.")
+        self._refresh_library()
+
+        from tkinter import messagebox
+        messagebox.showinfo(
+            "Playlist Conversion Complete!",
+            f"Successfully converted {succ} of {tot} tracks!\n\nFolder:\n{p_dir}"
+        )
+
     def _start_conversion(self):
         if self.is_converting:
             return
@@ -944,6 +1492,17 @@ class JaneConverterApp(ctk.CTk):
             from tkinter import messagebox
             messagebox.showwarning("Input Required", "Please provide a valid media URL or select a local file.")
             return
+
+        if is_playlist_url(source):
+            from tkinter import messagebox
+            choice = messagebox.askyesno(
+                "Playlist Detected",
+                "This URL appears to be a playlist or album containing multiple tracks.\n\nWould you like to open the playlist track selector to choose what to download?",
+                icon="question"
+            )
+            if choice:
+                self._fetch_and_open_playlist_selector()
+                return
 
         output_dir = self.dest_entry.get().strip() or DEFAULT_CONVERTED_DIR
 
@@ -984,6 +1543,7 @@ class JaneConverterApp(ctk.CTk):
         self.is_converting = True
         self.start_conversion_time = time.time()
         self.convert_btn.configure(state="disabled", text="⏳ PROCESSING MEDIA...")
+        self.playlist_btn.configure(state="disabled")
         self.progress_bar.set(0.02)
         self.status_label.configure(text="Initializing transcode pipeline...")
 
@@ -1029,6 +1589,7 @@ class JaneConverterApp(ctk.CTk):
     def _on_conversion_success(self, result_path: str):
         self.is_converting = False
         self.convert_btn.configure(state="normal", text="✨ CONVERT MEDIA")
+        self.playlist_btn.configure(state="normal")
         self.progress_bar.set(1.0)
         self.status_label.configure(text=f"Exported: {os.path.basename(result_path)}")
         self._refresh_library()
@@ -1042,6 +1603,7 @@ class JaneConverterApp(ctk.CTk):
     def _on_conversion_error(self, err_msg: str):
         self.is_converting = False
         self.convert_btn.configure(state="normal", text="✨ CONVERT MEDIA")
+        self.playlist_btn.configure(state="normal")
         self.progress_bar.set(0.0)
         self.status_label.configure(text="Conversion error encountered.")
 
