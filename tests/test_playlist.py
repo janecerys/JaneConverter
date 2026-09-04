@@ -148,5 +148,9 @@ def test_process_playlist_conversion_local_files():
         assert os.path.exists(file2)
         assert os.path.getsize(file1) > 1000
         assert os.path.getsize(file2) > 1000
+
+        meta_folder = os.path.join(expected_folder, "metadata")
+        assert os.path.exists(meta_folder)
+        assert os.path.exists(os.path.join(meta_folder, "playlist_credits.txt"))
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

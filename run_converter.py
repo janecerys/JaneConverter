@@ -253,8 +253,11 @@ def process_playlist_conversion(
 
     safe_folder = sanitize_filename(playlist_title) or "Playlist_Media"
     playlist_dir = os.path.join(output_dir, safe_folder)
+    metadata_dir = os.path.join(playlist_dir, "metadata")
     os.makedirs(playlist_dir, exist_ok=True)
     os.makedirs(DEFAULT_TEMP_DIR, exist_ok=True)
+    if save_metadata or save_cover_art:
+        os.makedirs(metadata_dir, exist_ok=True)
 
     target_format = target_format.lower().strip(".")
     is_audio_target = target_format in SUPPORTED_AUDIO_FORMATS
@@ -283,6 +286,11 @@ def process_playlist_conversion(
         first_thumb = next((e.get("thumbnail") for e in selected_entries if e.get("thumbnail")), None)
         if first_thumb:
             download_and_convert_thumbnail(first_thumb, playlist_cover_dest)
+            meta_cover_copy = os.path.join(metadata_dir, "cover.jpg")
+            try:
+                shutil.copy2(playlist_cover_dest, meta_cover_copy)
+            except Exception:
+                pass
 
     converted_files = []
     failed_files = []
@@ -326,9 +334,9 @@ def process_playlist_conversion(
             track_artist = artist or stream_info.get("artist", "")
             track_cover = stream_info.get("thumbnail_path") or (playlist_cover_dest if os.path.exists(playlist_cover_dest) else None)
 
-            # Save per-track cover image if desired
+            # Save per-track cover image into metadata folder if desired
             if save_cover_art and stream_info.get("thumbnail_path"):
-                track_jpg = os.path.join(playlist_dir, f"{ordered_filename}.jpg")
+                track_jpg = os.path.join(metadata_dir, f"{ordered_filename}.jpg")
                 try:
                     shutil.copy2(stream_info["thumbnail_path"], track_jpg)
                 except Exception:
@@ -339,9 +347,9 @@ def process_playlist_conversion(
                     except Exception:
                         pass
 
-            # Save per-track credits / description if available
+            # Save per-track credits / description into metadata folder if available
             if save_metadata and stream_info.get("description"):
-                track_credits = os.path.join(playlist_dir, f"{ordered_filename}_credits.txt")
+                track_credits = os.path.join(metadata_dir, f"{ordered_filename}_credits.txt")
                 try:
                     write_credits_file(track_credits, stream_info)
                 except Exception:
@@ -386,9 +394,9 @@ def process_playlist_conversion(
                 except Exception:
                     pass
 
-    # Save overall playlist credits index
+    # Save overall playlist credits index inside metadata folder
     if save_metadata:
-        summary_credits_path = os.path.join(playlist_dir, "playlist_credits.txt")
+        summary_credits_path = os.path.join(metadata_dir, "playlist_credits.txt")
         try:
             pl_lines = [
                 "=" * 80,
@@ -421,6 +429,7 @@ def process_playlist_conversion(
 
     return {
         "playlist_dir": playlist_dir,
+        "metadata_dir": metadata_dir,
         "total_selected": total_items,
         "successful_count": len(converted_files),
         "failed_count": len(failed_files),
