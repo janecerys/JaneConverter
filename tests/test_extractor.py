@@ -8,7 +8,7 @@ import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from engine.extractor import is_url, identify_source_type, sanitize_filename, resolve_spotify_metadata
+from engine.extractor import is_url, identify_source_type, sanitize_filename, resolve_spotify_metadata, build_search_candidates
 
 def test_is_url():
     assert is_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ") is True
@@ -49,3 +49,13 @@ def test_resolve_spotify_metadata_online():
     assert "artist" in data
     assert "search_query" in data
     assert len(data["search_query"]) > 0
+
+def test_build_search_candidates():
+    candidates = build_search_candidates("project:aspyr, kvnokishi", "permafall?")
+    assert len(candidates) > 0
+    assert any("project aspyr kvnokishi permafall" in c for c in candidates)
+    for c in candidates:
+        clean_part = c.replace("ytsearch1:", "").replace("scsearch1:", "")
+        assert ":" not in clean_part
+        assert "?" not in clean_part
+

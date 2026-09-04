@@ -118,6 +118,43 @@ def download_and_convert_thumbnail(thumbnail_url: str, output_path: str) -> Opti
         print(f"[Thumbnail] Could not process cover image: {e}")
     return None
 
+def build_search_candidates(artist: str, title: str) -> list:
+    """
+    Builds prioritized search queries to locate the best matching audio stream.
+    Strips search syntax operators (colons, slashes, commas, question marks)
+    that cause YouTube/SoundCloud search engines to drop matches.
+    """
+    def clean(s: str) -> str:
+        s = s.replace("\xa0", " ").replace(":", " ").replace("/", " ").replace("\\", " ").replace(",", " ")
+        s = re.sub(r'[\?\"\'\!\*\<\>\|\^]', ' ', s)
+        return re.sub(r'\s+', ' ', s).strip()
+
+    c_art = clean(artist) if artist and artist != "Unknown Artist" else ""
+    c_tit = clean(title) if title else ""
+    prim_art = clean(artist.split(",")[0]) if artist and artist != "Unknown Artist" else ""
+
+    candidates = []
+    if c_art and c_tit:
+        candidates.append(f"ytsearch1:{c_art} {c_tit}")
+    if prim_art and c_tit and prim_art != c_art:
+        candidates.append(f"ytsearch1:{prim_art} {c_tit}")
+    if c_tit and prim_art:
+        candidates.append(f"ytsearch1:{c_tit} {prim_art}")
+    if c_tit:
+        candidates.append(f"ytsearch1:{c_tit}")
+    if c_art and c_tit:
+        candidates.append(f"scsearch1:{c_art} {c_tit}")
+    if prim_art and c_tit:
+        candidates.append(f"scsearch1:{prim_art} {c_tit}")
+
+    seen = set()
+    result = []
+    for c in candidates:
+        if c not in seen and c.strip():
+            seen.add(c)
+            result.append(c)
+    return result
+
 def resolve_spotify_metadata(spotify_url: str) -> Dict[str, str]:
     """
     Extracts public track title, artist, album, year, and thumbnail from Spotify via public oEmbed and OpenGraph.
@@ -198,13 +235,16 @@ def resolve_spotify_metadata(spotify_url: str) -> Dict[str, str]:
     except Exception:
         pass
 
-    search_query = f"{artist} - {title} audio" if artist != "Unknown Artist" else f"{title} audio"
+    candidates = build_search_candidates(artist, title)
+    primary_query = candidates[0] if candidates else (f"{artist} - {title}" if artist != "Unknown Artist" else title)
+
     return {
         "title": title,
         "artist": artist,
         "album": album,
         "year": year,
-        "search_query": search_query,
+        "search_query": primary_query,
+        "search_candidates": candidates,
         "thumbnail": thumbnail,
         "thumbnail_url": thumbnail,
         "description": description
@@ -251,14 +291,20 @@ def fetch_media_stream(
             "is_local": True
         }
 
-    # 2. Spotify Track
+    # 2. Spotify Track or Search Queries
     spotify_meta = None
     target_url = source
+    candidates = []
     if source_type == "spotify":
         report(0.05, "Extracting Spotify track details from public metadata...")
         spotify_meta = resolve_spotify_metadata(source)
         report(0.12, f"Resolved Spotify track: {spotify_meta['artist']} - {spotify_meta['title']}")
-        target_url = f"ytsearch1:{spotify_meta['search_query']}"
+        candidates = spotify_meta.get("search_candidates") or build_search_candidates(spotify_meta["artist"], spotify_meta["title"])
+        target_url = candidates[0] if candidates else spotify_meta.get("search_query", "")
+    elif target_url.startswith("ytsearch") or target_url.startswith("scsearch"):
+        candidates = [target_url]
+    else:
+        candidates = [target_url]
 
     # 3. Web Stream Download via yt-dlp
     report(0.15, "Connecting to stream provider and parsing media formats...")
@@ -290,16 +336,30 @@ def fetch_media_stream(
     }
 
     try:
+        info = None
+        last_error = None
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(target_url, download=True)
-            if not info:
-                raise ValueError("No media stream found for the provided link.")
+            for query_item in candidates:
+                try:
+                    cand_info = ydl.extract_info(query_item, download=True)
+                    if not cand_info:
+                        continue
+                    if "entries" in cand_info:
+                        sub_entries = cand_info.get("entries")
+                        if not sub_entries:
+                            continue
+                        cand_info = sub_entries[0]
+                    info = cand_info
+                    break
+                except Exception as ex:
+                    last_error = ex
+                    continue
 
-            if "entries" in info:
-                entries = info.get("entries")
-                if not entries:
-                    raise ValueError("No matching streams returned from search.")
-                info = entries[0]
+            if not info:
+                msg = f"No matching streams returned from search (tried {len(candidates)} query strategies)."
+                if last_error:
+                    msg += f" Last error: {last_error}"
+                raise ValueError(msg)
 
             downloaded_file = ydl.prepare_filename(info)
             if not os.path.exists(downloaded_file):
@@ -409,7 +469,11 @@ def fetch_playlist_entries(
             t_dur_sec = t_dur_ms // 1000
             uri = t.get("uri", "")
             track_id = uri.split(":")[-1] if uri else ""
-            track_url = f"https://open.spotify.com/track/{track_id}" if track_id else f"ytsearch1:{t_artist} - {t_title} audio"
+            if track_id:
+                track_url = f"https://open.spotify.com/track/{track_id}"
+            else:
+                cands = build_search_candidates(t_artist, t_title)
+                track_url = cands[0] if cands else f"ytsearch1:{t_title}"
 
             entries.append({
                 "index": idx,
