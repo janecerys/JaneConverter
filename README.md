@@ -56,9 +56,13 @@ cd JaneConverter
   - **MP4:** NVIDIA NVENC H.264 GPU Accelerated (or CPU libx264 fallback)
   - **MKV / MOV / WEBM:** Multi-track and web standards
   - **GIF:** High-quality palette-mapped animated GIFs
-- **Audio Engineering Enhancements:**
+- **Audio Engineering & Metadata Enhancements:**
   - **Sample Rates:** 44.1 kHz, 48.0 kHz (Broadcast), 96.0 kHz (Hi-Res)
   - **Loudness Normalization:** Optional EBU R128 (-14 LUFS Streaming Standard)
+  - **Embedded Cover Art:** High-resolution artwork embedded into audio containers (ID3v2.3 attached pictures for MP3, FLAC, M4A)
+  - **Artwork on Disk:** Saves cover art as `{Title}.jpg` or `cover.jpg` for playlists and albums
+  - **Full Production Credits (.txt):** Exports formatted `{Title}_credits.txt` with title, artist, album, track, release year, duration, source link, tags, and complete description
+  - **Ordered Playlist Export:** Downloads playlists into dedicated folders with sequential track numbering (1. Song, 2. Song, etc.)
 
 ---
 
@@ -71,6 +75,7 @@ python gui.py
 ### CLI Batch Conversion
 ```bash
 python run_converter.py --source "https://www.youtube.com/watch?v=..." --format mp3 --bitrate 320k --normalize
+python run_converter.py --source "https://open.spotify.com/playlist/..." --format flac
 ```
 
 ### Running Automated Tests

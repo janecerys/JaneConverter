@@ -24,10 +24,81 @@ DEFAULT_TEMP_DIR = os.path.join(BASE_DIR, "temp")
 
 from engine.extractor import (
     is_url, sanitize_filename, fetch_media_stream, identify_source_type,
-    is_playlist_url, fetch_playlist_entries
+    is_playlist_url, fetch_playlist_entries, download_and_convert_thumbnail, format_duration
 )
 from engine.converter import convert_media, SUPPORTED_AUDIO_FORMATS, SUPPORTED_VIDEO_FORMATS
 from engine.updater import update_engine
+
+def write_credits_file(output_path: str, meta: Dict[str, Any]) -> str:
+    """
+    Writes a formatted, human-readable credits and metadata file.
+    """
+    title = meta.get("title", "Unknown Title")
+    artist = meta.get("artist", "Unknown Artist")
+    album = meta.get("album", "")
+    track = meta.get("track", "")
+    year = meta.get("year", "")
+    source_url = meta.get("source_url", "") or meta.get("webpage_url", "")
+    platform = meta.get("platform", "") or meta.get("source_type", "")
+    dur_val = meta.get("duration", 0)
+    dur_str = meta.get("duration_str", "") or (format_duration(dur_val) if dur_val else "")
+    description = meta.get("description", "").strip()
+    tags = meta.get("tags", [])
+    categories = meta.get("categories", [])
+
+    lines = [
+        "=" * 80,
+        "JANECONVERTER - MEDIA CREDITS & METADATA",
+        "=" * 80,
+        f"Title:        {title}",
+        f"Artist:       {artist}",
+    ]
+    if album:
+        lines.append(f"Album:        {album}")
+    if track:
+        lines.append(f"Track:        {track}")
+    if year:
+        lines.append(f"Release Date: {year}")
+    if dur_str:
+        lines.append(f"Duration:     {dur_str}")
+    if platform:
+        lines.append(f"Platform:     {platform.replace('_', ' ').title()}")
+    if source_url:
+        lines.append(f"Source URL:   {source_url}")
+
+    if description:
+        lines.extend([
+            "",
+            "-" * 80,
+            "CREDITS & DESCRIPTION",
+            "-" * 80,
+            description
+        ])
+
+    if tags or categories:
+        lines.extend([
+            "",
+            "-" * 80,
+            "TAGS & CATEGORIES",
+            "-" * 80
+        ])
+        if tags:
+            tag_str = ", ".join(tags) if isinstance(tags, list) else str(tags)
+            lines.append(f"Tags:       {tag_str}")
+        if categories:
+            cat_str = ", ".join(categories) if isinstance(categories, list) else str(categories)
+            lines.append(f"Categories: {cat_str}")
+
+    lines.extend([
+        "=" * 80,
+        ""
+    ])
+
+    content = "\n".join(lines)
+    os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(content)
+    return output_path
 
 def process_conversion(
     source: str,
@@ -38,13 +109,15 @@ def process_conversion(
     normalize_audio: bool = False,
     resolution: str = "original",
     use_nvenc: bool = True,
+    save_cover_art: bool = True,
+    save_metadata: bool = True,
     keep_temp: bool = False,
     check_updates: bool = True,
     progress_callback: Optional[Callable[[float, str], None]] = None
 ) -> str:
     """
-    Orchestrates downloading/extracting stream and transcoding into the desired format.
-    Automatically manages per-job temporary workspace and cleanup.
+    Orchestrates downloading/extracting stream, embedding cover art, exporting credits,
+    and transcoding into the desired format.
     """
     if check_updates:
         update_engine(status_callback=lambda m: print(f"[AutoUpdate] {m}"))
@@ -72,6 +145,7 @@ def process_conversion(
     print(f"Target Format: {target_format.upper()}")
     print(f"Output Directory: {output_dir}")
     print(f"Hardware NVENC: {use_nvenc}")
+    print(f"Cover Art: {save_cover_art} | Metadata: {save_metadata}")
     print("=" * 60)
 
     try:
@@ -89,12 +163,37 @@ def process_conversion(
         safe_title = sanitize_filename(title)
         artist = stream_info.get("artist", "")
         album = stream_info.get("album", "")
+        year = stream_info.get("year", "")
+        description = stream_info.get("description", "")
+        cover_path = stream_info.get("thumbnail_path")
+
+        # Save standalone cover art image if requested
+        if save_cover_art and cover_path and os.path.exists(cover_path):
+            standalone_cover = os.path.join(output_dir, f"{safe_title}.jpg")
+            try:
+                shutil.copy2(cover_path, standalone_cover)
+                print(f"[+] Saved cover art: {os.path.basename(standalone_cover)}")
+            except Exception as e:
+                print(f"[!] Warning copying cover art: {e}")
+
+        # Save standalone credits / metadata text file if requested
+        if save_metadata:
+            credits_file = os.path.join(output_dir, f"{safe_title}_credits.txt")
+            try:
+                write_credits_file(credits_file, stream_info)
+                print(f"[+] Saved credits: {os.path.basename(credits_file)}")
+            except Exception as e:
+                print(f"[!] Warning writing credits file: {e}")
 
         metadata = {
             "title": title,
             "artist": artist,
             "album": album
         }
+        if year:
+            metadata["date"] = year
+        if description:
+            metadata["comment"] = description[:1000]
 
         # Stage 2: Conversion & Transcode
         report(0.78, f"Transcoding '{safe_title}' to {target_format.upper()}...")
@@ -109,6 +208,7 @@ def process_conversion(
             resolution=resolution,
             use_nvenc=use_nvenc,
             metadata=metadata,
+            cover_path=cover_path if save_cover_art else None,
             progress_callback=report
         )
 
@@ -135,13 +235,15 @@ def process_playlist_conversion(
     normalize_audio: bool = False,
     resolution: str = "original",
     use_nvenc: bool = True,
+    save_cover_art: bool = True,
+    save_metadata: bool = True,
     keep_temp: bool = False,
     check_updates: bool = True,
     progress_callback: Optional[Callable[[float, str], None]] = None
 ) -> Dict[str, Any]:
     """
     Batch-downloads and transcodes selected playlist items into a dedicated playlist folder.
-    Names output files strictly according to their playlist order (e.g. '1. Song1.mp3', '2. Song2.mp3').
+    Embeds cover art, writes credits files, and names output files strictly by playlist order.
     """
     if check_updates:
         update_engine(status_callback=lambda m: print(f"[AutoUpdate] {m}"))
@@ -172,7 +274,15 @@ def process_playlist_conversion(
     print(f"Selected Items: {total_items}")
     print(f"Target Directory: {playlist_dir}")
     print(f"Format: {target_format.upper()}")
+    print(f"Cover Art: {save_cover_art} | Metadata: {save_metadata}")
     print("=" * 60)
+
+    # Pre-fetch album / playlist cover art if available
+    playlist_cover_dest = os.path.join(playlist_dir, "cover.jpg")
+    if save_cover_art and not os.path.exists(playlist_cover_dest):
+        first_thumb = next((e.get("thumbnail") for e in selected_entries if e.get("thumbnail")), None)
+        if first_thumb:
+            download_and_convert_thumbnail(first_thumb, playlist_cover_dest)
 
     converted_files = []
     failed_files = []
@@ -212,12 +322,39 @@ def process_playlist_conversion(
 
             input_media = stream_info["media_path"]
             track_artist = artist or stream_info.get("artist", "")
+            track_cover = stream_info.get("thumbnail_path") or (playlist_cover_dest if os.path.exists(playlist_cover_dest) else None)
+
+            # Save per-track cover image if desired
+            if save_cover_art and stream_info.get("thumbnail_path"):
+                track_jpg = os.path.join(playlist_dir, f"{ordered_filename}.jpg")
+                try:
+                    shutil.copy2(stream_info["thumbnail_path"], track_jpg)
+                except Exception:
+                    pass
+                if not os.path.exists(playlist_cover_dest):
+                    try:
+                        shutil.copy2(stream_info["thumbnail_path"], playlist_cover_dest)
+                    except Exception:
+                        pass
+
+            # Save per-track credits / description if available
+            if save_metadata and stream_info.get("description"):
+                track_credits = os.path.join(playlist_dir, f"{ordered_filename}_credits.txt")
+                try:
+                    write_credits_file(track_credits, stream_info)
+                except Exception:
+                    pass
+
             metadata = {
                 "title": clean_title,
                 "artist": track_artist,
                 "album": playlist_title,
                 "track": f"{idx}"
             }
+            if stream_info.get("year"):
+                metadata["date"] = stream_info["year"]
+            if stream_info.get("description"):
+                metadata["comment"] = stream_info["description"][:1000]
 
             result_path = convert_media(
                 input_path=input_media,
@@ -230,6 +367,7 @@ def process_playlist_conversion(
                 resolution=resolution,
                 use_nvenc=use_nvenc,
                 metadata=metadata,
+                cover_path=track_cover if save_cover_art else None,
                 progress_callback=item_progress_hook
             )
 
@@ -245,6 +383,33 @@ def process_playlist_conversion(
                     shutil.rmtree(track_work_dir, ignore_errors=True)
                 except Exception:
                     pass
+
+    # Save overall playlist credits index
+    if save_metadata:
+        summary_credits_path = os.path.join(playlist_dir, "playlist_credits.txt")
+        try:
+            pl_lines = [
+                "=" * 80,
+                f"PLAYLIST: {playlist_title}",
+                "=" * 80,
+                f"Total Tracks Converted: {len(converted_files)} / {total_items}",
+                f"Format: {target_format.upper()} | Bitrate: {bitrate}",
+                "-" * 80,
+                "TRACK LISTING:",
+                "-" * 80
+            ]
+            for e in selected_entries:
+                idx = e.get("index", "?")
+                t_tit = e.get("title", "Track")
+                t_art = e.get("artist", "")
+                t_dur = e.get("duration_str", "")
+                pl_lines.append(f"{idx}. {t_tit} - {t_art} ({t_dur})")
+            pl_lines.extend(["=" * 80, ""])
+            with open(summary_credits_path, "w", encoding="utf-8") as f:
+                f.write("\n".join(pl_lines))
+            print(f"[+] Exported playlist summary: {os.path.basename(summary_credits_path)}")
+        except Exception:
+            pass
 
     report_overall(1.0, f"Completed playlist! {len(converted_files)}/{total_items} tracks converted.")
     print("=" * 60)
@@ -273,8 +438,13 @@ def main():
     parser.add_argument("--no-nvenc", action="store_true", help="Disable NVIDIA NVENC GPU acceleration (use CPU libx264)")
     parser.add_argument("--keep-temp", action="store_true", help="Keep intermediate downloaded stream files in temp directory")
     parser.add_argument("--playlist", "-p", action="store_true", help="Force treat input source as playlist")
+    parser.add_argument("--no-cover-art", action="store_true", help="Disable downloading and embedding cover art")
+    parser.add_argument("--no-metadata", action="store_true", help="Disable exporting credits and metadata text files")
 
     args = parser.parse_args()
+
+    save_cover = not args.no_cover_art
+    save_meta = not args.no_metadata
 
     if args.playlist or is_playlist_url(args.source):
         print(f"[*] Detected playlist source. Fetching items...")
@@ -290,6 +460,8 @@ def main():
             normalize_audio=args.normalize,
             resolution=args.resolution,
             use_nvenc=not args.no_nvenc,
+            save_cover_art=save_cover,
+            save_metadata=save_meta,
             keep_temp=args.keep_temp
         )
     else:
@@ -302,6 +474,8 @@ def main():
             normalize_audio=args.normalize,
             resolution=args.resolution,
             use_nvenc=not args.no_nvenc,
+            save_cover_art=save_cover,
+            save_metadata=save_meta,
             keep_temp=args.keep_temp
         )
 

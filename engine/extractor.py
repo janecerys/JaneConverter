@@ -87,44 +87,114 @@ def format_duration(seconds: int) -> str:
         return f"{h}:{m:02d}:{s:02d}"
     return f"{m}:{s:02d}"
 
+def download_and_convert_thumbnail(thumbnail_url: str, output_path: str) -> Optional[str]:
+    """
+    Downloads cover art or thumbnail from URL (or loads local image) and converts it to standard RGB JPEG.
+    Returns path to converted image, or None if download fails.
+    """
+    if not thumbnail_url:
+        return None
+    try:
+        from PIL import Image
+        import io
+        if is_url(thumbnail_url):
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            }
+            resp = requests.get(thumbnail_url, headers=headers, timeout=12)
+            if resp.status_code == 200 and resp.content:
+                img = Image.open(io.BytesIO(resp.content)).convert("RGB")
+            else:
+                return None
+        elif os.path.exists(thumbnail_url):
+            img = Image.open(thumbnail_url).convert("RGB")
+        else:
+            return None
+
+        os.makedirs(os.path.dirname(os.path.abspath(output_path)), exist_ok=True)
+        img.save(output_path, "JPEG", quality=95)
+        return os.path.abspath(output_path)
+    except Exception as e:
+        print(f"[Thumbnail] Could not process cover image: {e}")
+    return None
+
 def resolve_spotify_metadata(spotify_url: str) -> Dict[str, str]:
     """
-    Extracts public track title, artist, and album from Spotify via public oEmbed and OpenGraph.
+    Extracts public track title, artist, album, year, and thumbnail from Spotify via public oEmbed and OpenGraph.
     No API keys or authentication required.
     """
     clean_url = spotify_url.split("?")[0].strip()
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    }
 
     title = "Unknown Track"
     artist = "Unknown Artist"
     album = ""
+    year = ""
     thumbnail = ""
+    description = ""
 
-    # 1. Try public oEmbed endpoint for exact track title and thumbnail
-    try:
-        oembed_url = f"https://open.spotify.com/oembed?url={urllib.parse.quote(clean_url)}"
-        resp = requests.get(oembed_url, headers=headers, timeout=8)
-        if resp.status_code == 200:
-            data = resp.json()
-            title = data.get("title", title)
-            thumbnail = data.get("thumbnail_url", "")
-    except Exception:
-        pass
+    # 1. Try Spotify embed page for rich track details and high-res art
+    m_track = re.search(r'/track/([a-zA-Z0-9]+)', clean_url)
+    if m_track:
+        track_id = m_track.group(1)
+        embed_url = f"https://open.spotify.com/embed/track/{track_id}"
+        try:
+            resp = requests.get(embed_url, headers=headers, timeout=8)
+            if resp.status_code == 200:
+                m_data = re.search(r'<script id="__NEXT_DATA__"[^>]*>([^<]+)</script>', resp.text)
+                if m_data:
+                    data = json.loads(m_data.group(1))
+                    entity = data.get("props", {}).get("pageProps", {}).get("state", {}).get("data", {}).get("entity", {})
+                    title = entity.get("title") or title
+                    artist_list = [a.get("name") for a in entity.get("artists", []) if a.get("name")]
+                    if artist_list:
+                        artist = ", ".join(artist_list)
+                    elif entity.get("subtitle"):
+                        artist = entity.get("subtitle")
 
-    # 2. Scrape OpenGraph description for artist name and album
+                    rel_date = entity.get("releaseDate", {}).get("isoString", "")
+                    if rel_date and len(rel_date) >= 4:
+                        year = rel_date[:4]
+
+                    imgs = entity.get("visualIdentity", {}).get("image", [])
+                    if imgs:
+                        best = max(imgs, key=lambda x: x.get("maxWidth", 0))
+                        thumbnail = best.get("url", "")
+        except Exception:
+            pass
+
+    # 2. Fallback to public oEmbed endpoint for thumbnail / title if needed
+    if not thumbnail or title == "Unknown Track":
+        try:
+            oembed_url = f"https://open.spotify.com/oembed?url={urllib.parse.quote(clean_url)}"
+            resp = requests.get(oembed_url, headers=headers, timeout=8)
+            if resp.status_code == 200:
+                data = resp.json()
+                if title == "Unknown Track":
+                    title = data.get("title", title)
+                if not thumbnail:
+                    thumbnail = data.get("thumbnail_url", "")
+        except Exception:
+            pass
+
+    # 3. Scrape OpenGraph description for album and artist fallback
     try:
         page_resp = requests.get(clean_url, headers=headers, timeout=8)
         if page_resp.status_code == 200:
             html = page_resp.text
-            # Look for description pattern: <meta property="og:description" content="Artist · Album · Song · Year">
             desc_match = re.search(r'<meta property="og:description" content="([^"]+)"', html)
             if desc_match:
                 desc_text = desc_match.group(1)
+                description = desc_text
                 parts = [p.strip() for p in re.split(r'[·•|]', desc_text)]
-                if parts:
+                if parts and artist == "Unknown Artist":
                     artist = parts[0]
-                if len(parts) > 1 and "Song" not in parts[1]:
+                if len(parts) > 1 and "Song" not in parts[1] and not album:
                     album = parts[1]
+                if len(parts) > 3 and not year and parts[-1].isdigit():
+                    year = parts[-1]
     except Exception:
         pass
 
@@ -133,8 +203,11 @@ def resolve_spotify_metadata(spotify_url: str) -> Dict[str, str]:
         "title": title,
         "artist": artist,
         "album": album,
+        "year": year,
         "search_query": search_query,
-        "thumbnail": thumbnail
+        "thumbnail": thumbnail,
+        "thumbnail_url": thumbnail,
+        "description": description
     }
 
 def fetch_media_stream(
@@ -166,6 +239,14 @@ def fetch_media_stream(
             "title": base,
             "artist": "Local Audio",
             "album": "",
+            "year": "",
+            "description": "",
+            "tags": [],
+            "categories": [],
+            "webpage_url": "",
+            "thumbnail_url": "",
+            "thumbnail_path": None,
+            "duration": 0,
             "source_type": "local",
             "is_local": True
         }
@@ -235,12 +316,31 @@ def fetch_media_stream(
             extracted_title = spotify_meta["title"] if spotify_meta else info.get("title", "Media Track")
             extracted_artist = spotify_meta["artist"] if spotify_meta else info.get("uploader", "Unknown Artist")
             extracted_album = spotify_meta["album"] if spotify_meta else ""
+            extracted_year = (spotify_meta.get("year", "") if spotify_meta else "") or (info.get("upload_date", "")[:4] if info.get("upload_date") else "")
+            description = info.get("description", "") or (spotify_meta.get("description", "") if spotify_meta else "")
+            tags = info.get("tags", []) or []
+            categories = info.get("categories", []) or []
+            webpage_url = info.get("webpage_url") or source
+
+            # Thumbnail download and conversion to JPEG
+            thumb_url = (spotify_meta.get("thumbnail") if spotify_meta and spotify_meta.get("thumbnail") else None) or info.get("thumbnail")
+            thumbnail_local_path = None
+            if thumb_url:
+                local_thumb_file = os.path.join(output_dir, "cover.jpg")
+                thumbnail_local_path = download_and_convert_thumbnail(thumb_url, local_thumb_file)
 
             return {
                 "media_path": os.path.abspath(downloaded_file),
                 "title": extracted_title,
                 "artist": extracted_artist,
                 "album": extracted_album,
+                "year": extracted_year,
+                "description": description,
+                "tags": tags,
+                "categories": categories,
+                "webpage_url": webpage_url,
+                "thumbnail_url": thumb_url or "",
+                "thumbnail_path": thumbnail_local_path,
                 "duration": info.get("duration", 0),
                 "source_type": source_type,
                 "is_local": False
@@ -290,6 +390,13 @@ def fetch_playlist_entries(
             entity = payload.get("props", {}).get("pageProps", {}).get("state", {}).get("data", {}).get("entity", {})
             playlist_title = entity.get("title") or entity.get("name") or f"Spotify {kind.capitalize()}"
             raw_tracks = entity.get("trackList", [])
+
+            # Extract high-res playlist cover
+            cover_url = ""
+            img_list = entity.get("visualIdentity", {}).get("image", [])
+            if img_list:
+                best_img = max(img_list, key=lambda x: x.get("maxWidth", 0))
+                cover_url = best_img.get("url", "")
         except Exception as e:
             raise RuntimeError(f"Failed to parse Spotify catalog data: {e}") from e
 
@@ -311,7 +418,9 @@ def fetch_playlist_entries(
                 "duration": t_dur_sec,
                 "duration_str": format_duration(t_dur_sec),
                 "url": track_url,
-                "id": track_id
+                "id": track_id,
+                "thumbnail": cover_url,
+                "album": playlist_title
             })
 
         report(1.0, f"Successfully loaded {len(entries)} items from {playlist_title}.")
@@ -319,6 +428,7 @@ def fetch_playlist_entries(
             "playlist_title": playlist_title,
             "source_type": f"spotify_{kind}",
             "total_count": len(entries),
+            "thumbnail_url": cover_url,
             "entries": entries
         }
 
@@ -342,6 +452,7 @@ def fetch_playlist_entries(
                 raise ValueError("Could not extract playlist information from URL.")
 
             playlist_title = info.get("title") or "Playlist"
+            playlist_cover = info.get("thumbnail") or ""
             raw_entries = info.get("entries") or []
 
             if not raw_entries and info.get("_type") != "playlist":
@@ -357,6 +468,8 @@ def fetch_playlist_entries(
                 t_dur_sec = int(e.get("duration") or 0)
                 e_url = e.get("url") or ""
                 e_id = e.get("id") or ""
+                e_thumb = e.get("thumbnail") or playlist_cover
+                e_desc = e.get("description") or ""
 
                 if not e_url or not is_url(e_url):
                     if e_id and ("youtube" in clean_url.lower() or "youtu.be" in clean_url.lower() or "list=" in clean_url.lower()):
@@ -371,7 +484,10 @@ def fetch_playlist_entries(
                     "duration": t_dur_sec,
                     "duration_str": format_duration(t_dur_sec),
                     "url": e_url,
-                    "id": e_id
+                    "id": e_id,
+                    "thumbnail": e_thumb,
+                    "description": e_desc,
+                    "album": playlist_title
                 })
 
             report(1.0, f"Successfully loaded {len(entries)} items from {playlist_title}.")
@@ -379,8 +495,8 @@ def fetch_playlist_entries(
                 "playlist_title": playlist_title,
                 "source_type": source_type,
                 "total_count": len(entries),
+                "thumbnail_url": playlist_cover,
                 "entries": entries
             }
     except Exception as e:
         raise RuntimeError(f"Playlist extraction failed: {str(e)}") from e
-

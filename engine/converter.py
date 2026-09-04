@@ -36,11 +36,20 @@ def build_ffmpeg_args(
     normalize_audio: bool = False,
     resolution: str = "original",
     use_nvenc: bool = True,
-    metadata: Optional[Dict[str, str]] = None
+    metadata: Optional[Dict[str, str]] = None,
+    cover_path: Optional[str] = None
 ) -> list:
-    """Constructs command line argument list for FFmpeg transcode."""
+    """Constructs command line argument list for FFmpeg transcode, including optional cover art embedding."""
     target_format = target_format.lower().strip(".")
-    cmd = ["ffmpeg", "-y", "-i", input_path]
+    has_valid_cover = bool(cover_path and os.path.exists(cover_path))
+
+    # Determine if target container format supports attached picture stream
+    can_embed_art = has_valid_cover and target_format in ("mp3", "flac", "m4a", "aac")
+
+    if can_embed_art:
+        cmd = ["ffmpeg", "-y", "-i", input_path, "-i", cover_path, "-map", "0:a", "-map", "1:v"]
+    else:
+        cmd = ["ffmpeg", "-y", "-i", input_path]
 
     # Metadata tags
     if metadata:
@@ -50,7 +59,8 @@ def build_ffmpeg_args(
 
     # 1. Audio Conversion
     if target_format in SUPPORTED_AUDIO_FORMATS:
-        cmd.append("-vn")
+        if not can_embed_art:
+            cmd.append("-vn")
 
         # Audio filters
         audio_filters = []
@@ -64,15 +74,27 @@ def build_ffmpeg_args(
         if sample_rate and target_format not in ("flac",):
             cmd.extend(["-ar", str(sample_rate)])
 
-        # Codecs
+        # Codecs and cover art mapping
         if target_format == "mp3":
             cmd.extend(["-c:a", "libmp3lame", "-b:a", bitrate])
+            if can_embed_art:
+                cmd.extend([
+                    "-c:v", "copy",
+                    "-id3v2_version", "3",
+                    "-metadata:s:v", "title=Album cover",
+                    "-metadata:s:v", "comment=Cover (front)",
+                    "-disposition:v", "attached_pic"
+                ])
         elif target_format == "wav":
             cmd.extend(["-c:a", "pcm_s24le"])
         elif target_format == "flac":
             cmd.extend(["-c:a", "flac", "-compression_level", "8"])
+            if can_embed_art:
+                cmd.extend(["-c:v", "copy", "-disposition:v", "attached_pic"])
         elif target_format in ("aac", "m4a"):
             cmd.extend(["-c:a", "aac", "-b:a", bitrate])
+            if can_embed_art:
+                cmd.extend(["-c:v", "copy", "-disposition:v", "attached_pic"])
         elif target_format == "ogg":
             cmd.extend(["-c:a", "libvorbis", "-q:a", "7"])
 
@@ -134,11 +156,13 @@ def convert_media(
     resolution: str = "original",
     use_nvenc: bool = True,
     metadata: Optional[Dict[str, str]] = None,
+    cover_path: Optional[str] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None
 ) -> str:
     """
     Transcodes input_path into the specified target format and writes to output_dir.
-    Automatically handles NVENC GPU fallback to CPU if needed.
+    Optionally embeds cover art image and tags metadata.
+    Automatically handles NVENC GPU fallback to CPU, and cover embedding fallback if needed.
     """
     os.makedirs(output_dir, exist_ok=True)
     target_format = target_format.lower().strip(".")
@@ -160,7 +184,8 @@ def convert_media(
         normalize_audio=normalize_audio,
         resolution=resolution,
         use_nvenc=use_nvenc,
-        metadata=metadata
+        metadata=metadata,
+        cover_path=cover_path
     )
 
     no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -188,6 +213,24 @@ def convert_media(
                 resolution=resolution,
                 use_nvenc=False,
                 metadata=metadata,
+                cover_path=cover_path,
+                progress_callback=progress_callback
+            )
+        # If cover art embedding failed, retry without cover art
+        if cover_path:
+            report(0.85, "Cover art embedding encountered an issue, transcoding media directly...")
+            return convert_media(
+                input_path=input_path,
+                output_dir=output_dir,
+                output_filename=output_filename,
+                target_format=target_format,
+                bitrate=bitrate,
+                sample_rate=sample_rate,
+                normalize_audio=normalize_audio,
+                resolution=resolution,
+                use_nvenc=use_nvenc,
+                metadata=metadata,
+                cover_path=None,
                 progress_callback=progress_callback
             )
         err_detail = e.stderr.decode("utf-8", errors="ignore")

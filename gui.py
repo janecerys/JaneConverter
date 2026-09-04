@@ -755,7 +755,7 @@ class JaneConverterApp(ctk.CTk):
 
         # Additional Audio Switches row
         switches_row = ctk.CTkFrame(settings_card, fg_color="transparent")
-        switches_row.pack(fill="x", padx=12, pady=(0, 10))
+        switches_row.pack(fill="x", padx=12, pady=(0, 6))
 
         self.norm_switch = ctk.CTkSwitch(
             switches_row,
@@ -779,6 +779,30 @@ class JaneConverterApp(ctk.CTk):
             self.gpu_switch.deselect()
             self.gpu_switch.configure(state="disabled")
         self.gpu_switch.pack(side="right", padx=4)
+
+        # Metadata & Cover Art Switches row
+        meta_switches_row = ctk.CTkFrame(settings_card, fg_color="transparent")
+        meta_switches_row.pack(fill="x", padx=12, pady=(0, 10))
+
+        self.save_art_switch = ctk.CTkSwitch(
+            meta_switches_row,
+            text="Embed & Save Cover Art / Thumbnail",
+            progress_color=THEME["magenta"],
+            font=ctk.CTkFont(size=11),
+            text_color=THEME["text_primary"]
+        )
+        self.save_art_switch.select()
+        self.save_art_switch.pack(side="left", padx=4)
+
+        self.save_meta_switch = ctk.CTkSwitch(
+            meta_switches_row,
+            text="Export Full Credits & Metadata (.txt)",
+            progress_color=THEME["cyan"],
+            font=ctk.CTkFont(size=11),
+            text_color=THEME["text_primary"]
+        )
+        self.save_meta_switch.select()
+        self.save_meta_switch.pack(side="right", padx=4)
 
         # 3.3 Destination Directory Card
         dest_card = ctk.CTkFrame(
@@ -1398,6 +1422,8 @@ class JaneConverterApp(ctk.CTk):
         raw_fmt = self.format_menu.get().split()[0].lower()
         normalize_audio = bool(self.norm_switch.get())
         use_nvenc = bool(self.gpu_switch.get())
+        save_cover_art = bool(self.save_art_switch.get())
+        save_metadata = bool(self.save_meta_switch.get())
 
         raw_bitrate = self.quality_menu.get().split()[0].lower()
         bitrate = raw_bitrate.replace("kbps", "k") if "kbps" in raw_bitrate else "320k"
@@ -1431,11 +1457,11 @@ class JaneConverterApp(ctk.CTk):
 
         threading.Thread(
             target=self._run_playlist_worker,
-            args=(playlist_title, selected_entries, output_dir, raw_fmt, bitrate, sample_rate, normalize_audio, resolution, use_nvenc),
+            args=(playlist_title, selected_entries, output_dir, raw_fmt, bitrate, sample_rate, normalize_audio, resolution, use_nvenc, save_cover_art, save_metadata),
             daemon=True
         ).start()
 
-    def _run_playlist_worker(self, playlist_title, selected_entries, output_dir, target_format, bitrate, sample_rate, normalize_audio, resolution, use_nvenc):
+    def _run_playlist_worker(self, playlist_title, selected_entries, output_dir, target_format, bitrate, sample_rate, normalize_audio, resolution, use_nvenc, save_cover_art=True, save_metadata=True):
         old_stdout = sys.stdout
         old_stderr = sys.stderr
         redirector = StdoutRedirector(self.log_queue)
@@ -1453,6 +1479,8 @@ class JaneConverterApp(ctk.CTk):
                 normalize_audio=normalize_audio,
                 resolution=resolution,
                 use_nvenc=use_nvenc,
+                save_cover_art=save_cover_art,
+                save_metadata=save_metadata,
                 progress_callback=lambda f, m: self.after(0, lambda: self._apply_progress(f, m))
             )
             self.last_converted_file = summary["converted_files"][0] if summary["converted_files"] else None
@@ -1510,6 +1538,8 @@ class JaneConverterApp(ctk.CTk):
         raw_fmt = self.format_menu.get().split()[0].lower()
         normalize_audio = bool(self.norm_switch.get())
         use_nvenc = bool(self.gpu_switch.get())
+        save_cover_art = bool(self.save_art_switch.get())
+        save_metadata = bool(self.save_meta_switch.get())
 
         # Bitrate
         raw_bitrate = self.quality_menu.get().split()[0].lower()
@@ -1549,11 +1579,11 @@ class JaneConverterApp(ctk.CTk):
 
         threading.Thread(
             target=self._run_conversion_worker,
-            args=(source, output_dir, raw_fmt, bitrate, sample_rate, normalize_audio, resolution, use_nvenc),
+            args=(source, output_dir, raw_fmt, bitrate, sample_rate, normalize_audio, resolution, use_nvenc, save_cover_art, save_metadata),
             daemon=True
         ).start()
 
-    def _run_conversion_worker(self, source, output_dir, target_format, bitrate, sample_rate, normalize_audio, resolution, use_nvenc):
+    def _run_conversion_worker(self, source, output_dir, target_format, bitrate, sample_rate, normalize_audio, resolution, use_nvenc, save_cover_art=True, save_metadata=True):
         old_stdout = sys.stdout
         old_stderr = sys.stderr
         redirector = StdoutRedirector(self.log_queue)
@@ -1570,6 +1600,8 @@ class JaneConverterApp(ctk.CTk):
                 normalize_audio=normalize_audio,
                 resolution=resolution,
                 use_nvenc=use_nvenc,
+                save_cover_art=save_cover_art,
+                save_metadata=save_metadata,
                 progress_callback=lambda f, m: self.after(0, lambda: self._apply_progress(f, m))
             )
             self.last_converted_file = result_path
