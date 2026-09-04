@@ -254,6 +254,8 @@ def fetch_media_stream(
     source: str,
     output_dir: str,
     audio_only: bool = False,
+    fallback_title: Optional[str] = None,
+    fallback_artist: Optional[str] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None
 ) -> Dict[str, Any]:
     """
@@ -297,10 +299,30 @@ def fetch_media_stream(
     candidates = []
     if source_type == "spotify":
         report(0.05, "Extracting Spotify track details from public metadata...")
-        spotify_meta = resolve_spotify_metadata(source)
-        report(0.12, f"Resolved Spotify track: {spotify_meta['artist']} - {spotify_meta['title']}")
-        candidates = spotify_meta.get("search_candidates") or build_search_candidates(spotify_meta["artist"], spotify_meta["title"])
-        target_url = candidates[0] if candidates else spotify_meta.get("search_query", "")
+        try:
+            spotify_meta = resolve_spotify_metadata(source)
+        except Exception:
+            spotify_meta = None
+
+        if not spotify_meta or not spotify_meta.get("title") or spotify_meta.get("title") == "Unknown Track":
+            if fallback_title:
+                cands = build_search_candidates(fallback_artist or "Unknown Artist", fallback_title)
+                spotify_meta = {
+                    "title": fallback_title,
+                    "artist": fallback_artist or "Unknown Artist",
+                    "album": "",
+                    "year": "",
+                    "search_query": cands[0] if cands else f"{fallback_artist} {fallback_title}",
+                    "search_candidates": cands,
+                    "thumbnail": "",
+                    "thumbnail_url": "",
+                    "description": ""
+                }
+
+        if spotify_meta:
+            report(0.12, f"Resolved Spotify track: {spotify_meta['artist']} - {spotify_meta['title']}")
+            candidates = spotify_meta.get("search_candidates") or build_search_candidates(spotify_meta["artist"], spotify_meta["title"])
+            target_url = candidates[0] if candidates else spotify_meta.get("search_query", "")
     elif target_url.startswith("ytsearch") or target_url.startswith("scsearch"):
         candidates = [target_url]
     else:

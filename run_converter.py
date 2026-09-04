@@ -317,6 +317,8 @@ def process_playlist_conversion(
                 source=item_url,
                 output_dir=track_work_dir,
                 audio_only=is_audio_target,
+                fallback_title=raw_title,
+                fallback_artist=artist,
                 progress_callback=item_progress_hook
             )
 
