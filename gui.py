@@ -472,6 +472,16 @@ class JaneConverterApp(ctk.CTk):
         self._start_hardware_monitor()
         self._start_engine_auto_updater()
 
+        # Handle clean window close and terminate process
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _on_close(self):
+        try:
+            self.destroy()
+        except Exception:
+            pass
+        os._exit(0)
+
     def _start_engine_auto_updater(self):
         def worker():
             def on_status(msg):
