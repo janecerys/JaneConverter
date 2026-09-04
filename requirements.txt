@@ -1,0 +1,6 @@
+customtkinter>=6.0.0
+yt-dlp>=2025.1.0
+psutil>=5.9.0
+pillow>=10.0.0
+nvidia-ml-py>=12.535.0
+requests>=2.31.0
