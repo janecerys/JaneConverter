@@ -491,8 +491,10 @@ class JaneConverterApp(ctk.CTk):
             for item in os.listdir(DEFAULT_TEMP_DIR):
                 item_path = os.path.join(DEFAULT_TEMP_DIR, item)
                 try:
-                    if os.path.isdir(item_path) and (item.startswith("job_") or item.startswith("track_")):
+                    if os.path.isdir(item_path):
                         shutil.rmtree(item_path, ignore_errors=True)
+                    elif os.path.isfile(item_path):
+                        os.remove(item_path)
                 except Exception:
                     pass
 

@@ -352,6 +352,7 @@ def fetch_media_stream(
     ydl_opts = {
         "format": format_selector,
         "outtmpl": os.path.join(output_dir, "%(title).80s_%(id)s.%(ext)s"),
+        "paths": {"home": output_dir, "temp": output_dir},
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
