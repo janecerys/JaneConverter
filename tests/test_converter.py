@@ -56,6 +56,28 @@ def test_build_ffmpeg_args_wav():
     assert "pcm_s24le" in cmd
     assert cmd[-1] == "output.wav"
 
+def test_build_ffmpeg_args_wav_16bit():
+    cmd = build_ffmpeg_args(
+        input_path="input.mp4",
+        output_path="output.wav",
+        target_format="wav",
+        bitrate="16-bit"
+    )
+    assert "-vn" in cmd
+    assert "pcm_s16le" in cmd
+    assert cmd[-1] == "output.wav"
+
+def test_build_ffmpeg_args_wav_32bit():
+    cmd = build_ffmpeg_args(
+        input_path="input.mp4",
+        output_path="output.wav",
+        target_format="wav",
+        bitrate="32-bit"
+    )
+    assert "-vn" in cmd
+    assert "pcm_f32le" in cmd
+    assert cmd[-1] == "output.wav"
+
 def test_build_ffmpeg_args_flac():
     cmd = build_ffmpeg_args(
         input_path="input.wav",
@@ -65,6 +87,19 @@ def test_build_ffmpeg_args_flac():
     assert "-vn" in cmd
     assert "flac" in cmd
     assert "8" in cmd
+    assert "s32" in cmd
+
+def test_build_ffmpeg_args_flac_16bit():
+    cmd = build_ffmpeg_args(
+        input_path="input.wav",
+        output_path="output.flac",
+        target_format="flac",
+        bitrate="16-bit"
+    )
+    assert "-vn" in cmd
+    assert "flac" in cmd
+    assert "8" in cmd
+    assert "s16" in cmd
 
 def test_build_ffmpeg_args_mp4_nvenc():
     cmd = build_ffmpeg_args(

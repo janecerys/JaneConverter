@@ -835,7 +835,8 @@ class JaneConverterApp(ctk.CTk):
         ctk.CTkLabel(f_box, text="Container Format", font=ctk.CTkFont(size=11, weight="bold"), text_color=THEME["text_muted"]).pack(anchor="w", padx=10, pady=(8, 4))
         self.format_menu = ctk.CTkOptionMenu(
             f_box,
-            values=["MP3", "WAV (24-bit PCM)", "FLAC (Lossless)", "AAC", "OGG"],
+            values=["MP3", "WAV", "FLAC", "AAC", "OGG"],
+            command=self._on_format_changed,
             fg_color=THEME["card_inner"],
             button_color=THEME["card_border_glow"],
             button_hover_color=THEME["cyan_hover"],
@@ -1429,25 +1430,70 @@ class JaneConverterApp(ctk.CTk):
                 text_color=THEME["text_muted"]
             )
 
-    def _on_mode_toggled(self, selected_mode: str):
-        if "Audio" in selected_mode:
-            self.format_menu.configure(values=["MP3", "WAV (24-bit PCM)", "FLAC (Lossless)", "AAC", "OGG"])
-            self.format_menu.set("MP3")
+    def _on_format_changed(self, selected_fmt: str):
+        fmt = selected_fmt.split()[0].lower()
+        if fmt == "wav":
+            self.q_label.configure(text="Audio Bit Depth")
+            self.quality_menu.configure(values=[
+                "16-bit PCM (CD Standard)",
+                "24-bit PCM (Studio Master)",
+                "32-bit Float (Studio Master)"
+            ])
+            self.quality_menu.set("24-bit PCM (Studio Master)")
+            self.sr_label.configure(text="Sample Rate")
+            self.sr_menu.configure(values=["48.0 kHz (Studio Broadcast)", "44.1 kHz (CD Standard)", "96.0 kHz (Hi-Res Audio)"])
+            self.sr_menu.set("48.0 kHz (Studio Broadcast)")
+        elif fmt == "flac":
+            self.q_label.configure(text="Audio Bit Depth")
+            self.quality_menu.configure(values=[
+                "16-bit Lossless (CD Standard)",
+                "24-bit Lossless (Studio Master)"
+            ])
+            self.quality_menu.set("24-bit Lossless (Studio Master)")
+            self.sr_label.configure(text="Sample Rate")
+            self.sr_menu.configure(values=["48.0 kHz (Studio Broadcast)", "44.1 kHz (CD Standard)", "96.0 kHz (Hi-Res Audio)"])
+            self.sr_menu.set("48.0 kHz (Studio Broadcast)")
+        elif fmt in ("mp3", "aac"):
             self.q_label.configure(text="Audio Bitrate")
-            self.quality_menu.configure(values=["320 kbps (High Fidelity)", "256 kbps (High Quality)", "192 kbps (Standard)", "128 kbps (Compact)"])
+            self.quality_menu.configure(values=[
+                "320 kbps (High Fidelity)",
+                "256 kbps (High Quality)",
+                "192 kbps (Standard)",
+                "128 kbps (Compact)"
+            ])
             self.quality_menu.set("320 kbps (High Fidelity)")
             self.sr_label.configure(text="Sample Rate")
             self.sr_menu.configure(values=["48.0 kHz (Studio Broadcast)", "44.1 kHz (CD Standard)", "96.0 kHz (Hi-Res Audio)"])
             self.sr_menu.set("48.0 kHz (Studio Broadcast)")
-        else:
-            self.format_menu.configure(values=["MP4", "MKV", "WEBM", "MOV", "GIF"])
-            self.format_menu.set("MP4")
+        elif fmt == "ogg":
+            self.q_label.configure(text="Audio Quality")
+            self.quality_menu.configure(values=[
+                "320 kbps (High Fidelity)",
+                "256 kbps (High Quality)",
+                "192 kbps (Standard)",
+                "128 kbps (Compact)"
+            ])
+            self.quality_menu.set("320 kbps (High Fidelity)")
+            self.sr_label.configure(text="Sample Rate")
+            self.sr_menu.configure(values=["48.0 kHz (Studio Broadcast)", "44.1 kHz (CD Standard)", "96.0 kHz (Hi-Res Audio)"])
+            self.sr_menu.set("48.0 kHz (Studio Broadcast)")
+        elif fmt in ("mp4", "mkv", "webm", "mov", "gif"):
             self.q_label.configure(text="Video Resolution")
             self.quality_menu.configure(values=["Original Best", "1080p Full HD", "720p HD", "4K Ultra HD"])
             self.quality_menu.set("Original Best")
             self.sr_label.configure(text="Frame Rate / Profile")
             self.sr_menu.configure(values=["Auto (Match Source)", "60 FPS High Smoothness", "30 FPS Standard"])
             self.sr_menu.set("Auto (Match Source)")
+
+    def _on_mode_toggled(self, selected_mode: str):
+        if "Audio" in selected_mode:
+            self.format_menu.configure(values=["MP3", "WAV", "FLAC", "AAC", "OGG"])
+            self.format_menu.set("MP3")
+            self._on_format_changed("MP3")
+        else:
+            self.format_menu.configure(values=["MP4", "MKV", "WEBM", "MOV", "GIF"])
+            self.format_menu.set("MP4")
+            self._on_format_changed("MP4")
 
     def _paste_clipboard(self):
         try:
@@ -1562,8 +1608,22 @@ class JaneConverterApp(ctk.CTk):
         save_cover_art = bool(self.save_art_switch.get())
         save_metadata = bool(self.save_meta_switch.get())
 
-        raw_bitrate = self.quality_menu.get().split()[0].lower()
-        bitrate = raw_bitrate.replace("kbps", "k") if "kbps" in raw_bitrate else "320k"
+        raw_quality = self.quality_menu.get().lower()
+        if raw_fmt == "wav":
+            if "16" in raw_quality:
+                bitrate = "16-bit"
+            elif "32" in raw_quality:
+                bitrate = "32-bit"
+            else:
+                bitrate = "24-bit"
+        elif raw_fmt == "flac":
+            if "16" in raw_quality:
+                bitrate = "16-bit"
+            else:
+                bitrate = "24-bit"
+        else:
+            raw_bitrate = self.quality_menu.get().split()[0].lower()
+            bitrate = raw_bitrate.replace("kbps", "k") if "kbps" in raw_bitrate else "320k"
 
         raw_res = self.quality_menu.get().lower()
         if "4k" in raw_res:
@@ -1689,12 +1749,26 @@ class JaneConverterApp(ctk.CTk):
         save_cover_art = bool(self.save_art_switch.get())
         save_metadata = bool(self.save_meta_switch.get())
 
-        # Bitrate
-        raw_bitrate = self.quality_menu.get().split()[0].lower()
-        if "kbps" in raw_bitrate:
-            bitrate = raw_bitrate.replace("kbps", "k")
+        # Bitrate / Bit Depth
+        raw_quality = self.quality_menu.get().lower()
+        if raw_fmt == "wav":
+            if "16" in raw_quality:
+                bitrate = "16-bit"
+            elif "32" in raw_quality:
+                bitrate = "32-bit"
+            else:
+                bitrate = "24-bit"
+        elif raw_fmt == "flac":
+            if "16" in raw_quality:
+                bitrate = "16-bit"
+            else:
+                bitrate = "24-bit"
         else:
-            bitrate = "320k"
+            raw_bitrate = self.quality_menu.get().split()[0].lower()
+            if "kbps" in raw_bitrate:
+                bitrate = raw_bitrate.replace("kbps", "k")
+            else:
+                bitrate = "320k"
 
         # Resolution
         raw_res = self.quality_menu.get().lower()

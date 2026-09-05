@@ -99,8 +99,8 @@ Launch JaneConverter from your Desktop shortcut or run `JaneConverter.exe`.
    - Click **Paste** to paste directly from your clipboard.
 2. **Transcode Parameters**:
    - **Mode**: Toggle between **Audio Format** and **Video Format**.
-   - **Container Format**: Select MP3, WAV (24-bit PCM), FLAC (Lossless), AAC/M4A, or OGG (Audio), or MP4, MKV, WEBM, MOV, GIF (Video).
-   - **Quality / Bitrate**: Choose from 320 kbps (Studio Master), 256 kbps, 192 kbps, or 128 kbps.
+   - **Container Format**: Select MP3, WAV, FLAC, AAC/M4A, or OGG (Audio), or MP4, MKV, WEBM, MOV, GIF (Video).
+   - **Quality / Bitrate**: Choose from MP3/AAC bitrates (320 kbps down to 128 kbps), WAV bit depths (16-bit, 24-bit, 32-bit Float), or FLAC lossless resolutions (16-bit, 24-bit).
    - **Sample Rate**: Select CD standard (44.1 kHz), Studio Broadcast (48.0 kHz), or Hi-Res Audio (96.0 kHz).
    - **EBU R128 Normalization**: Enable to automatically normalize tracks to -14 LUFS streaming broadcast loudness.
    - **Hardware Acceleration**: Automatically detects your host GPU and displays the active encoder (e.g. NVIDIA NVENC, AMD AMF, Intel Quick Sync, Apple VideoToolbox).
@@ -208,8 +208,8 @@ python run_converter.py --help
 
 ## Audio Engineering & Fidelity Standards
 
-- **24-Bit Studio PCM WAV**: Uncompressed studio-grade audio (`pcm_s24le`) preservation.
-- **FLAC Lossless**: Level 8 maximum compression lossless encoding.
+- **Studio PCM WAV (16-Bit / 24-Bit / 32-Bit Float)**: Preserves uncompressed studio audio (`pcm_s16le`, `pcm_s24le`, `pcm_f32le`) up to 32-bit floating point headroom.
+- **FLAC Lossless (16-Bit CD / 24-Bit Studio Master)**: Level 8 maximum compression bit-perfect lossless encoding across CD and studio master bit depths.
 - **320 kbps MP3**: High-fidelity MP3 using LAME encoder with ID3v2.3 attached picture frames.
 - **EBU R128 Loudness Normalization**: Industry standard normalization target (-14 LUFS integrated, -1.5 dB true peak ceiling) ensures consistent volume across tracks without digital clipping.
 - **Sample Rate Conversion**: High-quality resampling up to 96.0 kHz studio master quality.

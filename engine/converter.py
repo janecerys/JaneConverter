@@ -252,7 +252,8 @@ def build_ffmpeg_args(
     use_gpu: Optional[bool] = None,
     gpu_codec: Optional[str] = None,
     metadata: Optional[Dict[str, str]] = None,
-    cover_path: Optional[str] = None
+    cover_path: Optional[str] = None,
+    fps: Optional[int] = None
 ) -> list:
     """Constructs command line argument list for FFmpeg transcode, including optional cover art embedding."""
     target_format = target_format.lower().strip(".")
@@ -297,7 +298,7 @@ def build_ffmpeg_args(
         if audio_filters:
             cmd.extend(["-af", ",".join(audio_filters)])
 
-        if sample_rate and target_format not in ("flac",):
+        if sample_rate:
             cmd.extend(["-ar", str(sample_rate)])
 
         # Codecs and cover art mapping
@@ -312,9 +313,19 @@ def build_ffmpeg_args(
                     "-disposition:v", "attached_pic"
                 ])
         elif target_format == "wav":
-            cmd.extend(["-c:a", "pcm_s24le"])
+            bitrate_lower = (bitrate or "").lower()
+            if "16-bit" in bitrate_lower or "pcm_s16le" in bitrate_lower or bitrate_lower == "16":
+                cmd.extend(["-c:a", "pcm_s16le"])
+            elif "32-bit" in bitrate_lower or "pcm_f32le" in bitrate_lower or "float" in bitrate_lower or bitrate_lower == "32":
+                cmd.extend(["-c:a", "pcm_f32le"])
+            else:
+                cmd.extend(["-c:a", "pcm_s24le"])
         elif target_format == "flac":
-            cmd.extend(["-c:a", "flac", "-compression_level", "8"])
+            bitrate_lower = (bitrate or "").lower()
+            if "16" in bitrate_lower:
+                cmd.extend(["-c:a", "flac", "-sample_fmt", "s16", "-compression_level", "8"])
+            else:
+                cmd.extend(["-c:a", "flac", "-sample_fmt", "s32", "-compression_level", "8"])
             if can_embed_art:
                 cmd.extend(["-c:v", "copy", "-disposition:v", "attached_pic"])
         elif target_format in ("aac", "m4a"):
@@ -327,7 +338,28 @@ def build_ffmpeg_args(
     # 2. Video Conversion
     elif target_format in SUPPORTED_VIDEO_FORMATS:
         if target_format == "gif":
-            vf = "fps=15,scale=480:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse"
+            cmd.append("-an")
+            cmd.extend(["-loop", "0"])
+
+            gif_fps = fps or 15
+            scale_filter = ""
+            res_lower = (resolution or "").lower()
+            if "1080" in res_lower:
+                scale_filter = "scale=1080:-2:flags=lanczos,"
+            elif "720" in res_lower:
+                scale_filter = "scale=720:-2:flags=lanczos,"
+            elif "480" in res_lower:
+                scale_filter = "scale=480:-2:flags=lanczos,"
+            elif "360" in res_lower:
+                scale_filter = "scale=360:-2:flags=lanczos,"
+            elif "240" in res_lower:
+                scale_filter = "scale=240:-2:flags=lanczos,"
+            elif "original" in res_lower:
+                scale_filter = ""
+            else:
+                scale_filter = "scale=480:-2:flags=lanczos,"
+
+            vf = f"fps={gif_fps},{scale_filter}split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=3"
             cmd.extend(["-vf", vf])
         else:
             video_filters = []
@@ -386,7 +418,8 @@ def convert_media(
     metadata: Optional[Dict[str, str]] = None,
     cover_path: Optional[str] = None,
     abort_event: Optional[Any] = None,
-    progress_callback: Optional[Callable[[float, str], None]] = None
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+    fps: Optional[int] = None
 ) -> str:
     """
     Transcodes input_path into the specified target format and writes to output_dir.
@@ -398,7 +431,7 @@ def convert_media(
     active_gpu = use_gpu if use_gpu is not None else use_nvenc
     known_media_exts = {
         ".mp3", ".wav", ".flac", ".aac", ".ogg", ".opus", ".m4a",
-        ".mp4", ".mkv", ".mov", ".avi", ".webm", ".wma", ".alac", ".aiff"
+        ".mp4", ".mkv", ".mov", ".avi", ".webm", ".wma", ".alac", ".aiff", ".gif"
     }
     raw_stem, raw_ext = os.path.splitext(output_filename)
     if raw_ext.lower() in known_media_exts or raw_ext.lower() == f".{target_format}":
@@ -434,7 +467,8 @@ def convert_media(
         use_gpu=active_gpu,
         gpu_codec=gpu_codec,
         metadata=metadata,
-        cover_path=cover_path
+        cover_path=cover_path,
+        fps=fps
     )
 
     no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)

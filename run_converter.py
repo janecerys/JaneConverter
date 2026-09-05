@@ -487,7 +487,7 @@ def main():
     parser.add_argument("--source", "-s", required=True, help="Media URL (YouTube, Spotify, SoundCloud, TikTok, Twitter, etc.) or local file path")
     parser.add_argument("--format", "-f", default="mp3", help="Target output format (mp3, wav, flac, aac, mp4, mkv, gif)")
     parser.add_argument("--output", "-o", default=DEFAULT_CONVERTED_DIR, help="Destination directory for converted files")
-    parser.add_argument("--bitrate", "-b", default="320k", help="Audio bitrate (320k, 256k, 192k, 128k)")
+    parser.add_argument("--bitrate", "-b", default="320k", help="Audio bitrate (320k, 256k, 192k, 128k) or bit depth (16-bit, 24-bit, 32-bit)")
     parser.add_argument("--sample-rate", "-r", type=int, default=48000, help="Audio sample rate in Hz (44100, 48000, 96000)")
     parser.add_argument("--normalize", "-n", action="store_true", help="Apply EBU R128 loudness normalization")
     parser.add_argument("--resolution", default="original", help="Video resolution (original, 4k, 1440p, 1080p, 720p, 480p)")
