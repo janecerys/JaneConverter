@@ -79,3 +79,9 @@ def test_gui_elements_and_wording():
     assert hasattr(gui.JaneConverterApp, "_abort_conversion")
     assert hasattr(gui.JaneConverterApp, "_on_conversion_aborted")
     assert hasattr(gui.JaneConverterApp, "_clear_logs")
+
+    # Verify Check for Updates button and methods exist
+    assert "self.update_btn" in content
+    assert "🔄 Check for Updates" in content
+    assert hasattr(gui.JaneConverterApp, "_on_check_updates_clicked")
+    assert hasattr(gui.JaneConverterApp, "_on_update_completed")

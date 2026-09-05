@@ -16,6 +16,7 @@ from typing import Optional, Dict, Any
 
 import customtkinter as ctk
 from PIL import Image
+from tkinter import messagebox
 
 try:
     import psutil
@@ -46,7 +47,12 @@ for d in (DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR, ASSETS_DIR):
 
 from engine.extractor import identify_source_type, is_url, is_playlist_url, fetch_playlist_entries
 from engine.converter import SUPPORTED_AUDIO_FORMATS, SUPPORTED_VIDEO_FORMATS
-from engine.updater import update_engine, get_current_engine_version
+from engine.updater import (
+    update_engine,
+    get_current_engine_version,
+    check_for_repo_updates,
+    check_and_apply_all_updates
+)
 from run_converter import process_conversion, process_playlist_conversion
 
 THEME = {
@@ -500,9 +506,69 @@ class JaneConverterApp(ctk.CTk):
     def _start_engine_auto_updater(self):
         def worker():
             def on_status(msg):
-                self.log_queue.put(f"[Engine] {msg}\n")
+                self.log_queue.put(f"[AutoUpdate] {msg}\n")
             update_engine(status_callback=on_status)
+            try:
+                repo_info = check_for_repo_updates()
+                if repo_info.get("has_update"):
+                    commits = repo_info.get("commits_behind", 1)
+                    s = "s" if commits > 1 else ""
+                    on_status(f"JaneConverter update available ({commits} new commit{s}). Click 'Check for Updates' to patch.")
+            except Exception:
+                pass
         threading.Thread(target=worker, daemon=True).start()
+
+    def _on_check_updates_clicked(self):
+        if getattr(self, "_is_checking_updates", False):
+            return
+        self._is_checking_updates = True
+        self.update_btn.configure(state="disabled", text="🔄 Checking...")
+
+        def worker():
+            def on_status(msg):
+                self.log_queue.put(f"[AutoUpdate] {msg}\n")
+
+            try:
+                result = check_and_apply_all_updates(status_callback=on_status)
+            except Exception as e:
+                result = {
+                    "repo_updated": False,
+                    "engine_updated": False,
+                    "already_up_to_date": False,
+                    "error": str(e),
+                }
+
+            self.after(0, lambda: self._on_update_completed(result))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _on_update_completed(self, result: Dict[str, Any]):
+        self._is_checking_updates = False
+        self.update_btn.configure(state="normal", text="🔄 Check for Updates")
+
+        if result.get("repo_updated") or result.get("engine_updated"):
+            changes = []
+            if result.get("repo_updated"):
+                changes.append("JaneConverter application code updated to the latest repository commit.")
+            if result.get("engine_updated"):
+                changes.append(f"Extractor engine updated to v{result.get('current_engine_version', 'latest')}.")
+
+            body = "\n\n".join(changes)
+            if result.get("repo_updated"):
+                body += "\n\nPlease restart JaneConverter to run the updated code."
+            messagebox.showinfo("Updates Installed", body)
+        elif result.get("already_up_to_date"):
+            commit = result.get("current_commit", "latest")
+            eng_ver = result.get("current_engine_version", "latest")
+            messagebox.showinfo(
+                "JaneConverter Up to Date",
+                f"JaneConverter is already running the latest version!\n\n"
+                f"Repo Commit: {commit}\n"
+                f"Extractor Engine: v{eng_ver}"
+            )
+        else:
+            err = result.get("error") or "Could not check for updates."
+            messagebox.showwarning("Update Check", f"{err}\n\nPlease check your internet connection and try again.")
 
     # -------------------------------------------------------------
     # 1. HEADER SECTION
@@ -546,7 +612,7 @@ class JaneConverterApp(ctk.CTk):
         )
         sub_lbl.pack(side="left")
 
-        # Telemetry Pill (Right)
+        # Telemetry Pill (Far Right)
         hw_pill = ctk.CTkFrame(
             header_frame,
             fg_color=THEME["input_bg"],
@@ -571,6 +637,22 @@ class JaneConverterApp(ctk.CTk):
             text_color=THEME["cyan"]
         )
         self.hw_badge.pack(side="left", padx=(0, 12), pady=4)
+
+        # Check for Updates Button (Left of Telemetry Pill)
+        self.update_btn = ctk.CTkButton(
+            header_frame,
+            text="🔄 Check for Updates",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            fg_color=THEME["card_inner"],
+            hover_color=THEME["card_border_glow"],
+            border_width=1,
+            border_color=THEME["card_border"],
+            text_color=THEME["text_primary"],
+            height=30,
+            corner_radius=15,
+            command=self._on_check_updates_clicked
+        )
+        self.update_btn.pack(side="right", padx=(0, 10), pady=12)
 
     # -------------------------------------------------------------
     # 2. MAIN TABS

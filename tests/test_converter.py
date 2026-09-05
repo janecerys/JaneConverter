@@ -14,7 +14,14 @@ from engine.converter import (
     SUPPORTED_AUDIO_FORMATS,
     SUPPORTED_VIDEO_FORMATS
 )
-from engine.updater import get_current_engine_version, check_for_engine_updates
+from engine.updater import (
+    get_current_engine_version,
+    check_for_engine_updates,
+    is_git_repo,
+    get_current_repo_commit,
+    check_for_repo_updates,
+    check_and_apply_all_updates
+)
 
 def test_build_ffmpeg_args_mp3():
     cmd = build_ffmpeg_args(
@@ -118,3 +125,29 @@ def test_engine_updater_version_check():
     assert isinstance(info, dict)
     assert "current_version" in info
     assert "online" in info
+
+def test_repo_updater_git_check():
+    assert is_git_repo() is True
+    commit = get_current_repo_commit()
+    assert isinstance(commit, str)
+    assert len(commit) >= 7
+
+def test_repo_updater_check_for_updates():
+    info = check_for_repo_updates()
+    assert isinstance(info, dict)
+    assert "has_update" in info
+    assert "is_git" in info
+    assert info["is_git"] is True
+    assert "current_commit" in info
+
+def test_check_and_apply_all_updates():
+    logs = []
+    def log_cb(msg):
+        logs.append(msg)
+
+    result = check_and_apply_all_updates(status_callback=log_cb)
+    assert isinstance(result, dict)
+    assert "repo_updated" in result
+    assert "engine_updated" in result
+    assert "already_up_to_date" in result
+    assert len(logs) > 0

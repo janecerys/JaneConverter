@@ -217,7 +217,9 @@ python run_converter.py --help
 - **Local files stay local**: When converting local audio or video files, processing happens entirely on your machine with zero network connections.
 - **Zero API keys required**: Spotify metadata extraction uses public catalog endpoints and OpenGraph information. No Spotify account, developer keys, or logins are needed.
 - **Direct stream retrieval**: Media streams are fetched directly from host servers without passing through third-party proxy services.
-- **Auto-updater**: JaneConverter queries the official PyPI registry on launch to check for updated `yt-dlp` releases, keeping stream extractors working when platforms change their security signatures.
+- **Two-Tier Auto-Updater**:
+  - **Stream Extractor Engine**: On launch, JaneConverter checks PyPI in the background for the latest `yt-dlp` extractor releases, keeping stream extractors working smoothly when online platforms change security signatures.
+  - **Repository Self-Patching**: Click the **🔄 Check for Updates** button in the top header at any time. JaneConverter will automatically fetch and pull the latest code updates from the repository, refresh dependencies, and recompile the launcher with no manual re-downloading required.
 
 ## Troubleshooting
 
