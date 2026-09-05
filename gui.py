@@ -898,8 +898,7 @@ class JaneConverterApp(ctk.CTk):
             text=gpu_switch_text,
             progress_color=THEME["success"],
             font=ctk.CTkFont(size=11),
-            text_color=THEME["text_primary"],
-            command=self._on_setting_changed
+            text_color=THEME["text_primary"]
         )
         if self.hw_info.get("has_gpu"):
             self.gpu_switch.select()
