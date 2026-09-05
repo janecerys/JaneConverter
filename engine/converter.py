@@ -6,6 +6,7 @@ and metadata tagging.
 """
 
 import os
+import sys
 import re
 import time
 import shutil
@@ -52,6 +53,193 @@ def get_unique_target_path(directory: str, filename: str) -> str:
             return candidate
         counter += 1
 
+def get_host_gpus() -> list:
+    """
+    Discovers all physical and integrated GPUs on the host system.
+    Supports Windows (Registry & PowerShell), Linux (lspci / sysfs), and macOS (system_profiler / sysctl).
+    """
+    gpus = []
+    if sys.platform == "win32":
+        try:
+            import winreg
+            key_path = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}"
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path) as k:
+                for i in range(20):
+                    try:
+                        sub_name = winreg.EnumKey(k, i)
+                        with winreg.OpenKey(k, sub_name) as sk:
+                            try:
+                                desc, _ = winreg.QueryValueEx(sk, "DriverDesc")
+                                if desc and desc not in gpus:
+                                    low = desc.lower()
+                                    if not any(v in low for v in ["virtual", "mirage", "remote", "vbox", "parsec", "rdp"]):
+                                        gpus.append(desc)
+                            except Exception:
+                                pass
+                    except Exception:
+                        break
+        except Exception:
+            pass
+
+    elif sys.platform.startswith("linux"):
+        try:
+            no_win = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            res = subprocess.run(["lspci"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2.0, creationflags=no_win)
+            if res.returncode == 0:
+                for line in res.stdout.splitlines():
+                    if any(k in line.lower() for k in ["vga", "3d", "display"]):
+                        parts = line.split(":", 2)
+                        model = parts[-1].strip() if len(parts) >= 3 else line.strip()
+                        if model and model not in gpus:
+                            gpus.append(model)
+        except Exception:
+            pass
+
+    elif sys.platform == "darwin":
+        try:
+            no_win = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            res = subprocess.run(["sysctl", "-n", "machdep.cpu.brand_string"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=2.0, creationflags=no_win)
+            if res.returncode == 0 and "apple" in res.stdout.lower():
+                gpus.append(f"{res.stdout.strip()} (GPU)")
+        except Exception:
+            pass
+        if not gpus:
+            gpus.append("Apple Silicon GPU")
+
+    return gpus
+
+def get_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Selects the optimal hardware video encoder for the current system.
+    Supports NVIDIA (NVENC), AMD (AMF/VAAPI), Intel (QSV), Apple (VideoToolbox), and CPU fallback.
+    Configured for maximum throughput and parallel hardware saturation.
+    """
+    if preferred_codec:
+        if preferred_codec == "h264_nvenc":
+            return {
+                "has_gpu": True, "vendor": "nvidia", "gpu_name": "NVIDIA GPU", "short_name": "NVIDIA",
+                "encoder": "h264_nvenc", "encoder_label": "NVIDIA NVENC",
+                "args": ["-c:v", "h264_nvenc", "-preset", "p2", "-cq", "23", "-b:v", "0", "-pix_fmt", "yuv420p"]
+            }
+        elif preferred_codec == "h264_amf":
+            return {
+                "has_gpu": True, "vendor": "amd", "gpu_name": "AMD Radeon GPU", "short_name": "AMD",
+                "encoder": "h264_amf", "encoder_label": "AMD AMF",
+                "args": ["-c:v", "h264_amf", "-quality", "speed", "-pix_fmt", "yuv420p"]
+            }
+        elif preferred_codec == "h264_qsv":
+            return {
+                "has_gpu": True, "vendor": "intel", "gpu_name": "Intel GPU", "short_name": "Intel",
+                "encoder": "h264_qsv", "encoder_label": "Intel Quick Sync",
+                "args": ["-c:v", "h264_qsv", "-preset", "veryfast", "-global_quality", "23", "-pix_fmt", "nv12"]
+            }
+        elif preferred_codec == "h264_videotoolbox":
+            return {
+                "has_gpu": True, "vendor": "apple", "gpu_name": "Apple Silicon", "short_name": "Apple",
+                "encoder": "h264_videotoolbox", "encoder_label": "Apple VideoToolbox",
+                "args": ["-c:v", "h264_videotoolbox", "-q:v", "65", "-realtime", "0", "-pix_fmt", "yuv420p"]
+            }
+        elif preferred_codec == "h264_vaapi":
+            return {
+                "has_gpu": True, "vendor": "linux_vaapi", "gpu_name": "VAAPI Display", "short_name": "VAAPI",
+                "encoder": "h264_vaapi", "encoder_label": "Linux VAAPI",
+                "args": ["-c:v", "h264_vaapi", "-qp", "23"]
+            }
+        elif preferred_codec == "libx264":
+            return {
+                "has_gpu": False, "vendor": "cpu", "gpu_name": "Multi-Core CPU", "short_name": "CPU Mode",
+                "encoder": "libx264", "encoder_label": "CPU Multi-Core",
+                "args": ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p"]
+            }
+
+    gpus = get_host_gpus()
+    has_nvidia = any(any(k in g.lower() for k in ["nvidia", "geforce", "quadro", "rtx", "gtx", "tesla"]) for g in gpus)
+    has_amd = any(any(k in g.lower() for k in ["amd", "radeon"]) for g in gpus)
+    has_intel = any(any(k in g.lower() for k in ["intel", "arc", "iris", "uhd"]) for g in gpus)
+    has_apple = (sys.platform == "darwin")
+
+    # Priority 1: NVIDIA GPU (NVENC)
+    if has_nvidia:
+        gpu_name = next((g for g in gpus if any(k in g.lower() for k in ["nvidia", "geforce", "quadro", "rtx", "gtx", "tesla"])), "NVIDIA GPU")
+        short = gpu_name.replace("NVIDIA ", "").replace("GeForce ", "").strip()
+        return {
+            "has_gpu": True,
+            "vendor": "nvidia",
+            "gpu_name": gpu_name,
+            "short_name": short,
+            "encoder": "h264_nvenc",
+            "encoder_label": "NVIDIA NVENC",
+            "args": ["-c:v", "h264_nvenc", "-preset", "p2", "-cq", "23", "-b:v", "0", "-pix_fmt", "yuv420p"]
+        }
+
+    # Priority 2: AMD GPU (AMF on Windows, AMF/VAAPI on Linux)
+    if has_amd:
+        gpu_name = next((g for g in gpus if any(k in g.lower() for k in ["amd", "radeon"])), "AMD Radeon GPU")
+        short = gpu_name.replace("AMD ", "").replace("Radeon(TM) ", "Radeon ").replace("Graphics", "").strip() or "Radeon"
+        encoder = "h264_amf" if sys.platform == "win32" else "h264_vaapi"
+        label = "AMD AMF" if sys.platform == "win32" else "AMD VAAPI"
+        args = ["-c:v", encoder, "-quality", "speed", "-pix_fmt", "yuv420p"] if encoder == "h264_amf" else ["-c:v", encoder, "-qp", "23"]
+        return {
+            "has_gpu": True,
+            "vendor": "amd",
+            "gpu_name": gpu_name,
+            "short_name": short,
+            "encoder": encoder,
+            "encoder_label": label,
+            "args": args
+        }
+
+    # Priority 3: Intel GPU (QSV)
+    if has_intel:
+        gpu_name = next((g for g in gpus if any(k in g.lower() for k in ["intel", "arc", "iris", "uhd"])), "Intel GPU")
+        short = gpu_name.replace("Intel(R) ", "").replace("Graphics", "").strip() or "Intel HD/Arc"
+        return {
+            "has_gpu": True,
+            "vendor": "intel",
+            "gpu_name": gpu_name,
+            "short_name": short,
+            "encoder": "h264_qsv",
+            "encoder_label": "Intel Quick Sync",
+            "args": ["-c:v", "h264_qsv", "-preset", "veryfast", "-global_quality", "23", "-pix_fmt", "nv12"]
+        }
+
+    # Priority 4: Apple Silicon / macOS (VideoToolbox)
+    if has_apple:
+        gpu_name = gpus[0] if gpus else "Apple Silicon GPU"
+        short = "Apple M-Series" if "apple" in gpu_name.lower() else "Apple GPU"
+        return {
+            "has_gpu": True,
+            "vendor": "apple",
+            "gpu_name": gpu_name,
+            "short_name": short,
+            "encoder": "h264_videotoolbox",
+            "encoder_label": "Apple VideoToolbox",
+            "args": ["-c:v", "h264_videotoolbox", "-q:v", "65", "-realtime", "0", "-pix_fmt", "yuv420p"]
+        }
+
+    # Priority 5: Linux generic VAAPI
+    if sys.platform.startswith("linux") and gpus:
+        return {
+            "has_gpu": True,
+            "vendor": "linux_vaapi",
+            "gpu_name": gpus[0],
+            "short_name": "VAAPI GPU",
+            "encoder": "h264_vaapi",
+            "encoder_label": "Linux VAAPI",
+            "args": ["-c:v", "h264_vaapi", "-qp", "23"]
+        }
+
+    # CPU Fallback
+    return {
+        "has_gpu": False,
+        "vendor": "cpu",
+        "gpu_name": "Multi-Core CPU",
+        "short_name": "CPU Mode",
+        "encoder": "libx264",
+        "encoder_label": "CPU Multi-Core",
+        "args": ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p"]
+    }
+
 def build_ffmpeg_args(
     input_path: str,
     output_path: str,
@@ -61,21 +249,33 @@ def build_ffmpeg_args(
     normalize_audio: bool = False,
     resolution: str = "original",
     use_nvenc: bool = True,
+    use_gpu: Optional[bool] = None,
+    gpu_codec: Optional[str] = None,
     metadata: Optional[Dict[str, str]] = None,
     cover_path: Optional[str] = None
 ) -> list:
     """Constructs command line argument list for FFmpeg transcode, including optional cover art embedding."""
     target_format = target_format.lower().strip(".")
+    active_gpu = use_gpu if use_gpu is not None else use_nvenc
     has_valid_cover = bool(cover_path and os.path.exists(cover_path))
 
     # Determine if target container format supports attached picture stream
     can_embed_art = has_valid_cover and target_format in ("mp3", "flac", "m4a", "aac")
 
     ffmpeg_bin = get_ffmpeg_binary()
+    cmd = [ffmpeg_bin, "-y"]
+
+    # Peak GPU Acceleration: offload video decoding to GPU silicon when hardware acceleration is active
+    if active_gpu and target_format in SUPPORTED_VIDEO_FORMATS and target_format != "gif":
+        cmd.extend(["-hwaccel", "auto"])
+
+    # Multi-core thread scaling and input queue buffering for peak throughput
+    cmd.extend(["-threads", "0", "-thread_queue_size", "1024"])
+
     if can_embed_art:
-        cmd = [ffmpeg_bin, "-y", "-i", input_path, "-i", cover_path, "-map", "0:a", "-map", "1:v"]
+        cmd.extend(["-i", input_path, "-i", cover_path, "-map", "0:a", "-map", "1:v"])
     else:
-        cmd = [ffmpeg_bin, "-y", "-i", input_path]
+        cmd.extend(["-i", input_path])
 
     # Metadata tags
     if metadata:
@@ -130,10 +330,6 @@ def build_ffmpeg_args(
             vf = "fps=15,scale=480:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse"
             cmd.extend(["-vf", vf])
         else:
-            # Video encoder
-            v_codec = "h264_nvenc" if use_nvenc else "libx264"
-            preset = "p4" if use_nvenc else "medium"
-
             video_filters = []
             if resolution == "4k":
                 video_filters.append("scale=-2:2160")
@@ -159,9 +355,13 @@ def build_ffmpeg_args(
             if target_format == "webm":
                 cmd.extend(["-c:v", "libvpx-vp9", "-crf", "30", "-b:v", "0", "-c:a", "libopus", "-b:a", "160k"])
             else:
+                if active_gpu:
+                    enc_spec = get_best_hardware_encoder(preferred_codec=gpu_codec)
+                    cmd.extend(enc_spec["args"])
+                else:
+                    cmd.extend(["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p"])
+
                 cmd.extend([
-                    "-c:v", v_codec,
-                    "-preset", preset,
                     "-c:a", "aac",
                     "-b:a", "192k"
                 ])
@@ -181,6 +381,8 @@ def convert_media(
     normalize_audio: bool = False,
     resolution: str = "original",
     use_nvenc: bool = True,
+    use_gpu: Optional[bool] = None,
+    gpu_codec: Optional[str] = None,
     metadata: Optional[Dict[str, str]] = None,
     cover_path: Optional[str] = None,
     abort_event: Optional[Any] = None,
@@ -189,12 +391,21 @@ def convert_media(
     """
     Transcodes input_path into the specified target format and writes to output_dir.
     Optionally embeds cover art image and tags metadata.
-    Automatically handles NVENC GPU fallback to CPU, and cover embedding fallback if needed.
+    Automatically handles hardware GPU fallback to multi-core CPU, and cover embedding fallback if needed.
     """
     os.makedirs(output_dir, exist_ok=True)
     target_format = target_format.lower().strip(".")
-    final_output_name = f"{output_filename}.{target_format}"
-    destination_path = get_unique_target_path(output_dir, final_output_name)
+    active_gpu = use_gpu if use_gpu is not None else use_nvenc
+    known_media_exts = {
+        ".mp3", ".wav", ".flac", ".aac", ".ogg", ".opus", ".m4a",
+        ".mp4", ".mkv", ".mov", ".avi", ".webm", ".wma", ".alac", ".aiff"
+    }
+    raw_stem, raw_ext = os.path.splitext(output_filename)
+    if raw_ext.lower() in known_media_exts or raw_ext.lower() == f".{target_format}":
+        stem = raw_stem
+    else:
+        stem = output_filename
+    destination_path = get_unique_target_path(output_dir, f"{stem}.{target_format}")
 
     if abort_event and abort_event.is_set():
         raise KeyboardInterrupt("Conversion aborted by user.")
@@ -219,7 +430,9 @@ def convert_media(
         sample_rate=sample_rate,
         normalize_audio=normalize_audio,
         resolution=resolution,
-        use_nvenc=use_nvenc,
+        use_nvenc=active_gpu,
+        use_gpu=active_gpu,
+        gpu_codec=gpu_codec,
         metadata=metadata,
         cover_path=cover_path
     )
@@ -278,9 +491,9 @@ def convert_media(
         raise
 
     except subprocess.CalledProcessError as e:
-        # If NVENC failed, retry with CPU libx264
-        if use_nvenc and target_format in ("mp4", "mkv", "mov"):
-            report(0.85, "NVENC hardware encoder unavailable, switching to CPU transcode...")
+        # If hardware GPU transcode failed, retry with multi-core CPU libx264
+        if active_gpu and target_format in ("mp4", "mkv", "mov"):
+            report(0.85, "Hardware GPU encoder unavailable or failed, switching to multi-core CPU transcode...")
             return convert_media(
                 input_path=input_path,
                 output_dir=output_dir,
@@ -291,6 +504,7 @@ def convert_media(
                 normalize_audio=normalize_audio,
                 resolution=resolution,
                 use_nvenc=False,
+                use_gpu=False,
                 metadata=metadata,
                 cover_path=cover_path,
                 abort_event=abort_event,
@@ -308,7 +522,9 @@ def convert_media(
                 sample_rate=sample_rate,
                 normalize_audio=normalize_audio,
                 resolution=resolution,
-                use_nvenc=use_nvenc,
+                use_nvenc=active_gpu,
+                use_gpu=active_gpu,
+                gpu_codec=gpu_codec,
                 metadata=metadata,
                 cover_path=None,
                 abort_event=abort_event,

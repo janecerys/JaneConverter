@@ -85,3 +85,11 @@ def test_gui_elements_and_wording():
     assert "🔄 Check for Updates" in content
     assert hasattr(gui.JaneConverterApp, "_on_check_updates_clicked")
     assert hasattr(gui.JaneConverterApp, "_on_update_completed")
+
+    # Verify universal GPU switch and hardware detection
+    assert "self.gpu_switch" in content
+    assert "Hardware Acceleration" in content
+    hw_info = gui.get_system_hardware_info()
+    assert "has_gpu" in hw_info
+    assert "encoder_name" in hw_info
+    assert "short_gpu" in hw_info

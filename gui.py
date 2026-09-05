@@ -46,7 +46,12 @@ for d in (DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR, ASSETS_DIR):
     os.makedirs(d, exist_ok=True)
 
 from engine.extractor import identify_source_type, is_url, is_playlist_url, fetch_playlist_entries
-from engine.converter import SUPPORTED_AUDIO_FORMATS, SUPPORTED_VIDEO_FORMATS
+from engine.converter import (
+    SUPPORTED_AUDIO_FORMATS,
+    SUPPORTED_VIDEO_FORMATS,
+    get_best_hardware_encoder,
+    get_host_gpus
+)
 from engine.updater import (
     update_engine,
     get_current_engine_version,
@@ -76,7 +81,7 @@ THEME = {
 }
 
 def get_system_hardware_info() -> Dict[str, Any]:
-    """Dynamically queries host CPU, RAM, and GPU models."""
+    """Dynamically queries host CPU, RAM, and GPU models across NVIDIA, AMD, Intel, and Apple platforms."""
     cpu_name = "Host Processor"
     try:
         import winreg
@@ -98,17 +103,25 @@ def get_system_hardware_info() -> Dict[str, Any]:
         except Exception:
             pass
 
-    gpu_model = "CPU Fallback (No NVIDIA GPU)"
-    short_gpu = "CPU Mode"
-    has_nvidia = False
-    if pynvml and nvml_handle:
+    # Universal GPU and Hardware Acceleration Detection
+    enc_info = get_best_hardware_encoder()
+    all_gpus = get_host_gpus()
+    has_gpu = enc_info.get("has_gpu", False)
+    has_nvidia = (enc_info.get("vendor") == "nvidia")
+    gpu_model = enc_info.get("gpu_name", "Multi-Core CPU")
+    short_gpu = enc_info.get("short_name", "CPU Mode")
+    encoder_name = enc_info.get("encoder_label", "CPU Multi-Core")
+    encoder_id = enc_info.get("encoder", "libx264")
+
+    # If NVIDIA GPU is present and PyNVML is available, query real-time handle
+    if has_nvidia and pynvml and nvml_handle:
         try:
             raw_name = pynvml.nvmlDeviceGetName(nvml_handle)
             if isinstance(raw_name, bytes):
                 raw_name = raw_name.decode("utf-8")
-            gpu_model = raw_name
-            short_gpu = raw_name.replace("NVIDIA ", "").replace("GeForce ", "").strip()
-            has_nvidia = True
+            if raw_name:
+                gpu_model = raw_name
+                short_gpu = raw_name.replace("NVIDIA ", "").replace("GeForce ", "").strip()
         except Exception:
             pass
 
@@ -118,7 +131,11 @@ def get_system_hardware_info() -> Dict[str, Any]:
         "total_ram_gb": total_ram_gb,
         "gpu_model": gpu_model,
         "short_gpu": short_gpu,
-        "has_nvidia": has_nvidia
+        "has_nvidia": has_nvidia,
+        "has_gpu": has_gpu,
+        "encoder_name": encoder_name,
+        "encoder_id": encoder_id,
+        "all_gpus": all_gpus
     }
 
 class StdoutRedirector:
@@ -875,14 +892,16 @@ class JaneConverterApp(ctk.CTk):
         )
         self.norm_switch.pack(side="left", padx=4)
 
+        gpu_switch_text = f"Hardware Acceleration ({self.hw_info['short_gpu']} • {self.hw_info['encoder_name']})" if self.hw_info.get("has_gpu") else "Hardware Acceleration (CPU Mode)"
         self.gpu_switch = ctk.CTkSwitch(
             switches_row,
-            text="NVIDIA NVENC Hardware Transcode Acceleration",
+            text=gpu_switch_text,
             progress_color=THEME["success"],
             font=ctk.CTkFont(size=11),
-            text_color=THEME["text_primary"]
+            text_color=THEME["text_primary"],
+            command=self._on_setting_changed
         )
-        if self.hw_info["has_nvidia"]:
+        if self.hw_info.get("has_gpu"):
             self.gpu_switch.select()
         else:
             self.gpu_switch.deselect()
@@ -1361,13 +1380,17 @@ class JaneConverterApp(ctk.CTk):
         threading.Thread(target=poll, daemon=True).start()
 
     def _apply_hardware_stats(self, cpu, ram_pct, ram_used, ram_tot, gpu_pct, gpu_used, gpu_tot, gpu_temp):
-        if self.hw_info["has_nvidia"]:
+        if self.hw_info.get("has_nvidia") and (gpu_pct > 0 or gpu_temp > 0):
             self.hw_badge.configure(
                 text=f"CPU: {cpu:.0f}% | RAM: {ram_used:.1f}GB | {self.hw_info['short_gpu']}: {gpu_pct}% ({gpu_temp}°C)"
             )
+        elif self.hw_info.get("has_gpu"):
+            self.hw_badge.configure(
+                text=f"CPU: {cpu:.0f}% | RAM: {ram_used:.1f}GB | {self.hw_info['short_gpu']}"
+            )
         else:
             self.hw_badge.configure(
-                text=f"CPU: {cpu:.0f}% | RAM: {ram_used:.1f}GB | Software Render"
+                text=f"CPU: {cpu:.0f}% | RAM: {ram_used:.1f}GB | CPU Mode"
             )
 
     # -------------------------------------------------------------
@@ -1536,7 +1559,7 @@ class JaneConverterApp(ctk.CTk):
 
         raw_fmt = self.format_menu.get().split()[0].lower()
         normalize_audio = bool(self.norm_switch.get())
-        use_nvenc = bool(self.gpu_switch.get())
+        use_gpu = bool(self.gpu_switch.get())
         save_cover_art = bool(self.save_art_switch.get())
         save_metadata = bool(self.save_meta_switch.get())
 
@@ -1574,11 +1597,11 @@ class JaneConverterApp(ctk.CTk):
 
         threading.Thread(
             target=self._run_playlist_worker,
-            args=(playlist_title, selected_entries, output_dir, raw_fmt, bitrate, sample_rate, normalize_audio, resolution, use_nvenc, save_cover_art, save_metadata),
+            args=(playlist_title, selected_entries, output_dir, raw_fmt, bitrate, sample_rate, normalize_audio, resolution, use_gpu, save_cover_art, save_metadata),
             daemon=True
         ).start()
 
-    def _run_playlist_worker(self, playlist_title, selected_entries, output_dir, target_format, bitrate, sample_rate, normalize_audio, resolution, use_nvenc, save_cover_art=True, save_metadata=True):
+    def _run_playlist_worker(self, playlist_title, selected_entries, output_dir, target_format, bitrate, sample_rate, normalize_audio, resolution, use_gpu, save_cover_art=True, save_metadata=True):
         old_stdout = sys.stdout
         old_stderr = sys.stderr
         redirector = StdoutRedirector(self.log_queue)
@@ -1595,7 +1618,8 @@ class JaneConverterApp(ctk.CTk):
                 sample_rate=sample_rate,
                 normalize_audio=normalize_audio,
                 resolution=resolution,
-                use_nvenc=use_nvenc,
+                use_nvenc=use_gpu,
+                use_gpu=use_gpu,
                 save_cover_art=save_cover_art,
                 save_metadata=save_metadata,
                 abort_event=self.abort_requested,
@@ -1662,7 +1686,7 @@ class JaneConverterApp(ctk.CTk):
         # Parse selected format
         raw_fmt = self.format_menu.get().split()[0].lower()
         normalize_audio = bool(self.norm_switch.get())
-        use_nvenc = bool(self.gpu_switch.get())
+        use_gpu = bool(self.gpu_switch.get())
         save_cover_art = bool(self.save_art_switch.get())
         save_metadata = bool(self.save_meta_switch.get())
 
@@ -1706,11 +1730,11 @@ class JaneConverterApp(ctk.CTk):
 
         threading.Thread(
             target=self._run_conversion_worker,
-            args=(source, output_dir, raw_fmt, bitrate, sample_rate, normalize_audio, resolution, use_nvenc, save_cover_art, save_metadata),
+            args=(source, output_dir, raw_fmt, bitrate, sample_rate, normalize_audio, resolution, use_gpu, save_cover_art, save_metadata),
             daemon=True
         ).start()
 
-    def _run_conversion_worker(self, source, output_dir, target_format, bitrate, sample_rate, normalize_audio, resolution, use_nvenc, save_cover_art=True, save_metadata=True):
+    def _run_conversion_worker(self, source, output_dir, target_format, bitrate, sample_rate, normalize_audio, resolution, use_gpu, save_cover_art=True, save_metadata=True):
         old_stdout = sys.stdout
         old_stderr = sys.stderr
         redirector = StdoutRedirector(self.log_queue)
@@ -1726,7 +1750,8 @@ class JaneConverterApp(ctk.CTk):
                 sample_rate=sample_rate,
                 normalize_audio=normalize_audio,
                 resolution=resolution,
-                use_nvenc=use_nvenc,
+                use_nvenc=use_gpu,
+                use_gpu=use_gpu,
                 save_cover_art=save_cover_art,
                 save_metadata=save_metadata,
                 abort_event=self.abort_requested,

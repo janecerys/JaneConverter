@@ -11,6 +11,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 from engine.converter import (
     build_ffmpeg_args,
     get_unique_target_path,
+    get_host_gpus,
+    get_best_hardware_encoder,
     SUPPORTED_AUDIO_FORMATS,
     SUPPORTED_VIDEO_FORMATS
 )
@@ -85,6 +87,46 @@ def test_build_ffmpeg_args_mp4_cpu():
     )
     assert "libx264" in cmd
     assert "h264_nvenc" not in cmd
+
+def test_build_ffmpeg_args_mp4_amf():
+    cmd = build_ffmpeg_args(
+        input_path="input.mov",
+        output_path="output.mp4",
+        target_format="mp4",
+        use_gpu=True,
+        gpu_codec="h264_amf"
+    )
+    assert "h264_amf" in cmd
+    assert "-hwaccel" in cmd
+
+def test_build_ffmpeg_args_mp4_qsv():
+    cmd = build_ffmpeg_args(
+        input_path="input.mov",
+        output_path="output.mp4",
+        target_format="mp4",
+        use_gpu=True,
+        gpu_codec="h264_qsv"
+    )
+    assert "h264_qsv" in cmd
+
+def test_build_ffmpeg_args_mp4_videotoolbox():
+    cmd = build_ffmpeg_args(
+        input_path="input.mov",
+        output_path="output.mp4",
+        target_format="mp4",
+        use_gpu=True,
+        gpu_codec="h264_videotoolbox"
+    )
+    assert "h264_videotoolbox" in cmd
+
+def test_get_host_gpus_and_encoder():
+    gpus = get_host_gpus()
+    assert isinstance(gpus, list)
+    enc = get_best_hardware_encoder()
+    assert isinstance(enc, dict)
+    assert "has_gpu" in enc
+    assert "encoder" in enc
+    assert "args" in enc
 
 def test_build_ffmpeg_args_gif():
     cmd = build_ffmpeg_args(

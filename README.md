@@ -11,7 +11,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-blue?style=flat-square" alt="Platform" />
   <img src="https://img.shields.io/badge/Python-3.10%2B-blueviolet?style=flat-square" alt="Python" />
-  <img src="https://img.shields.io/badge/Acceleration-NVIDIA%20NVENC-76B900?style=flat-square" alt="NVIDIA" />
+  <img src="https://img.shields.io/badge/Acceleration-Universal%20GPU%20(NVENC%20%2F%20AMF%20%2F%20QSV)-success?style=flat-square" alt="Hardware Acceleration" />
   <img src="https://img.shields.io/badge/Audio-24--bit%20WAV%20%7C%20FLAC%20%7C%20320k%20MP3-orange?style=flat-square" alt="Audio" />
 </p>
 
@@ -30,7 +30,7 @@ For each media link or local file, JaneConverter:
 3. **Retrieves the stream**: Automatically queries the highest-fidelity audio or video stream from YouTube, SoundCloud, TikTok, Twitter/X, Reddit, Vimeo, Facebook, Twitch, or supported adult streaming platforms.
 4. **Normalizes loudness**: Optionally applies industry-standard EBU R128 loudness normalization (-14 LUFS integrated, -1.5 dB true peak) to match commercial streaming broadcast loudness without clipping.
 5. **Embeds artwork and tags**: Attaches front cover art directly into ID3v2.3 (MP3), FLAC, and M4A containers, and exports formatted production credits files (`_credits.txt`).
-6. **Transcodes media**: Converts audio into 320 kbps MP3, 24-bit PCM WAV, FLAC Level 8, AAC/M4A, or OGG, or video into MP4 via NVIDIA NVENC hardware acceleration (with CPU libx264 fallback).
+6. **Transcodes media**: Converts audio into 320 kbps MP3, 24-bit PCM WAV, FLAC Level 8, AAC/M4A, or OGG, or video into MP4/MKV via universal hardware acceleration (NVIDIA NVENC, AMD AMF, Intel QuickSync, Apple VideoToolbox, Linux VAAPI, or multi-core CPU threading).
 7. **Organizes playlists**: Sequentially numbers tracks (`1. Track Name`, `2. Track Name`), places the album artwork in the folder root, and isolates all individual track artwork and credits in a clean `metadata/` subfolder.
 
 ## Before you install
@@ -43,8 +43,10 @@ You need:
 - Available disk space for downloaded media and high-resolution audio exports.
 
 Hardware acceleration:
-- **NVIDIA GPUs**: JaneConverter automatically detects NVIDIA hardware via NVML and enables NVENC transcode acceleration for MP4 video rendering.
-- **CPU Fallback**: Systems without an NVIDIA GPU automatically fall back to multi-core CPU encoding (`libx264`) with no configuration needed.
+- **Universal GPU Support**: Automatically detects NVIDIA (NVENC with p2 high-performance preset), AMD (AMF speed preset), Intel (Quick Sync / QSV), Apple Silicon (VideoToolbox), and Linux (VAAPI).
+- **Full Hardware Pipeline**: Automatically offloads both hardware decoding (`-hwaccel auto`) and video encoding to your host GPU silicon.
+- **Multi-Core Threading**: Automatically configures FFmpeg (`-threads 0`, `-thread_queue_size 1024`) to utilize all available CPU threads for peak throughput when processing media.
+- **Zero Configuration Fallback**: If GPU encoding is unavailable or unsupported on a given system, JaneConverter seamlessly falls back to multi-core CPU encoding (`libx264`) without interrupting your queue.
 
 Node.js is optional but recommended when fetching YouTube media, as it enables the extraction engine to solve current YouTube signature challenges.
 
@@ -101,7 +103,7 @@ Launch JaneConverter from your Desktop shortcut or run `JaneConverter.exe`.
    - **Quality / Bitrate**: Choose from 320 kbps (Studio Master), 256 kbps, 192 kbps, or 128 kbps.
    - **Sample Rate**: Select CD standard (44.1 kHz), Studio Broadcast (48.0 kHz), or Hi-Res Audio (96.0 kHz).
    - **EBU R128 Normalization**: Enable to automatically normalize tracks to -14 LUFS streaming broadcast loudness.
-   - **Hardware NVENC**: Enabled automatically when an NVIDIA GPU is present.
+   - **Hardware Acceleration**: Automatically detects your host GPU and displays the active encoder (e.g. NVIDIA NVENC, AMD AMF, Intel Quick Sync, Apple VideoToolbox).
    - **Cover Art & Metadata**: Toggles for embedding cover artwork and exporting formatted production notes.
 3. **Destination Folder**: Choose where converted files are saved (defaults to `converted/`).
 4. **Convert & Abort**:
@@ -192,7 +194,7 @@ python run_converter.py --source "C:\Music\recording.wav" --format mp3 --bitrate
 | `--sample-rate HZ` | Audio sample rate (`44100`, `48000`, `96000`) | `48000` |
 | `--normalize` | Apply EBU R128 loudness normalization (-14 LUFS) | Disabled |
 | `--resolution RES` | Video resolution (`original`, `4k`, `1080p`, `720p`, `480p`) | `original` |
-| `--no-gpu` | Disable NVIDIA NVENC hardware acceleration | Disabled |
+| `--no-gpu` | Disable hardware acceleration and use multi-core CPU | Disabled |
 | `--no-art` | Skip cover art extraction and embedding | Disabled |
 | `--no-metadata` | Skip writing credits and metadata `.txt` files | Disabled |
 | `--output-dir PATH` | Directory to save exported files | `converted/` |
@@ -249,7 +251,7 @@ JaneConverter includes a comprehensive test suite covering audio argument genera
 python -m pytest -v tests/
 ```
 
-All 32 tests run locally in seconds.
+All 39 tests run locally in seconds.
 
 ## License
 

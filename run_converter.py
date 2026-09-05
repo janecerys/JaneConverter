@@ -26,7 +26,12 @@ from engine.extractor import (
     is_url, sanitize_filename, fetch_media_stream, identify_source_type,
     is_playlist_url, fetch_playlist_entries, download_and_convert_thumbnail, format_duration
 )
-from engine.converter import convert_media, SUPPORTED_AUDIO_FORMATS, SUPPORTED_VIDEO_FORMATS
+from engine.converter import (
+    convert_media,
+    SUPPORTED_AUDIO_FORMATS,
+    SUPPORTED_VIDEO_FORMATS,
+    get_best_hardware_encoder
+)
 from engine.updater import update_engine
 
 def write_credits_file(output_path: str, meta: Dict[str, Any]) -> str:
@@ -109,6 +114,7 @@ def process_conversion(
     normalize_audio: bool = False,
     resolution: str = "original",
     use_nvenc: bool = True,
+    use_gpu: Optional[bool] = None,
     save_cover_art: bool = True,
     save_metadata: bool = True,
     keep_temp: bool = False,
@@ -131,6 +137,8 @@ def process_conversion(
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(DEFAULT_TEMP_DIR, exist_ok=True)
 
+    active_gpu = use_gpu if use_gpu is not None else use_nvenc
+
     def report(pct: float, msg: str):
         if progress_callback:
             progress_callback(pct, msg)
@@ -143,12 +151,15 @@ def process_conversion(
     work_dir = os.path.join(DEFAULT_TEMP_DIR, f"job_{job_id}")
     os.makedirs(work_dir, exist_ok=True)
 
+    enc_info = get_best_hardware_encoder()
+    gpu_desc = f"{enc_info['short_name']} ({enc_info['encoder_label']})" if active_gpu and enc_info["has_gpu"] else "CPU Multi-Core"
+
     print("=" * 60)
     print(f"[*] JANECONVERTER PIPELINE")
     print(f"Source: {source}")
     print(f"Target Format: {target_format.upper()}")
     print(f"Output Directory: {output_dir}")
-    print(f"Hardware NVENC: {use_nvenc}")
+    print(f"Hardware Acceleration: {active_gpu} [{gpu_desc}]")
     print(f"Cover Art: {save_cover_art} | Metadata: {save_metadata}")
     print("=" * 60)
 
@@ -178,30 +189,34 @@ def process_conversion(
             try:
                 shutil.copy2(cover_path, standalone_cover)
                 print(f"[+] Saved cover art: {os.path.basename(standalone_cover)}")
-            except Exception as e:
-                print(f"[!] Warning copying cover art: {e}")
+            except Exception:
+                pass
 
-        # Save standalone credits / metadata text file if requested
+        # Save metadata text file if requested
         if save_metadata:
-            credits_file = os.path.join(output_dir, f"{safe_title}_credits.txt")
-            try:
-                write_credits_file(credits_file, stream_info)
-                print(f"[+] Saved credits: {os.path.basename(credits_file)}")
-            except Exception as e:
-                print(f"[!] Warning writing credits file: {e}")
+            meta_path = os.path.join(output_dir, f"{safe_title}_info.txt")
+            write_credits_file(meta_path, {
+                "title": title,
+                "artist": artist,
+                "album": album,
+                "year": year,
+                "source": source,
+                "description": description,
+                "tags": stream_info.get("tags", []),
+                "categories": stream_info.get("categories", [])
+            })
+            print(f"[+] Saved metadata: {os.path.basename(meta_path)}")
 
+        # Stage 2: Transcode & Cover Art Embedding
+        report(0.70, f"Transcoding to {target_format.upper()} (Bitrate: {bitrate})...")
         metadata = {
             "title": title,
             "artist": artist,
-            "album": album
+            "album": album,
+            "date": str(year) if year else "",
+            "comment": "Converted by JaneConverter"
         }
-        if year:
-            metadata["date"] = year
-        if description:
-            metadata["comment"] = description[:1000]
 
-        # Stage 2: Conversion & Transcode
-        report(0.78, f"Transcoding '{safe_title}' to {target_format.upper()}...")
         result_path = convert_media(
             input_path=input_media,
             output_dir=output_dir,
@@ -211,7 +226,8 @@ def process_conversion(
             sample_rate=sample_rate,
             normalize_audio=normalize_audio,
             resolution=resolution,
-            use_nvenc=use_nvenc,
+            use_nvenc=active_gpu,
+            use_gpu=active_gpu,
             metadata=metadata,
             cover_path=cover_path if save_cover_art else None,
             abort_event=abort_event,
@@ -241,6 +257,7 @@ def process_playlist_conversion(
     normalize_audio: bool = False,
     resolution: str = "original",
     use_nvenc: bool = True,
+    use_gpu: Optional[bool] = None,
     save_cover_art: bool = True,
     save_metadata: bool = True,
     keep_temp: bool = False,
@@ -260,6 +277,8 @@ def process_playlist_conversion(
 
     if not output_dir:
         output_dir = DEFAULT_CONVERTED_DIR
+
+    active_gpu = use_gpu if use_gpu is not None else use_nvenc
 
     safe_folder = sanitize_filename(playlist_title) or "Playlist_Media"
     playlist_dir = os.path.join(output_dir, safe_folder)
@@ -281,12 +300,16 @@ def process_playlist_conversion(
             progress_callback(frac, msg)
         print(f"[{int(frac * 100)}%] {msg}")
 
+    enc_info = get_best_hardware_encoder()
+    gpu_desc = f"{enc_info['short_name']} ({enc_info['encoder_label']})" if active_gpu and enc_info["has_gpu"] else "CPU Multi-Core"
+
     print("=" * 60)
     print(f"[*] JANECONVERTER PLAYLIST BATCH PIPELINE")
     print(f"Playlist: {playlist_title}")
     print(f"Selected Items: {total_items}")
     print(f"Target Directory: {playlist_dir}")
-    print(f"Format: {target_format.upper()}")
+    print(f"Format: {target_format.upper()} | Bitrate: {bitrate}")
+    print(f"Hardware Acceleration: {active_gpu} [{gpu_desc}]")
     print(f"Cover Art: {save_cover_art} | Metadata: {save_metadata}")
     print("=" * 60)
 
@@ -391,7 +414,8 @@ def process_playlist_conversion(
                 sample_rate=sample_rate,
                 normalize_audio=normalize_audio,
                 resolution=resolution,
-                use_nvenc=use_nvenc,
+                use_nvenc=active_gpu,
+                use_gpu=active_gpu,
                 metadata=metadata,
                 cover_path=track_cover if save_cover_art else None,
                 abort_event=abort_event,
@@ -467,7 +491,8 @@ def main():
     parser.add_argument("--sample-rate", "-r", type=int, default=48000, help="Audio sample rate in Hz (44100, 48000, 96000)")
     parser.add_argument("--normalize", "-n", action="store_true", help="Apply EBU R128 loudness normalization")
     parser.add_argument("--resolution", default="original", help="Video resolution (original, 4k, 1440p, 1080p, 720p, 480p)")
-    parser.add_argument("--no-nvenc", action="store_true", help="Disable NVIDIA NVENC GPU acceleration (use CPU libx264)")
+    parser.add_argument("--no-gpu", action="store_true", help="Disable hardware GPU acceleration (use multi-core CPU libx264)")
+    parser.add_argument("--no-nvenc", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--keep-temp", action="store_true", help="Keep intermediate downloaded stream files in temp directory")
     parser.add_argument("--playlist", "-p", action="store_true", help="Force treat input source as playlist")
     parser.add_argument("--no-cover-art", action="store_true", help="Disable downloading and embedding cover art")
@@ -477,6 +502,7 @@ def main():
 
     save_cover = not args.no_cover_art
     save_meta = not args.no_metadata
+    use_gpu = not (args.no_gpu or args.no_nvenc)
 
     if args.playlist or is_playlist_url(args.source):
         print(f"[*] Detected playlist source. Fetching items...")
@@ -491,7 +517,8 @@ def main():
             sample_rate=args.sample_rate,
             normalize_audio=args.normalize,
             resolution=args.resolution,
-            use_nvenc=not args.no_nvenc,
+            use_nvenc=use_gpu,
+            use_gpu=use_gpu,
             save_cover_art=save_cover,
             save_metadata=save_meta,
             keep_temp=args.keep_temp
@@ -505,7 +532,8 @@ def main():
             sample_rate=args.sample_rate,
             normalize_audio=args.normalize,
             resolution=args.resolution,
-            use_nvenc=not args.no_nvenc,
+            use_nvenc=use_gpu,
+            use_gpu=use_gpu,
             save_cover_art=save_cover,
             save_metadata=save_meta,
             keep_temp=args.keep_temp
