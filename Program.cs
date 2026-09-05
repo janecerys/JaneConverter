@@ -61,6 +61,17 @@ namespace JaneConverterLauncher
 
                 Process.Start(psi);
             }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                MessageBox.Show(
+                    "Python runtime was not found on your computer.\n\n" +
+                    "To launch JaneConverter, please run 'setup.bat' in this folder to install dependencies automatically, " +
+                    "or install Python 3.10+ from https://www.python.org/downloads/ (check 'Add to PATH').",
+                    "JaneConverter - Python Not Found",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Warning
+                );
+            }
             catch (Exception ex)
             {
                 MessageBox.Show(

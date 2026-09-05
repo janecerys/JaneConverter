@@ -60,15 +60,14 @@ def test_gui_elements_and_wording():
     with open(os.path.join(os.path.dirname(__file__), "..", "gui.py"), "r", encoding="utf-8") as f:
         content = f.read()
 
-    # Verify play_btn was removed
+    # Verify play_btn and front clear_logs_btn were removed
     assert "self.play_btn" not in content
     assert "Play Result" not in content
+    assert "self.clear_logs_btn" not in content
 
-    # Verify abort button and clear logs button exist
+    # Verify abort button exists
     assert "self.abort_btn" in content
-    assert "self.clear_logs_btn" in content
     assert "🛑 Abort" in content
-    assert "🧹 Clear Logs" in content
 
     # Verify diagnostic console was renamed to Console
     assert "💻 Console" in content

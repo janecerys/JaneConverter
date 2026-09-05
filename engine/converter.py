@@ -8,12 +8,35 @@ and metadata tagging.
 import os
 import re
 import time
+import shutil
 import threading
 import subprocess
 from typing import Optional, Dict, Any, Callable
 
 SUPPORTED_AUDIO_FORMATS = {"mp3", "wav", "flac", "aac", "m4a", "ogg"}
 SUPPORTED_VIDEO_FORMATS = {"mp4", "mkv", "webm", "mov", "gif"}
+
+ENGINE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(ENGINE_DIR)
+
+def get_ffmpeg_binary() -> str:
+    """
+    Finds FFmpeg executable in local application root, bin folder, or system PATH.
+    """
+    candidates = [
+        os.path.join(PROJECT_ROOT, "ffmpeg.exe"),
+        os.path.join(PROJECT_ROOT, "bin", "ffmpeg.exe"),
+        os.path.join(ENGINE_DIR, "ffmpeg.exe"),
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return os.path.abspath(c)
+
+    which_path = shutil.which("ffmpeg")
+    if which_path:
+        return which_path
+
+    return "ffmpeg"
 
 def get_unique_target_path(directory: str, filename: str) -> str:
     """Appends an incrementing counter if a file already exists to prevent overwriting."""
@@ -48,10 +71,11 @@ def build_ffmpeg_args(
     # Determine if target container format supports attached picture stream
     can_embed_art = has_valid_cover and target_format in ("mp3", "flac", "m4a", "aac")
 
+    ffmpeg_bin = get_ffmpeg_binary()
     if can_embed_art:
-        cmd = ["ffmpeg", "-y", "-i", input_path, "-i", cover_path, "-map", "0:a", "-map", "1:v"]
+        cmd = [ffmpeg_bin, "-y", "-i", input_path, "-i", cover_path, "-map", "0:a", "-map", "1:v"]
     else:
-        cmd = ["ffmpeg", "-y", "-i", input_path]
+        cmd = [ffmpeg_bin, "-y", "-i", input_path]
 
     # Metadata tags
     if metadata:
@@ -174,6 +198,12 @@ def convert_media(
 
     if abort_event and abort_event.is_set():
         raise KeyboardInterrupt("Conversion aborted by user.")
+
+    ffmpeg_bin = get_ffmpeg_binary()
+    if not shutil.which(ffmpeg_bin) and not os.path.isfile(ffmpeg_bin):
+        raise FileNotFoundError(
+            "FFmpeg executable not found. Please install FFmpeg, add it to PATH, or place ffmpeg.exe in the JaneConverter directory."
+        )
 
     def report(frac: float, msg: str):
         if progress_callback:

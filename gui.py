@@ -461,6 +461,9 @@ class JaneConverterApp(ctk.CTk):
         self.last_converted_file = None
         self.last_output_dir = DEFAULT_CONVERTED_DIR
 
+        # Clean up stale temp directories from previous sessions
+        self._cleanup_stale_temp()
+
         # Build Interface
         self._build_header()
         self._build_tabs()
@@ -475,6 +478,17 @@ class JaneConverterApp(ctk.CTk):
 
         # Handle clean window close and terminate process
         self.protocol("WM_DELETE_WINDOW", self._on_close)
+
+    def _cleanup_stale_temp(self):
+        if os.path.exists(DEFAULT_TEMP_DIR):
+            import shutil
+            for item in os.listdir(DEFAULT_TEMP_DIR):
+                item_path = os.path.join(DEFAULT_TEMP_DIR, item)
+                try:
+                    if os.path.isdir(item_path) and (item.startswith("job_") or item.startswith("track_")):
+                        shutil.rmtree(item_path, ignore_errors=True)
+                except Exception:
+                    pass
 
     def _on_close(self):
         try:
@@ -909,19 +923,6 @@ class JaneConverterApp(ctk.CTk):
             command=self._open_output_folder
         )
         self.open_folder_btn.pack(side="right")
-
-        self.clear_logs_btn = ctk.CTkButton(
-            stat_row,
-            text="🧹 Clear Logs",
-            width=95,
-            height=26,
-            fg_color=THEME["card_inner"],
-            hover_color=THEME["card_border_glow"],
-            text_color=THEME["text_primary"],
-            font=ctk.CTkFont(size=11),
-            command=self._clear_logs
-        )
-        self.clear_logs_btn.pack(side="right", padx=(0, 6))
 
         self.abort_btn = ctk.CTkButton(
             stat_row,
@@ -1381,11 +1382,11 @@ class JaneConverterApp(ctk.CTk):
 
     def _open_output_folder(self):
         out_dir = self.dest_entry.get().strip() or DEFAULT_CONVERTED_DIR
-        if os.path.exists(out_dir):
-            try:
-                os.startfile(out_dir)
-            except Exception:
-                pass
+        os.makedirs(out_dir, exist_ok=True)
+        try:
+            os.startfile(out_dir)
+        except Exception:
+            pass
 
     # -------------------------------------------------------------
     # 8. CONVERSION RUNNER & PLAYLIST WORKFLOW
