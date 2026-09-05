@@ -255,4 +255,4 @@ All 39 tests run locally in seconds.
 
 ## License
 
-Private and proprietary. Created by Jane Cerys.\n
+Private and proprietary. Licensed under project//aspyr.
