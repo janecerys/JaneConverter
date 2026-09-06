@@ -34,6 +34,21 @@ from engine.converter import (
 )
 from engine.updater import update_engine
 
+MIN_FREE_DISK_BYTES = 1 * 1024 * 1024 * 1024  # require 1 GB headroom before processing
+
+def ensure_free_disk_space(path: str, min_free_bytes: int = MIN_FREE_DISK_BYTES):
+    """Raises RuntimeError if the drive holding `path` has less than the required free space."""
+    try:
+        usage = shutil.disk_usage(path)
+    except Exception:
+        return  # Un probing-able path; let downstream operations surface real errors
+    if usage.free < min_free_bytes:
+        free_gb = usage.free / (1024 ** 3)
+        raise RuntimeError(
+            f"Not enough disk space at '{os.path.abspath(path)}' "
+            f"({free_gb:.1f} GB free). Free up space and try again."
+        )
+
 def write_credits_file(output_path: str, meta: Dict[str, Any]) -> str:
     """
     Writes a formatted, human-readable credits and metadata file.
@@ -136,6 +151,7 @@ def process_conversion(
         output_dir = DEFAULT_CONVERTED_DIR
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(DEFAULT_TEMP_DIR, exist_ok=True)
+    ensure_free_disk_space(output_dir)
 
     active_gpu = use_gpu if use_gpu is not None else use_nvenc
 
@@ -280,6 +296,7 @@ def process_playlist_conversion(
 
     if not output_dir:
         output_dir = DEFAULT_CONVERTED_DIR
+    ensure_free_disk_space(output_dir)
 
     active_gpu = use_gpu if use_gpu is not None else use_nvenc
 
@@ -330,6 +347,8 @@ def process_playlist_conversion(
 
     converted_files = []
     failed_files = []
+    consecutive_failures = 0
+    MAX_CONSECUTIVE_FAILURES = 5
 
     for i, entry in enumerate(selected_entries):
         if abort_event and abort_event.is_set():
@@ -426,6 +445,7 @@ def process_playlist_conversion(
             )
 
             converted_files.append(result_path)
+            consecutive_failures = 0
             print(f"[+] Converted: {os.path.basename(result_path)}")
 
         except KeyboardInterrupt:
@@ -434,7 +454,16 @@ def process_playlist_conversion(
             if abort_event and abort_event.is_set():
                 raise KeyboardInterrupt("Playlist conversion aborted by user.")
             failed_files.append({"index": idx, "title": raw_title, "error": str(e)})
+            consecutive_failures += 1
             print(f"[!] Error converting track #{idx} '{raw_title}': {e}")
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                remaining = total_items - (i + 1)
+                print(
+                    f"[!] {MAX_CONSECUTIVE_FAILURES} tracks failed in a row - aborting batch "
+                    f"({remaining} remaining tracks skipped). The network connection or source "
+                    "service appears unavailable."
+                )
+                break
         finally:
             if not keep_temp and os.path.exists(track_work_dir):
                 try:

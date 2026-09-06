@@ -139,16 +139,26 @@ def get_system_hardware_info() -> Dict[str, Any]:
     }
 
 class StdoutRedirector:
-    """Redirects stdout/stderr to a queue for the UI console log."""
-    def __init__(self, log_queue: queue.Queue):
+    """Redirects stdout/stderr to a queue for the UI console log, echoing to the original stream."""
+    def __init__(self, log_queue: queue.Queue, original=None):
         self.log_queue = log_queue
+        self.original = original
 
     def write(self, text: str):
         if text:
             self.log_queue.put(text)
+            if self.original:
+                try:
+                    self.original.write(text)
+                except Exception:
+                    pass
 
     def flush(self):
-        pass
+        if self.original:
+            try:
+                self.original.flush()
+            except Exception:
+                pass
 
 class PlaylistSelectionWindow(ctk.CTkToplevel):
     """
@@ -478,11 +488,11 @@ class JaneConverterApp(ctk.CTk):
 
         # State tracking
         self.log_queue = queue.Queue()
+        self.ui_queue = queue.Queue()
         self.is_converting = False
         self.abort_requested = threading.Event()
         self.start_conversion_time = 0
         self.last_converted_file = None
-        self.last_output_dir = DEFAULT_CONVERTED_DIR
 
         # Clean up stale temp directories from previous sessions
         self._cleanup_stale_temp()
@@ -496,26 +506,67 @@ class JaneConverterApp(ctk.CTk):
 
         # Start telemetry and logging threads
         self._start_log_listener()
+        self._start_ui_pump()
         self._start_hardware_monitor()
         self._start_engine_auto_updater()
+
+        # Install the console redirector once, process-wide, so worker threads never
+        # race on swapping sys.stdout/sys.stderr.
+        sys.stdout = StdoutRedirector(self.log_queue, sys.stdout)
+        sys.stderr = StdoutRedirector(self.log_queue, sys.stderr)
 
         # Handle clean window close and terminate process
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-    def _cleanup_stale_temp(self):
-        if os.path.exists(DEFAULT_TEMP_DIR):
-            import shutil
-            for item in os.listdir(DEFAULT_TEMP_DIR):
-                item_path = os.path.join(DEFAULT_TEMP_DIR, item)
+    def _post_ui(self, fn):
+        """Thread-safe way for worker threads to run a callable on the UI thread."""
+        self.ui_queue.put(fn)
+
+    def _start_ui_pump(self):
+        def pump():
+            while True:
                 try:
-                    if os.path.isdir(item_path):
-                        shutil.rmtree(item_path, ignore_errors=True)
-                    elif os.path.isfile(item_path):
-                        os.remove(item_path)
+                    fn = self.ui_queue.get_nowait()
+                except queue.Empty:
+                    break
+                try:
+                    fn()
                 except Exception:
                     pass
+            self.after(80, pump)
+
+        self.after(80, pump)
+
+    def _cleanup_stale_temp(self):
+        # Only remove job directories left behind by previous sessions (older than 24h)
+        # so a concurrently running second app instance is never disturbed.
+        if not os.path.exists(DEFAULT_TEMP_DIR):
+            return
+        import shutil
+        cutoff = time.time() - 24 * 3600
+        for item in os.listdir(DEFAULT_TEMP_DIR):
+            item_path = os.path.join(DEFAULT_TEMP_DIR, item)
+            try:
+                if os.path.getmtime(item_path) > cutoff:
+                    continue
+                if os.path.isdir(item_path):
+                    shutil.rmtree(item_path, ignore_errors=True)
+                elif os.path.isfile(item_path):
+                    os.remove(item_path)
+            except Exception:
+                pass
 
     def _on_close(self):
+        if self.is_converting:
+            from tkinter import messagebox
+            confirm = messagebox.askyesno(
+                "Conversion In Progress",
+                "A conversion is still running. Aborting now will discard its progress.\n\nAbort and close JaneConverter?",
+                icon="warning"
+            )
+            if not confirm:
+                return
+            self.abort_requested.set()
         try:
             self.destroy()
         except Exception:
@@ -568,7 +619,7 @@ class JaneConverterApp(ctk.CTk):
                     "error": str(e),
                 }
 
-            self.after(0, lambda: self._on_update_completed(result))
+            self._post_ui(lambda: self._on_update_completed(result))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1352,43 +1403,49 @@ class JaneConverterApp(ctk.CTk):
     # 6. HARDWARE TELEMETRY LOOP
     # -------------------------------------------------------------
     def _start_hardware_monitor(self):
-        def poll():
-            cpu_val = 0.0
-            ram_pct = 0.0
-            ram_used_gb = 0.0
-            ram_tot_gb = 0.0
-            gpu_util = 0
-            gpu_used_mb = 0
-            gpu_tot_mb = 0
-            gpu_temp = 0
+        if psutil:
+            # Prime the CPU counter: the first cpu_percent(None) call otherwise always reads 0
+            psutil.cpu_percent(None)
 
-            if psutil:
-                cpu_val = psutil.cpu_percent()
-                mem = psutil.virtual_memory()
-                ram_pct = mem.percent
-                ram_used_gb = mem.used / (1024 ** 3)
-                ram_tot_gb = mem.total / (1024 ** 3)
+        def loop():
+            while True:
+                time.sleep(1.5)
+                cpu_val = 0.0
+                ram_pct = 0.0
+                ram_used_gb = 0.0
+                ram_tot_gb = 0.0
+                gpu_util = 0
+                gpu_used_mb = 0
+                gpu_tot_mb = 0
+                gpu_temp = 0
 
-            if pynvml and nvml_handle:
-                try:
-                    util = pynvml.nvmlDeviceGetUtilizationRates(nvml_handle)
-                    mem = pynvml.nvmlDeviceGetMemoryInfo(nvml_handle)
-                    temp = pynvml.nvmlDeviceGetTemperature(nvml_handle, pynvml.NVML_TEMPERATURE_GPU)
-                    gpu_util = int(util.gpu)
-                    gpu_used_mb = int(mem.used // (1024 * 1024))
-                    gpu_tot_mb = int(mem.total // (1024 * 1024))
-                    gpu_temp = int(temp)
-                except Exception:
-                    pass
+                if psutil:
+                    try:
+                        cpu_val = psutil.cpu_percent(None)
+                        mem = psutil.virtual_memory()
+                        ram_pct = mem.percent
+                        ram_used_gb = mem.used / (1024 ** 3)
+                        ram_tot_gb = mem.total / (1024 ** 3)
+                    except Exception:
+                        pass
 
-            self.after(0, lambda: self._apply_hardware_stats(
-                cpu_val, ram_pct, ram_used_gb, ram_tot_gb,
-                gpu_util, gpu_used_mb, gpu_tot_mb, gpu_temp
-            ))
+                if pynvml and nvml_handle:
+                    try:
+                        util = pynvml.nvmlDeviceGetUtilizationRates(nvml_handle)
+                        mem = pynvml.nvmlDeviceGetMemoryInfo(nvml_handle)
+                        temp = pynvml.nvmlDeviceGetTemperature(nvml_handle, pynvml.NVML_TEMPERATURE_GPU)
+                        gpu_util = int(util.gpu)
+                        gpu_used_mb = int(mem.used // (1024 * 1024))
+                        gpu_tot_mb = int(mem.total // (1024 * 1024))
+                        gpu_temp = int(temp)
+                    except Exception:
+                        pass
 
-            self.after(1500, self._start_hardware_monitor)
+                stats = (cpu_val, ram_pct, ram_used_gb, ram_tot_gb,
+                         gpu_util, gpu_used_mb, gpu_tot_mb, gpu_temp)
+                self._post_ui(lambda s=stats: self._apply_hardware_stats(*s))
 
-        threading.Thread(target=poll, daemon=True).start()
+        threading.Thread(target=loop, daemon=True).start()
 
     def _apply_hardware_stats(self, cpu, ram_pct, ram_used, ram_tot, gpu_pct, gpu_used, gpu_tot, gpu_temp):
         if self.hw_info.get("has_nvidia") and (gpu_pct > 0 or gpu_temp > 0):
@@ -1569,23 +1626,15 @@ class JaneConverterApp(ctk.CTk):
         self.progress_bar.set(0.05)
 
         def worker():
-            old_stdout = sys.stdout
-            old_stderr = sys.stderr
-            redirector = StdoutRedirector(self.log_queue)
-            sys.stdout = redirector
-            sys.stderr = redirector
             try:
                 pdata = fetch_playlist_entries(
                     url=source,
-                    progress_callback=lambda f, m: self.after(0, lambda: self._apply_progress(f, m))
+                    progress_callback=lambda f, m: self._post_ui(lambda: self._apply_progress(f, m))
                 )
-                self.after(0, lambda: self._on_playlist_fetched(pdata))
+                self._post_ui(lambda: self._on_playlist_fetched(pdata))
             except Exception as e:
                 error_message = str(e)
-                self.after(0, lambda: self._on_playlist_fetch_error(error_message))
-            finally:
-                sys.stdout = old_stdout
-                sys.stderr = old_stderr
+                self._post_ui(lambda: self._on_playlist_fetch_error(error_message))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1684,11 +1733,28 @@ class JaneConverterApp(ctk.CTk):
             "resolution": resolution,
         }
 
+    def _validate_destination(self, output_dir: str) -> bool:
+        """Ensures the destination folder exists or can be created; shows an error dialog otherwise."""
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+            if not os.access(output_dir, os.W_OK):
+                raise PermissionError("The folder is not writable.")
+            return True
+        except Exception as e:
+            from tkinter import messagebox
+            messagebox.showerror(
+                "Invalid Destination Folder",
+                f"Cannot use destination folder:\n{output_dir}\n\nReason: {e}"
+            )
+            return False
+
     def _start_playlist_batch_conversion(self, selected_entries: list, playlist_title: str):
         if self.is_converting:
             return
 
         output_dir = self.dest_entry.get().strip() or DEFAULT_CONVERTED_DIR
+        if not self._validate_destination(output_dir):
+            return
         settings = self._collect_settings()
 
         self.is_converting = True
@@ -1707,12 +1773,6 @@ class JaneConverterApp(ctk.CTk):
         ).start()
 
     def _run_playlist_worker(self, playlist_title, selected_entries, output_dir, settings):
-        old_stdout = sys.stdout
-        old_stderr = sys.stderr
-        redirector = StdoutRedirector(self.log_queue)
-        sys.stdout = redirector
-        sys.stderr = redirector
-
         try:
             summary = process_playlist_conversion(
                 playlist_title=playlist_title,
@@ -1728,25 +1788,23 @@ class JaneConverterApp(ctk.CTk):
                 save_cover_art=settings["save_cover_art"],
                 save_metadata=settings["save_metadata"],
                 abort_event=self.abort_requested,
-                progress_callback=lambda f, m: self.after(0, lambda: self._apply_progress(f, m))
+                progress_callback=lambda f, m: self._post_ui(lambda: self._apply_progress(f, m))
             )
-            self.last_converted_file = summary["converted_files"][0] if summary["converted_files"] else None
-            self.after(0, lambda: self._on_playlist_conversion_success(summary))
+            first_file = summary["converted_files"][0] if summary["converted_files"] else None
+            self._post_ui(lambda: self._on_playlist_conversion_success(summary, first_file))
         except KeyboardInterrupt:
-            self.after(0, self._on_conversion_aborted)
+            self._post_ui(self._on_conversion_aborted)
         except Exception as e:
             error_message = str(e)
             if self.abort_requested.is_set() or "aborted" in error_message.lower():
-                self.after(0, self._on_conversion_aborted)
+                self._post_ui(self._on_conversion_aborted)
             else:
                 import traceback
                 traceback.print_exc()
-                self.after(0, lambda: self._on_conversion_error(error_message))
-        finally:
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
+                self._post_ui(lambda: self._on_conversion_error(error_message))
 
-    def _on_playlist_conversion_success(self, summary: Dict[str, Any]):
+    def _on_playlist_conversion_success(self, summary: Dict[str, Any], first_file: Optional[str] = None):
+        self.last_converted_file = first_file
         self.is_converting = False
         self.abort_requested.clear()
         self.abort_btn.configure(state="disabled")
@@ -1788,6 +1846,8 @@ class JaneConverterApp(ctk.CTk):
                 return
 
         output_dir = self.dest_entry.get().strip() or DEFAULT_CONVERTED_DIR
+        if not self._validate_destination(output_dir):
+            return
         settings = self._collect_settings()
 
         self.is_converting = True
@@ -1806,12 +1866,6 @@ class JaneConverterApp(ctk.CTk):
         ).start()
 
     def _run_conversion_worker(self, source, output_dir, settings):
-        old_stdout = sys.stdout
-        old_stderr = sys.stderr
-        redirector = StdoutRedirector(self.log_queue)
-        sys.stdout = redirector
-        sys.stderr = redirector
-
         try:
             result_path = process_conversion(
                 source=source,
@@ -1826,29 +1880,26 @@ class JaneConverterApp(ctk.CTk):
                 save_cover_art=settings["save_cover_art"],
                 save_metadata=settings["save_metadata"],
                 abort_event=self.abort_requested,
-                progress_callback=lambda f, m: self.after(0, lambda: self._apply_progress(f, m))
+                progress_callback=lambda f, m: self._post_ui(lambda: self._apply_progress(f, m))
             )
-            self.last_converted_file = result_path
-            self.after(0, lambda: self._on_conversion_success(result_path))
+            self._post_ui(lambda: self._on_conversion_success(result_path))
         except KeyboardInterrupt:
-            self.after(0, self._on_conversion_aborted)
+            self._post_ui(self._on_conversion_aborted)
         except Exception as e:
             error_message = str(e)
             if self.abort_requested.is_set() or "aborted" in error_message.lower():
-                self.after(0, self._on_conversion_aborted)
+                self._post_ui(self._on_conversion_aborted)
             else:
                 import traceback
                 traceback.print_exc()
-                self.after(0, lambda: self._on_conversion_error(error_message))
-        finally:
-            sys.stdout = old_stdout
-            sys.stderr = old_stderr
+                self._post_ui(lambda: self._on_conversion_error(error_message))
 
     def _apply_progress(self, frac: float, msg: str):
         self.progress_bar.set(frac)
         self.status_label.configure(text=f"[{int(frac * 100)}%] {msg}")
 
     def _on_conversion_success(self, result_path: str):
+        self.last_converted_file = result_path
         self.is_converting = False
         self.abort_requested.clear()
         self.abort_btn.configure(state="disabled")
