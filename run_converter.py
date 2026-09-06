@@ -524,7 +524,6 @@ def main():
     parser.add_argument("--normalize", "-n", action="store_true", help="Apply EBU R128 loudness normalization")
     parser.add_argument("--resolution", default="original", help="Video resolution (original, 4k, 1440p, 1080p, 720p, 480p)")
     parser.add_argument("--no-gpu", action="store_true", help="Disable hardware GPU acceleration (use multi-core CPU libx264)")
-    parser.add_argument("--no-nvenc", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--keep-temp", action="store_true", help="Keep intermediate downloaded stream files in temp directory")
     parser.add_argument("--playlist", "-p", action="store_true", help="Force treat input source as playlist")
     parser.add_argument("--no-cover-art", action="store_true", help="Disable downloading and embedding cover art")
@@ -538,7 +537,7 @@ def main():
 
     save_cover = not args.no_cover_art
     save_meta = not args.no_metadata
-    use_gpu = not (args.no_gpu or args.no_nvenc)
+    use_gpu = not args.no_gpu
 
     if args.playlist or is_playlist_url(args.source):
         print(f"[*] Detected playlist source. Fetching items...")

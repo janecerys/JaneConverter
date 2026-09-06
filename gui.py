@@ -316,73 +316,9 @@ class PlaylistSelectionWindow(ctk.CTkToplevel):
         )
         self.scroll_frame.pack(fill="both", expand=True, padx=14, pady=(0, 8))
 
-        for entry in self.entries:
-            idx = entry.get("index", 1)
-            var = ctk.BooleanVar(value=True)
-            self.check_vars[id(entry)] = var
-
-            row = ctk.CTkFrame(self.scroll_frame, fg_color=THEME["card_inner"], corner_radius=6, height=38)
-            row.pack(fill="x", padx=2, pady=2)
-            row.pack_propagate(False)
-
-            cb = ctk.CTkCheckBox(
-                row,
-                text="",
-                variable=var,
-                width=24,
-                checkbox_width=18,
-                checkbox_height=18,
-                fg_color=THEME["magenta"],
-                hover_color=THEME["magenta_hover"],
-                border_color=THEME["card_border_glow"],
-                command=self._update_counter
-            )
-            cb.pack(side="left", padx=(8, 4))
-
-            idx_badge = ctk.CTkLabel(
-                row,
-                text=f"#{idx}",
-                width=36,
-                font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
-                text_color=THEME["cyan"],
-                fg_color=THEME["cyan_subtle"],
-                corner_radius=4
-            )
-            idx_badge.pack(side="left", padx=(0, 8))
-
-            title_str = entry.get("title", f"Track {idx}")
-            t_lbl = ctk.CTkLabel(
-                row,
-                text=title_str,
-                font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
-                text_color=THEME["text_primary"],
-                anchor="w"
-            )
-            t_lbl.pack(side="left", fill="x", expand=True, padx=4)
-
-            artist_str = entry.get("artist", "")
-            if artist_str:
-                a_lbl = ctk.CTkLabel(
-                    row,
-                    text=artist_str,
-                    font=ctk.CTkFont(family="Segoe UI", size=10),
-                    text_color=THEME["text_muted"],
-                    anchor="e",
-                    width=160
-                )
-                a_lbl.pack(side="left", padx=6)
-
-            dur_str = entry.get("duration_str", "")
-            d_lbl = ctk.CTkLabel(
-                row,
-                text=dur_str,
-                font=ctk.CTkFont(family="Consolas", size=10),
-                text_color=THEME["text_dark"],
-                width=48
-            )
-            d_lbl.pack(side="right", padx=(4, 10))
-
-            self.row_widgets.append((row, entry, var))
+        # Build rows progressively so very large playlists don't freeze the window
+        self._pending_entries = list(self.entries)
+        self._build_rows_progressively()
 
         # Bottom Action Bar
         bottom_bar = ctk.CTkFrame(self, fg_color=THEME["card_bg"], corner_radius=0, height=58)
@@ -417,6 +353,83 @@ class PlaylistSelectionWindow(ctk.CTkToplevel):
             command=self._on_confirm_click
         )
         self.confirm_btn.pack(side="right", fill="x", expand=True, padx=(12, 0))
+
+    def _build_rows_progressively(self, batch_size: int = 30):
+        batch = self._pending_entries[:batch_size]
+        del self._pending_entries[:batch_size]
+        for entry in batch:
+            self._add_track_row(entry)
+        self._update_counter()
+        if self._pending_entries:
+            self.after(10, self._build_rows_progressively)
+
+    def _add_track_row(self, entry):
+        idx = entry.get("index", 1)
+        var = ctk.BooleanVar(value=True)
+        self.check_vars[id(entry)] = var
+
+        row = ctk.CTkFrame(self.scroll_frame, fg_color=THEME["card_inner"], corner_radius=6, height=38)
+        row.pack(fill="x", padx=2, pady=2)
+        row.pack_propagate(False)
+
+        cb = ctk.CTkCheckBox(
+            row,
+            text="",
+            variable=var,
+            width=24,
+            checkbox_width=18,
+            checkbox_height=18,
+            fg_color=THEME["magenta"],
+            hover_color=THEME["magenta_hover"],
+            border_color=THEME["card_border_glow"],
+            command=self._update_counter
+        )
+        cb.pack(side="left", padx=(8, 4))
+
+        idx_badge = ctk.CTkLabel(
+            row,
+            text=f"#{idx}",
+            width=36,
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            text_color=THEME["cyan"],
+            fg_color=THEME["cyan_subtle"],
+            corner_radius=4
+        )
+        idx_badge.pack(side="left", padx=(0, 8))
+
+        title_str = entry.get("title", f"Track {idx}")
+        t_lbl = ctk.CTkLabel(
+            row,
+            text=title_str,
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            text_color=THEME["text_primary"],
+            anchor="w"
+        )
+        t_lbl.pack(side="left", fill="x", expand=True, padx=4)
+
+        artist_str = entry.get("artist", "")
+        if artist_str:
+            a_lbl = ctk.CTkLabel(
+                row,
+                text=artist_str,
+                font=ctk.CTkFont(family="Segoe UI", size=10),
+                text_color=THEME["text_muted"],
+                anchor="e",
+                width=160
+            )
+            a_lbl.pack(side="left", padx=6)
+
+        dur_str = entry.get("duration_str", "")
+        d_lbl = ctk.CTkLabel(
+            row,
+            text=dur_str,
+            font=ctk.CTkFont(family="Consolas", size=10),
+            text_color=THEME["text_dark"],
+            width=48
+        )
+        d_lbl.pack(side="right", padx=(4, 10))
+
+        self.row_widgets.append((row, entry, var))
 
     def _filter_tracks(self, event=None):
         q = self.search_entry.get().strip().lower()
@@ -1593,13 +1606,6 @@ class JaneConverterApp(ctk.CTk):
             self.dest_entry.delete(0, "end")
             self.dest_entry.insert(0, path)
 
-    def _play_latest_file(self):
-        if self.last_converted_file and os.path.exists(self.last_converted_file):
-            self._play_file(self.last_converted_file)
-        else:
-            from tkinter import messagebox
-            messagebox.showinfo("No Media", "No converted media file to play yet.")
-
     def _open_output_folder(self):
         out_dir = self.dest_entry.get().strip() or DEFAULT_CONVERTED_DIR
         os.makedirs(out_dir, exist_ok=True)
@@ -1815,14 +1821,14 @@ class JaneConverterApp(ctk.CTk):
         folder_name = os.path.basename(p_dir)
         succ = summary.get("successful_count", 0)
         tot = summary.get("total_selected", 0)
-        self.status_label.configure(text=f"Playlist exported: {succ}/{tot} tracks saved to '{folder_name}'.")
-        self._refresh_library()
-
-        from tkinter import messagebox
-        messagebox.showinfo(
-            "Playlist Conversion Complete!",
-            f"Successfully converted {succ} of {tot} tracks!\n\nFolder:\n{p_dir}"
+        failed = summary.get("failed_count", 0)
+        elapsed_str = self._format_elapsed()
+        fail_note = f" ({failed} failed)" if failed else ""
+        self.status_label.configure(
+            text=f"✅ Playlist exported: {succ}/{tot} tracks{fail_note} to '{folder_name}' in {elapsed_str}."
         )
+        self._refresh_library()
+        print(f"[✓] Playlist batch complete in {elapsed_str}: {succ}/{tot} tracks saved to {p_dir}")
 
     def _start_conversion(self):
         if self.is_converting:
@@ -1898,6 +1904,11 @@ class JaneConverterApp(ctk.CTk):
         self.progress_bar.set(frac)
         self.status_label.configure(text=f"[{int(frac * 100)}%] {msg}")
 
+    def _format_elapsed(self) -> str:
+        elapsed = time.time() - self.start_conversion_time if self.start_conversion_time else 0
+        m, s = divmod(int(elapsed), 60)
+        return f"{m}m {s:02d}s" if m > 0 else f"{s}s"
+
     def _on_conversion_success(self, result_path: str):
         self.last_converted_file = result_path
         self.is_converting = False
@@ -1906,14 +1917,11 @@ class JaneConverterApp(ctk.CTk):
         self.convert_btn.configure(state="normal", text="✨ CONVERT MEDIA")
         self.playlist_btn.configure(state="normal")
         self.progress_bar.set(1.0)
-        self.status_label.configure(text=f"Exported: {os.path.basename(result_path)}")
-        self._refresh_library()
-
-        from tkinter import messagebox
-        messagebox.showinfo(
-            "Conversion Complete!",
-            f"Successfully converted media!\nExported to:\n{result_path}"
+        self.status_label.configure(
+            text=f"✅ Exported: {os.path.basename(result_path)} (completed in {self._format_elapsed()})"
         )
+        self._refresh_library()
+        print(f"[✓] Conversion complete in {self._format_elapsed()}: {result_path}")
 
     def _on_conversion_error(self, err_msg: str):
         self.is_converting = False

@@ -59,6 +59,38 @@ def get_ffmpeg_binary() -> str:
 
     return "ffmpeg"
 
+def get_ffprobe_binary() -> str:
+    """
+    Finds FFprobe next to the selected FFmpeg binary or on system PATH.
+    """
+    ffmpeg_bin = get_ffmpeg_binary()
+    sibling = os.path.join(os.path.dirname(os.path.abspath(ffmpeg_bin)),
+                           "ffprobe" + (".exe" if os.name == "nt" else ""))
+    if os.path.isfile(sibling):
+        return sibling
+    which_path = shutil.which("ffprobe")
+    if which_path:
+        return which_path
+    return "ffprobe"
+
+def probe_media_duration(input_path: str) -> Optional[float]:
+    """
+    Returns the duration of the media in seconds via ffprobe, or None if it cannot be determined.
+    """
+    try:
+        no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        res = subprocess.run(
+            [get_ffprobe_binary(), "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1", input_path],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            text=True, timeout=15.0, creationflags=no_window
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            return float(res.stdout.strip())
+    except Exception:
+        pass
+    return None
+
 def get_unique_target_path(directory: str, filename: str) -> str:
     """Appends an incrementing counter if a file already exists to prevent overwriting."""
     base_target = os.path.join(directory, filename)
@@ -487,7 +519,7 @@ def convert_media(
         if progress_callback:
             progress_callback(frac, msg)
 
-    report(0.80, f"Transcoding media to {target_format.upper()}...")
+    report(0.70, f"Transcoding media to {target_format.upper()}...")
 
     cmd = build_ffmpeg_args(
         input_path=input_path,
@@ -504,12 +536,14 @@ def convert_media(
         cover_path=cover_path,
         fps=fps
     )
+    # Request machine-readable progress on stdout (inserted before the output path)
+    cmd = cmd[:-1] + ["-progress", "pipe:1", "-nostats"] + [cmd[-1]]
 
     no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
     proc = subprocess.Popen(
         cmd,
-        stdout=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         creationflags=no_window
     )
@@ -522,8 +556,40 @@ def convert_media(
         except Exception:
             pass
 
+    duration = probe_media_duration(input_path)
+    transcode_base, transcode_span = 0.70, 0.25
+    last_report_time = [0.0]
+
+    def read_progress():
+        try:
+            for raw_line in iter(proc.stdout.readline, b""):
+                line = raw_line.decode("ascii", errors="ignore").strip()
+                if not line or "=" not in line:
+                    continue
+                key, _, value = line.partition("=")
+                if key == "progress" and value == "end":
+                    report(transcode_base + transcode_span, "Transcode finishing up...")
+                    continue
+                if duration and duration > 0 and key in ("out_time_us", "out_time_ms"):
+                    try:
+                        out_us = float(value)
+                    except ValueError:
+                        continue
+                    frac = max(0.0, min(1.0, out_us / (duration * 1_000_000.0)))
+                    now = time.time()
+                    if frac > 0 and now - last_report_time[0] >= 0.5:
+                        last_report_time[0] = now
+                        report(
+                            transcode_base + transcode_span * frac,
+                            f"Transcoding {target_format.upper()}: {int(frac * 100)}%"
+                        )
+        except Exception:
+            pass
+
     reader_thread = threading.Thread(target=read_stderr, daemon=True)
     reader_thread.start()
+    progress_thread = threading.Thread(target=read_progress, daemon=True)
+    progress_thread.start()
 
     try:
         while proc.poll() is None:
@@ -531,6 +597,7 @@ def convert_media(
                 proc.kill()
                 proc.wait()
                 reader_thread.join(timeout=1.0)
+                progress_thread.join(timeout=1.0)
                 if os.path.exists(destination_path):
                     try:
                         os.remove(destination_path)
@@ -541,6 +608,7 @@ def convert_media(
 
         proc.wait()
         reader_thread.join(timeout=2.0)
+        progress_thread.join(timeout=2.0)
         stderr = stderr_chunks[0] if stderr_chunks else b""
 
         if proc.returncode != 0:
@@ -551,6 +619,7 @@ def convert_media(
             proc.kill()
             proc.wait()
             reader_thread.join(timeout=1.0)
+            progress_thread.join(timeout=1.0)
         if os.path.exists(destination_path):
             try:
                 os.remove(destination_path)
