@@ -251,8 +251,14 @@ JaneConverter includes a comprehensive test suite covering audio argument genera
 python -m pytest -v tests/
 ```
 
-All 39 tests run locally in seconds.
+All 42 tests run locally in seconds (network-dependent tests require an internet connection).
+
+## Legal & Platform Notice
+
+JaneConverter is a personal-use tool. It does not host, proxy, or re-distribute any media; all content is streamed directly from the platforms you point it at. Downloading media from streaming platforms may violate those platforms' Terms of Service, and downloaded material may be protected by copyright. You are responsible for complying with the laws and terms that apply in your jurisdiction and to the content you access. Use JaneConverter only with content you own or have permission to download.
 
 ## License
 
-Private and proprietary. Licensed under project//aspyr.
+Copyright © 2026 project//aspyr. All rights reserved.
+
+JaneConverter is proprietary software, property of project//aspyr. Unauthorized copying, modification, redistribution, or commercial use of this source code or its compiled components is prohibited without the express written permission of the copyright holder.

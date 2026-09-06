@@ -4,3 +4,21 @@ __pycache__/
 *.pyc
 *.log
 .pytest_cache/
+
+# Build artifacts
+JaneConverter.exe
+ffmpeg.exe
+build/
+dist/
+.vs/
+.vscode/
+.idea/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# OS noise
+Thumbs.db
+Desktop.ini

@@ -12,7 +12,7 @@ import queue
 import threading
 import platform
 import subprocess
-from typing import Optional, Dict, Any
+from typing import Callable, Optional, Dict, Any
 
 import customtkinter as ctk
 from PIL import Image
@@ -1570,7 +1570,8 @@ class JaneConverterApp(ctk.CTk):
                 )
                 self.after(0, lambda: self._on_playlist_fetched(pdata))
             except Exception as e:
-                self.after(0, lambda: self._on_playlist_fetch_error(str(e)))
+                error_message = str(e)
+                self.after(0, lambda: self._on_playlist_fetch_error(error_message))
             finally:
                 sys.stdout = old_stdout
                 sys.stderr = old_stderr
@@ -1689,12 +1690,13 @@ class JaneConverterApp(ctk.CTk):
         except KeyboardInterrupt:
             self.after(0, self._on_conversion_aborted)
         except Exception as e:
-            if self.abort_requested.is_set() or "aborted" in str(e).lower():
+            error_message = str(e)
+            if self.abort_requested.is_set() or "aborted" in error_message.lower():
                 self.after(0, self._on_conversion_aborted)
             else:
                 import traceback
                 traceback.print_exc()
-                self.after(0, lambda: self._on_conversion_error(str(e)))
+                self.after(0, lambda: self._on_conversion_error(error_message))
         finally:
             sys.stdout = old_stdout
             sys.stderr = old_stderr
@@ -1835,12 +1837,13 @@ class JaneConverterApp(ctk.CTk):
         except KeyboardInterrupt:
             self.after(0, self._on_conversion_aborted)
         except Exception as e:
-            if self.abort_requested.is_set() or "aborted" in str(e).lower():
+            error_message = str(e)
+            if self.abort_requested.is_set() or "aborted" in error_message.lower():
                 self.after(0, self._on_conversion_aborted)
             else:
                 import traceback
                 traceback.print_exc()
-                self.after(0, lambda: self._on_conversion_error(str(e)))
+                self.after(0, lambda: self._on_conversion_error(error_message))
         finally:
             sys.stdout = old_stdout
             sys.stderr = old_stderr
