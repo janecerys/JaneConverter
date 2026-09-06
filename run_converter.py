@@ -118,7 +118,7 @@ def process_conversion(
     save_cover_art: bool = True,
     save_metadata: bool = True,
     keep_temp: bool = False,
-    check_updates: bool = True,
+    check_updates: bool = False,
     abort_event: Optional[Any] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None
 ) -> str:
@@ -261,7 +261,7 @@ def process_playlist_conversion(
     save_cover_art: bool = True,
     save_metadata: bool = True,
     keep_temp: bool = False,
-    check_updates: bool = True,
+    check_updates: bool = False,
     abort_event: Optional[Any] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None
 ) -> Dict[str, Any]:
@@ -497,8 +497,12 @@ def main():
     parser.add_argument("--playlist", "-p", action="store_true", help="Force treat input source as playlist")
     parser.add_argument("--no-cover-art", action="store_true", help="Disable downloading and embedding cover art")
     parser.add_argument("--no-metadata", action="store_true", help="Disable exporting credits and metadata text files")
+    parser.add_argument("--no-update", action="store_true", help="Skip the yt-dlp extractor engine update check on startup")
 
     args = parser.parse_args()
+
+    if not args.no_update:
+        update_engine(status_callback=lambda m: print(f"[AutoUpdate] {m}"))
 
     save_cover = not args.no_cover_art
     save_meta = not args.no_metadata

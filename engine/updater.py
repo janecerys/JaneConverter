@@ -47,9 +47,21 @@ def get_current_repo_commit() -> str:
         pass
     return "unknown"
 
+def get_upstream_branch() -> str:
+    """Returns the configured upstream ref (e.g. 'origin/main'), falling back to 'origin/main'."""
+    try:
+        res = _run_git_cmd(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}"], timeout=3.0)
+        if res.returncode == 0:
+            upstream = res.stdout.strip()
+            if upstream and "/" in upstream:
+                return upstream
+    except Exception:
+        pass
+    return "origin/main"
+
 def check_for_repo_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
     """
-    Queries Git remote origin/main to check if newer application commits exist.
+    Queries the Git remote to check if newer application commits exist.
     """
     if not is_git_repo():
         return {
@@ -61,9 +73,10 @@ def check_for_repo_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
             "error": "Not a Git repository"
         }
 
+    upstream = get_upstream_branch()
     current_commit = get_current_repo_commit()
     try:
-        fetch_res = _run_git_cmd(["git", "fetch", "origin", "main"], timeout=timeout_seconds)
+        fetch_res = _run_git_cmd(["git", "fetch", upstream.split("/")[0], upstream.split("/", 1)[1]], timeout=timeout_seconds)
         if fetch_res.returncode != 0:
             return {
                 "has_update": False,
@@ -71,17 +84,17 @@ def check_for_repo_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
                 "current_commit": current_commit,
                 "latest_commit": current_commit,
                 "commits_behind": 0,
-                "error": fetch_res.stderr.strip() or "Failed to fetch from remote origin"
+                "error": fetch_res.stderr.strip() or f"Failed to fetch from remote {upstream}"
             }
 
         head_res = _run_git_cmd(["git", "rev-parse", "HEAD"], timeout=3.0)
-        origin_res = _run_git_cmd(["git", "rev-parse", "origin/main"], timeout=3.0)
+        origin_res = _run_git_cmd(["git", "rev-parse", upstream], timeout=3.0)
 
         if head_res.returncode == 0 and origin_res.returncode == 0:
             head_hash = head_res.stdout.strip()
             origin_hash = origin_res.stdout.strip()
             if head_hash != origin_hash:
-                count_res = _run_git_cmd(["git", "rev-list", "--count", "HEAD..origin/main"], timeout=3.0)
+                count_res = _run_git_cmd(["git", "rev-list", "--count", f"HEAD..{upstream}"], timeout=3.0)
                 behind = int(count_res.stdout.strip()) if count_res.returncode == 0 and count_res.stdout.strip().isdigit() else 1
                 short_origin = origin_hash[:7]
                 return {
@@ -121,7 +134,7 @@ def check_for_repo_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
 
 def apply_repo_update(status_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
     """
-    Pulls latest commits from origin/main, installs updated dependencies, and recompiles launcher if needed.
+    Pulls latest commits from the configured upstream, installs updated dependencies, and recompiles launcher if needed.
     """
     def log(msg: str):
         if status_callback:
@@ -132,9 +145,10 @@ def apply_repo_update(status_callback: Optional[Callable[[str], None]] = None) -
         log("Cannot auto-patch: not a Git clone.")
         return {"success": False, "error": "Not a Git clone"}
 
-    log("Pulling latest application updates from origin/main...")
+    upstream = get_upstream_branch()
+    log(f"Pulling latest application updates from {upstream}...")
     try:
-        pull_res = _run_git_cmd(["git", "pull", "origin", "main"], timeout=20.0)
+        pull_res = _run_git_cmd(["git", "pull", "--ff-only"] + upstream.split("/", 1), timeout=20.0)
         if pull_res.returncode != 0:
             err_msg = pull_res.stderr.strip() or "git pull failed"
             log(f"Git pull failed: {err_msg}")
@@ -150,15 +164,19 @@ def apply_repo_update(status_callback: Optional[Callable[[str], None]] = None) -
         log("Verifying and updating Python requirements...")
         try:
             no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-            subprocess.run(
+            res = subprocess.run(
                 [sys.executable, "-m", "pip", "install", "-r", "requirements.txt", "--quiet"],
                 cwd=REPO_DIR,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                timeout=30.0,
+                text=True,
+                timeout=120.0,
                 creationflags=no_window
             )
-            log("Python requirements verified.")
+            if res.returncode == 0:
+                log("Python requirements verified.")
+            else:
+                log(f"Notice: Dependency update failed ({res.stderr.strip() or 'pip returned non-zero code'}).")
         except Exception as e:
             log(f"Notice: Dependency update skipped ({e}).")
 
@@ -175,17 +193,21 @@ def apply_repo_update(status_callback: Optional[Callable[[str], None]] = None) -
             target_arg = "/target:winexe"
             try:
                 no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-                subprocess.run(
+                res = subprocess.run(
                     [csc_exe, target_arg, icon_arg, out_arg, "Program.cs"],
                     cwd=REPO_DIR,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    timeout=15.0,
+                    text=True,
+                    timeout=30.0,
                     creationflags=no_window
                 )
-                log("Recompiled native launcher JaneConverter.exe.")
-            except Exception:
-                pass
+                if res.returncode == 0:
+                    log("Recompiled native launcher JaneConverter.exe.")
+                else:
+                    log(f"Notice: Launcher recompile failed ({res.stderr.strip() or 'compiler returned non-zero code'}). Existing launcher left unchanged.")
+            except Exception as e:
+                log(f"Notice: Launcher recompile skipped ({e}).")
 
     return {"success": True, "error": None}
 
@@ -227,9 +249,12 @@ def check_for_engine_updates(timeout_seconds: float = 3.0) -> Dict[str, Any]:
         "online": False
     }
 
-def update_engine(status_callback: Optional[Callable[[str], None]] = None) -> bool:
+def update_engine(status_callback: Optional[Callable[[str], None]] = None,
+                  info: Optional[Dict[str, Any]] = None) -> bool:
     """
-    Upgrades yt-dlp to the latest release via pip in the background.
+    Upgrades yt-dlp to the latest release via pip in the background, pinned to the
+    exact version reported by PyPI. Pass a pre-fetched result from
+    check_for_engine_updates() via `info` to avoid a duplicate network check.
     Returns True if successfully updated.
     """
     def log(msg: str):
@@ -237,8 +262,9 @@ def update_engine(status_callback: Optional[Callable[[str], None]] = None) -> bo
             status_callback(msg)
         print(f"[AutoUpdate] {msg}")
 
-    log("Checking for real-time extractor engine updates...")
-    info = check_for_engine_updates()
+    if info is None:
+        log("Checking for real-time extractor engine updates...")
+        info = check_for_engine_updates()
 
     if not info["online"]:
         log(f"Offline or network unreachable. Using installed engine (v{info['current_version']}).")
@@ -248,26 +274,30 @@ def update_engine(status_callback: Optional[Callable[[str], None]] = None) -> bo
         log(f"Extractor engine is already up to date (v{info['current_version']}).")
         return False
 
-    log(f"New engine release detected: v{info['latest_version']}. Upgrading now...")
+    target_version = info["latest_version"]
+    log(f"New engine release detected: v{target_version}. Upgrading now...")
 
     no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    cmd = [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp", "--quiet"]
+    cmd = [sys.executable, "-m", "pip", "install", f"yt-dlp=={target_version}", "--quiet"]
 
     try:
-        res = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, creationflags=no_window)
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             text=True, timeout=120.0, creationflags=no_window)
         if res.returncode == 0:
-            log(f"Engine successfully updated to v{info['latest_version']}.")
+            log(f"Engine successfully updated to v{target_version}.")
             return True
-        log("Engine upgrade command returned non-zero code.")
+        log(f"Engine upgrade failed ({res.stderr.strip() or 'pip returned non-zero code'}).")
         return False
     except Exception as e:
         log(f"Notice: Automatic engine upgrade skipped ({e}).")
         return False
 
-def check_and_apply_all_updates(status_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+def check_and_apply_all_updates(status_callback: Optional[Callable[[str], None]] = None,
+                                auto_apply: bool = True) -> Dict[str, Any]:
     """
     Coordinates checking and applying updates for both the JaneConverter application repository
-    and the real-time yt-dlp extractor engine.
+    and the real-time yt-dlp extractor engine. With auto_apply=False, only reports availability
+    without modifying the installation.
     """
     def log(msg: str):
         if status_callback:
@@ -277,16 +307,19 @@ def check_and_apply_all_updates(status_callback: Optional[Callable[[str], None]]
     log("Starting update verification...")
     repo_updated = False
     engine_updated = False
+    engine_info: Optional[Dict[str, Any]] = None
     errors = []
 
-    # 1. Extractor Engine check & update
+    # 1. Extractor Engine check & update (single network check, reused below)
     log("Checking extractor engine (yt-dlp)...")
     try:
         engine_info = check_for_engine_updates()
-        if engine_info.get("has_update"):
+        if engine_info.get("has_update") and auto_apply:
             log(f"Updating extractor engine from v{engine_info['current_version']} to v{engine_info['latest_version']}...")
-            if update_engine(status_callback=status_callback):
+            if update_engine(status_callback=status_callback, info=engine_info):
                 engine_updated = True
+        elif engine_info.get("has_update"):
+            log(f"Extractor engine update available: v{engine_info['current_version']} -> v{engine_info['latest_version']}.")
         else:
             log(f"Extractor engine is already up to date (v{engine_info.get('current_version')}).")
     except Exception as e:
@@ -295,13 +328,15 @@ def check_and_apply_all_updates(status_callback: Optional[Callable[[str], None]]
     # 2. Repo check & update
     log("Checking JaneConverter repository...")
     repo_info = check_for_repo_updates()
-    if repo_info.get("has_update"):
+    if repo_info.get("has_update") and auto_apply:
         log(f"New repository commits found (current: {repo_info.get('current_commit')} -> latest: {repo_info.get('latest_commit')}).")
         res = apply_repo_update(status_callback=status_callback)
         if res.get("success"):
             repo_updated = True
         else:
             errors.append(res.get("error", "Repository update failed"))
+    elif repo_info.get("has_update"):
+        log(f"Repository update available ({repo_info.get('commits_behind')} commits behind, current: {repo_info.get('current_commit')}).")
     else:
         if repo_info.get("error") and repo_info.get("is_git"):
             errors.append(repo_info["error"])
@@ -314,6 +349,9 @@ def check_and_apply_all_updates(status_callback: Optional[Callable[[str], None]]
         "repo_updated": repo_updated,
         "engine_updated": engine_updated,
         "already_up_to_date": already_up_to_date,
+        "repo_update_available": repo_info.get("has_update", False),
+        "engine_update_available": bool(engine_info and engine_info.get("has_update")),
+        "commits_behind": repo_info.get("commits_behind", 0),
         "current_commit": repo_info.get("current_commit", get_current_repo_commit()),
         "current_engine_version": get_current_engine_version(),
         "error": "; ".join(errors) if errors else None,

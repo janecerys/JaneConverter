@@ -540,6 +540,17 @@ class JaneConverterApp(ctk.CTk):
     def _on_check_updates_clicked(self):
         if getattr(self, "_is_checking_updates", False):
             return
+
+        confirmed = messagebox.askyesno(
+            "Check for Updates",
+            "JaneConverter will check for new application commits and a newer yt-dlp engine,\n"
+            "then download and install them automatically.\n\n"
+            "Application updates restart nothing — you'll be asked to restart afterwards.\n\n"
+            "Continue?"
+        )
+        if not confirmed:
+            return
+
         self._is_checking_updates = True
         self.update_btn.configure(state="disabled", text="🔄 Checking...")
 
