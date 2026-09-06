@@ -459,11 +459,14 @@ class PlaylistSelectionWindow(ctk.CTkToplevel):
         sel_count = sum(1 for v in self.check_vars.values() if v.get())
         total = len(self.entries)
         self.counter_badge.configure(text=f"Selected: {sel_count} / {total}")
-        self.confirm_btn.configure(text=f"⚡ CONVERT SELECTED TRACKS ({sel_count} ITEMS)")
+        confirm_btn = getattr(self, "confirm_btn", None)
+        if confirm_btn is None:
+            return  # Bottom action bar not built yet (progressive row rendering)
+        confirm_btn.configure(text=f"⚡ CONVERT SELECTED TRACKS ({sel_count} ITEMS)")
         if sel_count == 0:
-            self.confirm_btn.configure(state="disabled", fg_color=THEME["card_inner"])
+            confirm_btn.configure(state="disabled", fg_color=THEME["card_inner"])
         else:
-            self.confirm_btn.configure(state="normal", fg_color=THEME["magenta"])
+            confirm_btn.configure(state="normal", fg_color=THEME["magenta"])
 
     def _on_confirm_click(self):
         selected = [entry for _, entry, var in self.row_widgets if var.get()]
@@ -543,8 +546,10 @@ class JaneConverterApp(ctk.CTk):
                     break
                 try:
                     fn()
-                except Exception:
-                    pass
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    self.log_queue.put(f"[UI] Error in UI update: {e}\n")
             self.after(80, pump)
 
         self.after(80, pump)
