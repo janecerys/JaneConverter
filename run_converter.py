@@ -23,7 +23,7 @@ DEFAULT_CONVERTED_DIR = os.path.join(BASE_DIR, "converted")
 DEFAULT_TEMP_DIR = os.path.join(BASE_DIR, "temp")
 
 from engine.extractor import (
-    is_url, sanitize_filename, fetch_media_stream, identify_source_type,
+    is_url, sanitize_filename, fetch_media_stream,
     is_playlist_url, fetch_playlist_entries, download_and_convert_thumbnail, format_duration
 )
 from engine.converter import (
@@ -33,6 +33,7 @@ from engine.converter import (
     get_best_hardware_encoder
 )
 from engine.updater import update_engine
+from engine.version import __version__
 
 MIN_FREE_DISK_BYTES = 1 * 1024 * 1024 * 1024  # require 1 GB headroom before processing
 
@@ -171,7 +172,7 @@ def process_conversion(
     gpu_desc = f"{enc_info['short_name']} ({enc_info['encoder_label']})" if active_gpu and enc_info["has_gpu"] else "CPU Multi-Core"
 
     print("=" * 60)
-    print(f"[*] JANECONVERTER PIPELINE")
+    print("[*] JANECONVERTER PIPELINE")
     print(f"Source: {source}")
     print(f"Target Format: {target_format.upper()}")
     print(f"Output Directory: {output_dir}")
@@ -181,7 +182,7 @@ def process_conversion(
 
     try:
         # Stage 1: Stream Extraction or File Ingestion
-        report(0.05, f"Analyzing source link and fetching media stream...")
+        report(0.05, "Analyzing source link and fetching media stream...")
         stream_info = fetch_media_stream(
             source=source,
             output_dir=work_dir,
@@ -324,7 +325,7 @@ def process_playlist_conversion(
     gpu_desc = f"{enc_info['short_name']} ({enc_info['encoder_label']})" if active_gpu and enc_info["has_gpu"] else "CPU Multi-Core"
 
     print("=" * 60)
-    print(f"[*] JANECONVERTER PLAYLIST BATCH PIPELINE")
+    print("[*] JANECONVERTER PLAYLIST BATCH PIPELINE")
     print(f"Playlist: {playlist_title}")
     print(f"Selected Items: {total_items}")
     print(f"Target Directory: {playlist_dir}")
@@ -514,10 +515,41 @@ def process_playlist_conversion(
         "failed_files": failed_files
     }
 
+CLI_FORMATS = sorted(SUPPORTED_AUDIO_FORMATS | SUPPORTED_VIDEO_FORMATS)
+CLI_BITRATES = {"320k", "256k", "192k", "128k"}
+CLI_BIT_DEPTHS = {"16-bit", "24-bit", "32-bit", "32-bit float"}
+CLI_SAMPLE_RATES = {44100, 48000, 96000}
+CLI_RESOLUTIONS = {"original", "4k", "1440p", "1080p", "720p", "480p"}
+
+def validate_cli_args(args, parser: argparse.ArgumentParser):
+    """Validates CLI argument combinations, exiting with a clear message on invalid input."""
+    fmt = args.format.lower().strip(".")
+    if fmt not in SUPPORTED_AUDIO_FORMATS and fmt not in SUPPORTED_VIDEO_FORMATS:
+        parser.error(f"Unsupported format '{args.format}'. Choose from: {', '.join(CLI_FORMATS)}")
+
+    bitrate = args.bitrate.lower().strip()
+    if fmt in ("wav", "flac"):
+        if bitrate not in CLI_BIT_DEPTHS:
+            parser.error(f"Invalid bit depth '{args.bitrate}' for {fmt}. Choose from: {', '.join(sorted(CLI_BIT_DEPTHS))}")
+    else:
+        if bitrate not in CLI_BITRATES:
+            parser.error(f"Invalid bitrate '{args.bitrate}'. Choose from: {', '.join(sorted(CLI_BITRATES))}")
+
+    if args.sample_rate not in CLI_SAMPLE_RATES:
+        parser.error(f"Invalid sample rate {args.sample_rate}. Choose from: {', '.join(str(r) for r in sorted(CLI_SAMPLE_RATES))}")
+
+    if args.resolution not in CLI_RESOLUTIONS:
+        parser.error(f"Invalid resolution '{args.resolution}'. Choose from: {', '.join(sorted(CLI_RESOLUTIONS))}")
+
+    if args.playlist and not is_url(args.source):
+        parser.error("--playlist requires a URL; a local file path cannot be a playlist.")
+
+    return fmt, bitrate
+
 def main():
     parser = argparse.ArgumentParser(description="JaneConverter: Universal Media Downloader & Converter")
     parser.add_argument("--source", "-s", required=True, help="Media URL (YouTube, Spotify, SoundCloud, TikTok, Twitter, etc.) or local file path")
-    parser.add_argument("--format", "-f", default="mp3", help="Target output format (mp3, wav, flac, aac, mp4, mkv, gif)")
+    parser.add_argument("--format", "-f", default="mp3", help=f"Target output format ({', '.join(CLI_FORMATS)})")
     parser.add_argument("--output", "-o", default=DEFAULT_CONVERTED_DIR, help="Destination directory for converted files")
     parser.add_argument("--bitrate", "-b", default="320k", help="Audio bitrate (320k, 256k, 192k, 128k) or bit depth (16-bit, 24-bit, 32-bit)")
     parser.add_argument("--sample-rate", "-r", type=int, default=48000, help="Audio sample rate in Hz (44100, 48000, 96000)")
@@ -529,8 +561,10 @@ def main():
     parser.add_argument("--no-cover-art", action="store_true", help="Disable downloading and embedding cover art")
     parser.add_argument("--no-metadata", action="store_true", help="Disable exporting credits and metadata text files")
     parser.add_argument("--no-update", action="store_true", help="Skip the yt-dlp extractor engine update check on startup")
+    parser.add_argument("--version", action="version", version=f"JaneConverter {__version__}")
 
     args = parser.parse_args()
+    args.format, args.bitrate = validate_cli_args(args, parser)
 
     if not args.no_update:
         update_engine(status_callback=lambda m: print(f"[AutoUpdate] {m}"))
@@ -540,10 +574,10 @@ def main():
     use_gpu = not args.no_gpu
 
     if args.playlist or is_playlist_url(args.source):
-        print(f"[*] Detected playlist source. Fetching items...")
+        print("[*] Detected playlist source. Fetching items...")
         pdata = fetch_playlist_entries(args.source)
         print(f"[*] Found {len(pdata['entries'])} tracks in '{pdata['playlist_title']}'. Converting all...")
-        process_playlist_conversion(
+        summary = process_playlist_conversion(
             playlist_title=pdata["playlist_title"],
             selected_entries=pdata["entries"],
             output_dir=args.output,
@@ -558,6 +592,10 @@ def main():
             save_metadata=save_meta,
             keep_temp=args.keep_temp
         )
+        failed = summary.get("failed_count", 0)
+        if failed:
+            print(f"[!] {failed} track(s) failed to convert.")
+            sys.exit(1)
     else:
         process_conversion(
             source=args.source,
@@ -575,4 +613,11 @@ def main():
         )
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:
+        print("\n[!] Interrupted by user.")
+        sys.exit(130)
+    except (RuntimeError, ValueError, FileNotFoundError) as e:
+        print(f"\n[!] Error: {e}")
+        sys.exit(1)

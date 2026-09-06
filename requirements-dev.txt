@@ -1,0 +1,4 @@
+# JaneConverter development dependencies
+-r requirements.txt
+pytest>=8.0.0
+pyflakes>=3.2.0

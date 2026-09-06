@@ -40,6 +40,7 @@ def test_sanitize_filename():
         assert bad not in clean
     assert len(clean) > 0
 
+@pytest.mark.online
 def test_resolve_spotify_metadata_online():
     # Public Spotify track (Rick Astley - Never Gonna Give You Up)
     url = "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT"

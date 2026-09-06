@@ -144,6 +144,7 @@ def test_build_ffmpeg_args_without_cover_art():
     assert "attached_pic" not in cmd
     assert "1:v" not in cmd
 
+@pytest.mark.online
 def test_spotify_metadata_fields():
     url = "https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT"
     data = resolve_spotify_metadata(url)

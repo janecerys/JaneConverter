@@ -199,6 +199,7 @@ python run_converter.py --source "C:\Music\recording.wav" --format mp3 --bitrate
 | `--no-metadata` | Skip writing credits and metadata `.txt` files | Disabled |
 | `--output-dir PATH` | Directory to save exported files | `converted/` |
 | `--no-update` | Skip real-time extractor engine update check | Disabled |
+| `--version` | Print the application version and exit | - |
 
 Run this to see all CLI options:
 
@@ -248,10 +249,15 @@ Spotify public embed endpoints limit catalog payloads to the top 100 tracks of a
 JaneConverter includes a comprehensive test suite covering audio argument generation, metadata tagging, Spotify resolution, playlist ordering, UI components, and abort signals:
 
 ```powershell
+python -m pip install -r requirements-dev.txt
 python -m pytest -v tests/
 ```
 
-All 42 tests run locally in seconds (network-dependent tests require an internet connection).
+The 58 hermetic tests run offline in seconds (FFmpeg required for the end-to-end transcode test). Eight additional live-network tests are opt-in: `python -m pytest -m online -v`. Continuous integration runs both suites on Windows and Ubuntu via GitHub Actions on every push.
+
+## Versioning
+
+The current version is defined in `engine/version.py`, surfaced in the GUI title bar and the CLI `--version` flag, and tagged on GitHub. See `CHANGELOG.md` for release history.
 
 ## Legal & Platform Notice
 

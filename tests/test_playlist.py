@@ -5,6 +5,7 @@ Unit tests for playlist detection, extraction, and sequential ordered formatting
 import os
 import sys
 import re
+import shutil
 import pytest
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -66,6 +67,7 @@ def test_ordered_playlist_naming_format():
 
     assert results == expected
 
+@pytest.mark.online
 def test_fetch_spotify_playlist_online():
     url = "https://open.spotify.com/playlist/37i9dQZF1DXcBWIGoYBM5M"
     data = fetch_playlist_entries(url)
@@ -82,6 +84,7 @@ def test_fetch_spotify_playlist_online():
     assert "url" in first
     assert first["url"].startswith("https://open.spotify.com/track/")
 
+@pytest.mark.online
 def test_fetch_spotify_album_online():
     url = "https://open.spotify.com/album/1DFixLWuPkv3KT3TnV35m3"
     data = fetch_playlist_entries(url)
@@ -92,6 +95,7 @@ def test_fetch_spotify_album_online():
     assert first["index"] == 1
     assert "Run Away With Me" in first["title"]
 
+@pytest.mark.online
 def test_fetch_youtube_playlist_flat():
     url = "https://www.youtube.com/playlist?list=PLbpi6ZahtOH6Blw3RGYpWkSByi_T7Rygb"
     data = fetch_playlist_entries(url)
@@ -104,6 +108,7 @@ def test_fetch_youtube_playlist_flat():
     assert "url" in first
     assert first["url"].startswith("https://www.youtube.com/watch?v=")
 
+@pytest.mark.skipif(not shutil.which("ffmpeg"), reason="requires FFmpeg on PATH")
 def test_process_playlist_conversion_local_files():
     import wave
     import struct

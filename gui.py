@@ -11,7 +11,6 @@ import time
 import queue
 import threading
 import platform
-import subprocess
 from typing import Callable, Optional, Dict, Any
 
 import customtkinter as ctk
@@ -45,7 +44,8 @@ ICON_PNG = os.path.join(ASSETS_DIR, "icon.png")
 for d in (DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR, ASSETS_DIR):
     os.makedirs(d, exist_ok=True)
 
-from engine.extractor import identify_source_type, is_url, is_playlist_url, fetch_playlist_entries
+from engine.extractor import identify_source_type, is_playlist_url, fetch_playlist_entries
+from engine.version import __version__
 from engine.converter import (
     SUPPORTED_AUDIO_FORMATS,
     SUPPORTED_VIDEO_FORMATS,
@@ -54,7 +54,6 @@ from engine.converter import (
 )
 from engine.updater import (
     update_engine,
-    get_current_engine_version,
     check_for_repo_updates,
     check_and_apply_all_updates
 )
@@ -477,7 +476,7 @@ class JaneConverterApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        self.title("JaneConverter - Universal Media Studio")
+        self.title(f"JaneConverter v{__version__} - Universal Media Studio")
         self.geometry("1100x820")
         self.minsize(980, 750)
         self.configure(fg_color=THEME["bg_main"])

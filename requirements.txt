@@ -1,6 +1,9 @@
-customtkinter>=6.0.0
+# JaneConverter runtime dependencies
+# yt-dlp intentionally has no upper bound: the extractor engine must track upstream
+# releases to keep working when host platforms change. It is auto-updated at runtime.
+customtkinter>=6.0.0,<7
 yt-dlp>=2025.1.0
-psutil>=5.9.0
-pillow>=10.0.0
+psutil>=5.9.0,<8
+pillow>=10.0.0,<13
 nvidia-ml-py>=12.535.0
-requests>=2.31.0
+requests>=2.31.0,<3

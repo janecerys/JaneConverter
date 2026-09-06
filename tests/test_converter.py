@@ -194,6 +194,7 @@ def test_get_unique_target_path(tmp_path):
     third = get_unique_target_path(str(tmp_path), "song.mp3")
     assert third == os.path.join(str(tmp_path), "song_2.mp3")
 
+@pytest.mark.online
 def test_engine_updater_version_check():
     ver = get_current_engine_version()
     assert ver != ""
@@ -209,6 +210,7 @@ def test_repo_updater_git_check():
     assert isinstance(commit, str)
     assert len(commit) >= 7
 
+@pytest.mark.online
 def test_repo_updater_check_for_updates():
     info = check_for_repo_updates()
     assert isinstance(info, dict)
@@ -217,6 +219,7 @@ def test_repo_updater_check_for_updates():
     assert info["is_git"] is True
     assert "current_commit" in info
 
+@pytest.mark.online
 def test_check_and_apply_all_updates():
     logs = []
     def log_cb(msg):
