@@ -200,7 +200,10 @@ def process_conversion(
                 "artist": artist,
                 "album": album,
                 "year": year,
-                "source": source,
+                "source_url": source,
+                "platform": stream_info.get("platform") or stream_info.get("source_type", ""),
+                "duration": stream_info.get("duration", 0),
+                "duration_str": stream_info.get("duration_str", ""),
                 "description": description,
                 "tags": stream_info.get("tags", []),
                 "categories": stream_info.get("categories", [])

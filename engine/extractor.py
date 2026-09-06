@@ -22,13 +22,22 @@ def is_url(path_or_url: str) -> bool:
     except Exception:
         return False
 
+WINDOWS_RESERVED_NAMES = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+
 def sanitize_filename(name: str, max_length: int = 100) -> str:
-    """Cleans illegal Windows filesystem characters from names."""
+    """Cleans illegal Windows filesystem characters, control characters, and reserved device names."""
     if not name:
         return "media_file"
-    cleaned = re.sub(r'[\\/*?:"<>|]', '_', name).strip()
-    cleaned = re.sub(r'\s+', ' ', cleaned)
+    cleaned = re.sub(r'[\\/*?:"<>|]', '_', name)
+    cleaned = re.sub(r'[\x00-\x1f\x7f]', '', cleaned)
+    cleaned = re.sub(r'\s+', ' ', cleaned).strip()
     cleaned = cleaned.strip(" .")
+    if cleaned.upper().split(".")[0] in WINDOWS_RESERVED_NAMES:
+        cleaned = f"_{cleaned}"
     if len(cleaned) > max_length:
         cleaned = cleaned[:max_length].rstrip(" .")
     return cleaned or "media_file"
@@ -180,7 +189,7 @@ def resolve_spotify_metadata(spotify_url: str) -> Dict[str, str]:
         try:
             resp = requests.get(embed_url, headers=headers, timeout=8)
             if resp.status_code == 200:
-                m_data = re.search(r'<script id="__NEXT_DATA__"[^>]*>([^<]+)</script>', resp.text)
+                m_data = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', resp.text, re.DOTALL)
                 if m_data:
                     data = json.loads(m_data.group(1))
                     entity = data.get("props", {}).get("pageProps", {}).get("state", {}).get("data", {}).get("entity", {})
@@ -319,6 +328,11 @@ def fetch_media_stream(
                     "thumbnail_url": "",
                     "description": ""
                 }
+            else:
+                raise RuntimeError(
+                    "Could not resolve Spotify track metadata. The link may be private, region-locked, "
+                    "or removed from the Spotify catalog. Check your internet connection and try again."
+                )
 
         if spotify_meta:
             report(0.12, f"Resolved Spotify track: {spotify_meta['artist']} - {spotify_meta['title']}")
@@ -394,7 +408,7 @@ def fetch_media_stream(
             downloaded_file = ydl.prepare_filename(info)
             if not os.path.exists(downloaded_file):
                 base_stem, _ = os.path.splitext(downloaded_file)
-                for ext in (".mp4", ".mkv", ".webm", ".m4a", ".mp3", ".opus"):
+                for ext in (".mp4", ".mkv", ".webm", ".mov", ".m4a", ".mp3", ".opus", ".aac", ".ogg", ".avi", ".wav"):
                     candidate = base_stem + ext
                     if os.path.exists(candidate):
                         downloaded_file = candidate
@@ -406,7 +420,8 @@ def fetch_media_stream(
             extracted_title = spotify_meta["title"] if spotify_meta else info.get("title", "Media Track")
             extracted_artist = spotify_meta["artist"] if spotify_meta else info.get("uploader", "Unknown Artist")
             extracted_album = spotify_meta["album"] if spotify_meta else ""
-            extracted_year = (spotify_meta.get("year", "") if spotify_meta else "") or (info.get("upload_date", "")[:4] if info.get("upload_date") else "")
+            upload_date = str(info.get("upload_date") or "")
+            extracted_year = (spotify_meta.get("year", "") if spotify_meta else "") or (upload_date[:4] if upload_date else "")
             description = info.get("description", "") or (spotify_meta.get("description", "") if spotify_meta else "")
             tags = info.get("tags", []) or []
             categories = info.get("categories", []) or []
@@ -471,7 +486,7 @@ def fetch_playlist_entries(
         if resp.status_code != 200:
             raise RuntimeError(f"Spotify embed returned HTTP status {resp.status_code}")
 
-        m_data = re.search(r'<script id="__NEXT_DATA__"[^>]*>([^<]+)</script>', resp.text)
+        m_data = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', resp.text, re.DOTALL)
         if not m_data:
             raise RuntimeError("Could not locate Spotify catalog payload in response.")
 

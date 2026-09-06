@@ -309,7 +309,7 @@ class PlaylistSelectionWindow(ctk.CTkToplevel):
         for entry in self.entries:
             idx = entry.get("index", 1)
             var = ctk.BooleanVar(value=True)
-            self.check_vars[idx] = var
+            self.check_vars[id(entry)] = var
 
             row = ctk.CTkFrame(self.scroll_frame, fg_color=THEME["card_inner"], corner_radius=6, height=38)
             row.pack(fill="x", padx=2, pady=2)
@@ -444,7 +444,7 @@ class PlaylistSelectionWindow(ctk.CTkToplevel):
             self.confirm_btn.configure(state="normal", fg_color=THEME["magenta"])
 
     def _on_confirm_click(self):
-        selected = [e for e in self.entries if self.check_vars.get(e.get("index", 1), ctk.BooleanVar(value=False)).get()]
+        selected = [entry for _, entry, var in self.row_widgets if var.get()]
         if not selected:
             return
         self.destroy()
@@ -1592,7 +1592,9 @@ class JaneConverterApp(ctk.CTk):
     def _on_playlist_fetched(self, pdata: Dict[str, Any]):
         self.playlist_btn.configure(state="normal", text="📑 Select Playlist")
         self.progress_bar.set(0.0)
-        self.status_label.configure(text=f"Loaded {pdata['total_count']} tracks from '{pdata['playlist_title']}'.")
+        total = pdata.get("total_count")
+        total_str = str(total) if total is not None else "an unknown number of"
+        self.status_label.configure(text=f"Loaded {total_str} tracks from '{pdata.get('playlist_title', 'Playlist')}'.")
 
         if not pdata.get("entries"):
             from tkinter import messagebox
@@ -1602,49 +1604,63 @@ class JaneConverterApp(ctk.CTk):
         PlaylistSelectionWindow(self, pdata, self._start_playlist_batch_conversion)
 
     def _on_playlist_fetch_error(self, err_msg: str):
-        self.playlist_btn.configure(state="normal", text="📑 Playlist Tracks")
+        # Restore the highlighted playlist styling when the failed source was a playlist URL
+        source = self.src_entry.get().strip()
+        if is_playlist_url(source):
+            self.playlist_btn.configure(
+                state="normal", text="📑 Select Playlist",
+                fg_color=THEME["magenta"], hover_color=THEME["magenta_hover"],
+                text_color="#ffffff"
+            )
+        else:
+            self.playlist_btn.configure(
+                state="normal", text="📑 Playlist Tracks",
+                fg_color=THEME["card_inner"], hover_color=THEME["card_border_glow"],
+                text_color=THEME["text_muted"]
+            )
         self.progress_bar.set(0.0)
         self.status_label.configure(text="Failed to fetch playlist catalog.")
         from tkinter import messagebox
         messagebox.showerror("Playlist Extraction Failed", f"Could not extract playlist information:\n{err_msg}")
 
-    def _start_playlist_batch_conversion(self, selected_entries: list, playlist_title: str):
-        if self.is_converting:
-            return
-
-        output_dir = self.dest_entry.get().strip() or DEFAULT_CONVERTED_DIR
-
+    def _collect_settings(self):
+        """
+        Reads the current UI selections into pipeline parameters.
+        Single source of truth for both single-track and playlist-batch conversion.
+        """
         raw_fmt = self.format_menu.get().split()[0].lower()
+        raw_quality = self.quality_menu.get()
         normalize_audio = bool(self.norm_switch.get())
         use_gpu = bool(self.gpu_switch.get())
         save_cover_art = bool(self.save_art_switch.get())
         save_metadata = bool(self.save_meta_switch.get())
 
-        raw_quality = self.quality_menu.get().lower()
         if raw_fmt == "wav":
-            if "16" in raw_quality:
-                bitrate = "16-bit"
-            elif "32" in raw_quality:
-                bitrate = "32-bit"
-            else:
-                bitrate = "24-bit"
+            bitrate = ("16-bit" if "16" in raw_quality
+                       else "32-bit" if "32" in raw_quality
+                       else "24-bit")
         elif raw_fmt == "flac":
-            if "16" in raw_quality:
-                bitrate = "16-bit"
-            else:
-                bitrate = "24-bit"
+            bitrate = "16-bit" if "16" in raw_quality else "24-bit"
+        elif raw_fmt in ("mp4", "mkv", "webm", "mov", "gif"):
+            # In video mode the quality menu holds resolutions, not bitrates
+            bitrate = None
         else:
-            raw_bitrate = self.quality_menu.get().split()[0].lower()
-            bitrate = raw_bitrate.replace("kbps", "k") if "kbps" in raw_bitrate else "320k"
+            bitrate = "320k"
+            for candidate in ("320", "256", "192", "128"):
+                if candidate in raw_quality:
+                    bitrate = f"{candidate}k"
+                    break
 
-        raw_res = self.quality_menu.get().lower()
+        raw_res = raw_quality.lower()
         if "4k" in raw_res:
             resolution = "4k"
-        elif "1080p" in raw_res:
+        elif "1440" in raw_res:
+            resolution = "1440p"
+        elif "1080" in raw_res:
             resolution = "1080p"
-        elif "720p" in raw_res:
+        elif "720" in raw_res:
             resolution = "720p"
-        elif "480p" in raw_res:
+        elif "480" in raw_res:
             resolution = "480p"
         else:
             resolution = "original"
@@ -1657,6 +1673,24 @@ class JaneConverterApp(ctk.CTk):
         else:
             sample_rate = 48000
 
+        return {
+            "format": raw_fmt,
+            "bitrate": bitrate,
+            "sample_rate": sample_rate,
+            "normalize_audio": normalize_audio,
+            "use_gpu": use_gpu,
+            "save_cover_art": save_cover_art,
+            "save_metadata": save_metadata,
+            "resolution": resolution,
+        }
+
+    def _start_playlist_batch_conversion(self, selected_entries: list, playlist_title: str):
+        if self.is_converting:
+            return
+
+        output_dir = self.dest_entry.get().strip() or DEFAULT_CONVERTED_DIR
+        settings = self._collect_settings()
+
         self.is_converting = True
         self.abort_requested.clear()
         self.abort_btn.configure(state="normal")
@@ -1668,11 +1702,11 @@ class JaneConverterApp(ctk.CTk):
 
         threading.Thread(
             target=self._run_playlist_worker,
-            args=(playlist_title, selected_entries, output_dir, raw_fmt, bitrate, sample_rate, normalize_audio, resolution, use_gpu, save_cover_art, save_metadata),
+            args=(playlist_title, selected_entries, output_dir, settings),
             daemon=True
         ).start()
 
-    def _run_playlist_worker(self, playlist_title, selected_entries, output_dir, target_format, bitrate, sample_rate, normalize_audio, resolution, use_gpu, save_cover_art=True, save_metadata=True):
+    def _run_playlist_worker(self, playlist_title, selected_entries, output_dir, settings):
         old_stdout = sys.stdout
         old_stderr = sys.stderr
         redirector = StdoutRedirector(self.log_queue)
@@ -1684,15 +1718,15 @@ class JaneConverterApp(ctk.CTk):
                 playlist_title=playlist_title,
                 selected_entries=selected_entries,
                 output_dir=output_dir,
-                target_format=target_format,
-                bitrate=bitrate,
-                sample_rate=sample_rate,
-                normalize_audio=normalize_audio,
-                resolution=resolution,
-                use_nvenc=use_gpu,
-                use_gpu=use_gpu,
-                save_cover_art=save_cover_art,
-                save_metadata=save_metadata,
+                target_format=settings["format"],
+                bitrate=settings["bitrate"],
+                sample_rate=settings["sample_rate"],
+                normalize_audio=settings["normalize_audio"],
+                resolution=settings["resolution"],
+                use_nvenc=settings["use_gpu"],
+                use_gpu=settings["use_gpu"],
+                save_cover_art=settings["save_cover_art"],
+                save_metadata=settings["save_metadata"],
                 abort_event=self.abort_requested,
                 progress_callback=lambda f, m: self.after(0, lambda: self._apply_progress(f, m))
             )
@@ -1754,56 +1788,7 @@ class JaneConverterApp(ctk.CTk):
                 return
 
         output_dir = self.dest_entry.get().strip() or DEFAULT_CONVERTED_DIR
-
-        # Parse selected format
-        raw_fmt = self.format_menu.get().split()[0].lower()
-        normalize_audio = bool(self.norm_switch.get())
-        use_gpu = bool(self.gpu_switch.get())
-        save_cover_art = bool(self.save_art_switch.get())
-        save_metadata = bool(self.save_meta_switch.get())
-
-        # Bitrate / Bit Depth
-        raw_quality = self.quality_menu.get().lower()
-        if raw_fmt == "wav":
-            if "16" in raw_quality:
-                bitrate = "16-bit"
-            elif "32" in raw_quality:
-                bitrate = "32-bit"
-            else:
-                bitrate = "24-bit"
-        elif raw_fmt == "flac":
-            if "16" in raw_quality:
-                bitrate = "16-bit"
-            else:
-                bitrate = "24-bit"
-        else:
-            raw_bitrate = self.quality_menu.get().split()[0].lower()
-            if "kbps" in raw_bitrate:
-                bitrate = raw_bitrate.replace("kbps", "k")
-            else:
-                bitrate = "320k"
-
-        # Resolution
-        raw_res = self.quality_menu.get().lower()
-        if "4k" in raw_res:
-            resolution = "4k"
-        elif "1080p" in raw_res:
-            resolution = "1080p"
-        elif "720p" in raw_res:
-            resolution = "720p"
-        elif "480p" in raw_res:
-            resolution = "480p"
-        else:
-            resolution = "original"
-
-        # Sample rate
-        raw_sr = self.sr_menu.get()
-        if "44.1" in raw_sr:
-            sample_rate = 44100
-        elif "96.0" in raw_sr:
-            sample_rate = 96000
-        else:
-            sample_rate = 48000
+        settings = self._collect_settings()
 
         self.is_converting = True
         self.abort_requested.clear()
@@ -1816,11 +1801,11 @@ class JaneConverterApp(ctk.CTk):
 
         threading.Thread(
             target=self._run_conversion_worker,
-            args=(source, output_dir, raw_fmt, bitrate, sample_rate, normalize_audio, resolution, use_gpu, save_cover_art, save_metadata),
+            args=(source, output_dir, settings),
             daemon=True
         ).start()
 
-    def _run_conversion_worker(self, source, output_dir, target_format, bitrate, sample_rate, normalize_audio, resolution, use_gpu, save_cover_art=True, save_metadata=True):
+    def _run_conversion_worker(self, source, output_dir, settings):
         old_stdout = sys.stdout
         old_stderr = sys.stderr
         redirector = StdoutRedirector(self.log_queue)
@@ -1831,15 +1816,15 @@ class JaneConverterApp(ctk.CTk):
             result_path = process_conversion(
                 source=source,
                 output_dir=output_dir,
-                target_format=target_format,
-                bitrate=bitrate,
-                sample_rate=sample_rate,
-                normalize_audio=normalize_audio,
-                resolution=resolution,
-                use_nvenc=use_gpu,
-                use_gpu=use_gpu,
-                save_cover_art=save_cover_art,
-                save_metadata=save_metadata,
+                target_format=settings["format"],
+                bitrate=settings["bitrate"],
+                sample_rate=settings["sample_rate"],
+                normalize_audio=settings["normalize_audio"],
+                resolution=settings["resolution"],
+                use_nvenc=settings["use_gpu"],
+                use_gpu=settings["use_gpu"],
+                save_cover_art=settings["save_cover_art"],
+                save_metadata=settings["save_metadata"],
                 abort_event=self.abort_requested,
                 progress_callback=lambda f, m: self.after(0, lambda: self._apply_progress(f, m))
             )

@@ -17,6 +17,26 @@ from typing import Optional, Dict, Any, Callable
 SUPPORTED_AUDIO_FORMATS = {"mp3", "wav", "flac", "aac", "m4a", "ogg"}
 SUPPORTED_VIDEO_FORMATS = {"mp4", "mkv", "webm", "mov", "gif"}
 
+# Industry standard EBU R128 loudness normalization targets
+LOUDNORM_FILTER = "loudnorm=I=-14:TP=-1.5:LRA=11"
+
+# Explicit bit-depth selection for lossless containers (no substring sniffing)
+WAV_BIT_DEPTH_CODECS = {
+    "16": "pcm_s16le", "16-bit": "pcm_s16le", "16bit": "pcm_s16le",
+    "32": "pcm_f32le", "32-bit": "pcm_f32le", "32bit": "pcm_f32le",
+    "32-bit float": "pcm_f32le", "float": "pcm_f32le",
+}
+FLAC_BIT_DEPTHS = {
+    "16": "s16", "16-bit": "s16", "16bit": "s16",
+}
+FLAC_DEFAULT_DEPTH = "s32"
+WAV_DEFAULT_CODEC = "pcm_s24le"
+
+VAAPI_ENCODER_ARGS = ["-vaapi_device", "/dev/dri/renderD128", "-c:v", "h264_vaapi", "-qp", "23"]
+
+_encoder_cache: Dict[Optional[str], Dict[str, Any]] = {}
+_encoder_cache_lock = threading.Lock()
+
 ENGINE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = os.path.dirname(ENGINE_DIR)
 
@@ -110,9 +130,23 @@ def get_host_gpus() -> list:
 
 def get_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict[str, Any]:
     """
-    Selects the optimal hardware video encoder for the current system.
+    Selects the optimal hardware video encoder for the current system (cached per session).
     Supports NVIDIA (NVENC), AMD (AMF/VAAPI), Intel (QSV), Apple (VideoToolbox), and CPU fallback.
     Configured for maximum throughput and parallel hardware saturation.
+    """
+    cache_key = preferred_codec if preferred_codec else "__auto__"
+    with _encoder_cache_lock:
+        cached = _encoder_cache.get(cache_key)
+    if cached is not None:
+        return dict(cached)
+    spec = _detect_best_hardware_encoder(preferred_codec)
+    with _encoder_cache_lock:
+        _encoder_cache[cache_key] = spec
+    return dict(spec)
+
+def _detect_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Performs the actual GPU registry walk / platform probe for get_best_hardware_encoder.
     """
     if preferred_codec:
         if preferred_codec == "h264_nvenc":
@@ -143,7 +177,7 @@ def get_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict[str
             return {
                 "has_gpu": True, "vendor": "linux_vaapi", "gpu_name": "VAAPI Display", "short_name": "VAAPI",
                 "encoder": "h264_vaapi", "encoder_label": "Linux VAAPI",
-                "args": ["-c:v", "h264_vaapi", "-qp", "23"]
+                "args": list(VAAPI_ENCODER_ARGS)
             }
         elif preferred_codec == "libx264":
             return {
@@ -178,7 +212,7 @@ def get_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict[str
         short = gpu_name.replace("AMD ", "").replace("Radeon(TM) ", "Radeon ").replace("Graphics", "").strip() or "Radeon"
         encoder = "h264_amf" if sys.platform == "win32" else "h264_vaapi"
         label = "AMD AMF" if sys.platform == "win32" else "AMD VAAPI"
-        args = ["-c:v", encoder, "-quality", "speed", "-pix_fmt", "yuv420p"] if encoder == "h264_amf" else ["-c:v", encoder, "-qp", "23"]
+        args = ["-c:v", encoder, "-quality", "speed", "-pix_fmt", "yuv420p"] if encoder == "h264_amf" else list(VAAPI_ENCODER_ARGS)
         return {
             "has_gpu": True,
             "vendor": "amd",
@@ -226,7 +260,7 @@ def get_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict[str
             "short_name": "VAAPI GPU",
             "encoder": "h264_vaapi",
             "encoder_label": "Linux VAAPI",
-            "args": ["-c:v", "h264_vaapi", "-qp", "23"]
+            "args": list(VAAPI_ENCODER_ARGS)
         }
 
     # CPU Fallback
@@ -266,17 +300,22 @@ def build_ffmpeg_args(
     ffmpeg_bin = get_ffmpeg_binary()
     cmd = [ffmpeg_bin, "-y"]
 
-    # Peak GPU Acceleration: offload video decoding to GPU silicon when hardware acceleration is active
+    # Resolve the encoder once so decode acceleration and encode args stay consistent
+    enc_spec = None
     if active_gpu and target_format in SUPPORTED_VIDEO_FORMATS and target_format != "gif":
+        enc_spec = get_best_hardware_encoder(preferred_codec=gpu_codec)
+
+    # Peak GPU Acceleration: offload video decoding to GPU silicon when hardware acceleration is
+    # active. VAAPI is excluded: it uses software decode plus an explicit hwupload filter below.
+    if enc_spec is not None and enc_spec["encoder"] != "h264_vaapi":
         cmd.extend(["-hwaccel", "auto"])
 
-    # Multi-core thread scaling and input queue buffering for peak throughput
-    cmd.extend(["-threads", "0", "-thread_queue_size", "1024"])
-
     if can_embed_art:
-        cmd.extend(["-i", input_path, "-i", cover_path, "-map", "0:a", "-map", "1:v"])
+        cmd.extend(["-thread_queue_size", "1024", "-i", input_path])
+        cmd.extend(["-thread_queue_size", "64", "-i", cover_path])
+        cmd.extend(["-map", "0:a", "-map", "1:v"])
     else:
-        cmd.extend(["-i", input_path])
+        cmd.extend(["-thread_queue_size", "1024", "-i", input_path])
 
     # Metadata tags
     if metadata:
@@ -293,7 +332,7 @@ def build_ffmpeg_args(
         audio_filters = []
         if normalize_audio:
             # Industry standard EBU R128 loudness normalization
-            audio_filters.append("loudnorm=I=-14:TP=-1.5:LRA=11")
+            audio_filters.append(LOUDNORM_FILTER)
 
         if audio_filters:
             cmd.extend(["-af", ",".join(audio_filters)])
@@ -313,19 +352,10 @@ def build_ffmpeg_args(
                     "-disposition:v", "attached_pic"
                 ])
         elif target_format == "wav":
-            bitrate_lower = (bitrate or "").lower()
-            if "16-bit" in bitrate_lower or "pcm_s16le" in bitrate_lower or bitrate_lower == "16":
-                cmd.extend(["-c:a", "pcm_s16le"])
-            elif "32-bit" in bitrate_lower or "pcm_f32le" in bitrate_lower or "float" in bitrate_lower or bitrate_lower == "32":
-                cmd.extend(["-c:a", "pcm_f32le"])
-            else:
-                cmd.extend(["-c:a", "pcm_s24le"])
+            cmd.extend(["-c:a", WAV_BIT_DEPTH_CODECS.get((bitrate or "").lower(), WAV_DEFAULT_CODEC)])
         elif target_format == "flac":
-            bitrate_lower = (bitrate or "").lower()
-            if "16" in bitrate_lower:
-                cmd.extend(["-c:a", "flac", "-sample_fmt", "s16", "-compression_level", "8"])
-            else:
-                cmd.extend(["-c:a", "flac", "-sample_fmt", "s32", "-compression_level", "8"])
+            depth = FLAC_BIT_DEPTHS.get((bitrate or "").lower(), FLAC_DEFAULT_DEPTH)
+            cmd.extend(["-c:a", "flac", "-sample_fmt", depth, "-compression_level", "8"])
             if can_embed_art:
                 cmd.extend(["-c:v", "copy", "-disposition:v", "attached_pic"])
         elif target_format in ("aac", "m4a"):
@@ -374,12 +404,9 @@ def build_ffmpeg_args(
             elif resolution == "480p":
                 video_filters.append("scale=-2:480")
 
-            if video_filters:
-                cmd.extend(["-vf", ",".join(video_filters)])
-
             audio_filters = []
             if normalize_audio:
-                audio_filters.append("loudnorm=I=-14:TP=-1.5:LRA=11")
+                audio_filters.append(LOUDNORM_FILTER)
 
             if audio_filters:
                 cmd.extend(["-af", ",".join(audio_filters)])
@@ -387,8 +414,11 @@ def build_ffmpeg_args(
             if target_format == "webm":
                 cmd.extend(["-c:v", "libvpx-vp9", "-crf", "30", "-b:v", "0", "-c:a", "libopus", "-b:a", "160k"])
             else:
-                if active_gpu:
-                    enc_spec = get_best_hardware_encoder(preferred_codec=gpu_codec)
+                if enc_spec is not None:
+                    if enc_spec["encoder"] == "h264_vaapi":
+                        # Software decode: upload frames to the VAAPI render device before encoding
+                        video_filters.append("format=nv12")
+                        video_filters.append("hwupload")
                     cmd.extend(enc_spec["args"])
                 else:
                     cmd.extend(["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p"])
@@ -397,9 +427,13 @@ def build_ffmpeg_args(
                     "-c:a", "aac",
                     "-b:a", "192k"
                 ])
+
+            if video_filters:
+                cmd.extend(["-vf", ",".join(video_filters)])
     else:
         raise ValueError(f"Unsupported conversion format: '{target_format}'")
 
+    cmd.extend(["-threads", "0"])
     cmd.append(output_path)
     return cmd
 
@@ -525,8 +559,15 @@ def convert_media(
         raise
 
     except subprocess.CalledProcessError as e:
+        # Clean up the partial output so retries don't leave orphaned truncated files
+        if os.path.exists(destination_path):
+            try:
+                os.remove(destination_path)
+            except Exception:
+                pass
+
         # If hardware GPU transcode failed, retry with multi-core CPU libx264
-        if active_gpu and target_format in ("mp4", "mkv", "mov"):
+        if active_gpu and target_format in ("mp4", "mkv", "mov", "webm"):
             report(0.85, "Hardware GPU encoder unavailable or failed, switching to multi-core CPU transcode...")
             return convert_media(
                 input_path=input_path,
@@ -564,7 +605,7 @@ def convert_media(
                 abort_event=abort_event,
                 progress_callback=progress_callback
             )
-        err_detail = e.stderr.decode("utf-8", errors="ignore")
+        err_detail = e.stderr.decode("utf-8", errors="ignore") if e.stderr else ""
         raise RuntimeError(f"FFmpeg transcode error: {err_detail}") from e
 
     report(1.0, f"Conversion complete: {os.path.basename(destination_path)}")
