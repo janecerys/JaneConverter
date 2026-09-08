@@ -24,7 +24,8 @@ DEFAULT_TEMP_DIR = os.path.join(BASE_DIR, "temp")
 
 from engine.extractor import (
     is_url, sanitize_filename, fetch_media_stream,
-    is_playlist_url, fetch_playlist_entries, download_and_convert_thumbnail, format_duration
+    is_playlist_url, fetch_playlist_entries, download_and_convert_thumbnail, format_duration,
+    identify_source_type
 )
 from engine.converter import (
     convert_media,
@@ -36,6 +37,49 @@ from engine.updater import update_engine
 from engine.version import __version__
 
 MIN_FREE_DISK_BYTES = 1 * 1024 * 1024 * 1024  # require 1 GB headroom before processing
+
+
+def media_library_folder(
+    output_dir: str,
+    target_format: str,
+    source_type: str,
+    content_category: Optional[str] = None,
+) -> str:
+    """Return the organized library folder for a converted item."""
+    media_kind = "Music" if target_format.lower().strip(".") in SUPPORTED_AUDIO_FORMATS else "Videos"
+    category = str(content_category or "").strip().lower()
+    if category == "music":
+        return os.path.join(output_dir, "Music")
+    if category in ("video", "videos"):
+        return os.path.join(output_dir, "Videos")
+    if category in ("miscellaneous", "misc"):
+        misc_kind = "Audio" if media_kind == "Music" else "Videos"
+        return os.path.join(output_dir, "Miscellaneous", misc_kind)
+    source_labels = {
+        "spotify": "Spotify",
+        "youtube": "YouTube",
+        "soundcloud": "SoundCloud",
+        "tiktok": "TikTok",
+        "twitter": "Twitter",
+        "facebook": "Facebook",
+        "reddit": "Reddit",
+        "twitch": "Twitch",
+        "local": "Local Files",
+        "local_file": "Local Files",
+        "generic_url": "Other Sources",
+    }
+    source_key = str(source_type or "other").lower().strip()
+    source_label = source_labels.get(source_key, "Other Sources")
+    return os.path.join(output_dir, media_kind, source_label)
+
+
+def playlist_source_type(selected_entries: list) -> str:
+    """Infer the source platform for a playlist batch from its first item."""
+    for entry in selected_entries:
+        source = entry.get("url", "") if isinstance(entry, dict) else ""
+        if source:
+            return identify_source_type(source)
+    return "other"
 
 def ensure_free_disk_space(path: str, min_free_bytes: int = MIN_FREE_DISK_BYTES):
     """Raises RuntimeError if the drive holding `path` has less than the required free space."""
@@ -136,7 +180,8 @@ def process_conversion(
     keep_temp: bool = False,
     check_updates: bool = False,
     abort_event: Optional[Any] = None,
-    progress_callback: Optional[Callable[[float, str], None]] = None
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+    content_category: Optional[str] = None
 ) -> str:
     """
     Orchestrates downloading/extracting stream, embedding cover art, exporting credits,
@@ -200,9 +245,15 @@ def process_conversion(
         description = stream_info.get("description", "")
         cover_path = stream_info.get("thumbnail_path")
 
+        # Keep the export root tidy and make the origin obvious at a glance.
+        organized_output_dir = media_library_folder(
+            output_dir, target_format, stream_info.get("source_type", "other"), content_category
+        )
+        os.makedirs(organized_output_dir, exist_ok=True)
+
         # Save standalone cover art image if requested
         if save_cover_art and cover_path and os.path.exists(cover_path):
-            standalone_cover = os.path.join(output_dir, f"{safe_title}.jpg")
+            standalone_cover = os.path.join(organized_output_dir, f"{safe_title}.jpg")
             try:
                 shutil.copy2(cover_path, standalone_cover)
                 print(f"[+] Saved cover art: {os.path.basename(standalone_cover)}")
@@ -211,7 +262,7 @@ def process_conversion(
 
         # Save metadata text file if requested
         if save_metadata:
-            meta_path = os.path.join(output_dir, f"{safe_title}_info.txt")
+            meta_path = os.path.join(organized_output_dir, f"{safe_title}_info.txt")
             write_credits_file(meta_path, {
                 "title": title,
                 "artist": artist,
@@ -239,7 +290,7 @@ def process_conversion(
 
         result_path = convert_media(
             input_path=input_media,
-            output_dir=output_dir,
+            output_dir=organized_output_dir,
             output_filename=safe_title,
             target_format=target_format,
             bitrate=bitrate,
@@ -282,8 +333,10 @@ def process_playlist_conversion(
     save_metadata: bool = True,
     keep_temp: bool = False,
     check_updates: bool = False,
+    source_type: Optional[str] = None,
     abort_event: Optional[Any] = None,
-    progress_callback: Optional[Callable[[float, str], None]] = None
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+    content_category: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Batch-downloads and transcodes selected playlist items into a dedicated playlist folder.
@@ -301,8 +354,10 @@ def process_playlist_conversion(
 
     active_gpu = use_gpu if use_gpu is not None else use_nvenc
 
+    source_type = source_type or playlist_source_type(selected_entries)
+    organized_output_dir = media_library_folder(output_dir, target_format, source_type, content_category)
     safe_folder = sanitize_filename(playlist_title) or "Playlist_Media"
-    playlist_dir = os.path.join(output_dir, safe_folder)
+    playlist_dir = os.path.join(organized_output_dir, safe_folder)
     metadata_dir = os.path.join(playlist_dir, "metadata")
     os.makedirs(playlist_dir, exist_ok=True)
     os.makedirs(DEFAULT_TEMP_DIR, exist_ok=True)

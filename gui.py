@@ -11,6 +11,7 @@ import time
 import queue
 import threading
 import platform
+import subprocess
 from typing import Callable, Optional, Dict, Any
 
 import customtkinter as ctk
@@ -736,28 +737,33 @@ class JaneConverterApp(ctk.CTk):
         )
         self.hw_badge.pack(side="left", padx=(0, 12), pady=4)
 
-        # Check for Updates Button (Left of Telemetry Pill)
-        self.update_btn = ctk.CTkButton(
-            header_frame,
-            text="🔄 Check for Updates",
-            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
-            fg_color=THEME["card_inner"],
-            hover_color=THEME["card_border_glow"],
-            border_width=1,
-            border_color=THEME["card_border"],
-            text_color=THEME["text_primary"],
-            height=30,
-            corner_radius=15,
-            command=self._on_check_updates_clicked
-        )
-        self.update_btn.pack(side="right", padx=(0, 10), pady=12)
-
     # -------------------------------------------------------------
     # 2. MAIN TABS
     # -------------------------------------------------------------
     def _build_tabs(self):
+        content_frame = ctk.CTkFrame(self, fg_color="transparent")
+        content_frame.pack(fill="both", expand=True, padx=16, pady=(0, 12))
+
+        sidebar = ctk.CTkFrame(
+            content_frame,
+            width=190,
+            fg_color=THEME["card_bg"],
+            corner_radius=12,
+            border_width=1,
+            border_color=THEME["card_border"]
+        )
+        sidebar.pack(side="left", fill="y", padx=(0, 12))
+        sidebar.pack_propagate(False)
+
+        ctk.CTkLabel(
+            sidebar,
+            text="WORKSPACE",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            text_color=THEME["text_dark"]
+        ).pack(anchor="w", padx=18, pady=(18, 10))
+
         self.tabview = ctk.CTkTabview(
-            self,
+            content_frame,
             fg_color=THEME["card_bg"],
             segmented_button_fg_color=THEME["card_inner"],
             segmented_button_selected_color=THEME["magenta"],
@@ -767,15 +773,59 @@ class JaneConverterApp(ctk.CTk):
             text_color=THEME["text_primary"],
             border_width=1,
             border_color=THEME["card_border"],
-            corner_radius=12
+            corner_radius=12,
+            anchor="s"
         )
-        self.tabview.pack(fill="both", expand=True, padx=16, pady=(0, 12))
+        self.tabview.pack(side="left", fill="both", expand=True)
 
         self.tab_studio = self.tabview.add("⚡ Converter")
         self.tab_library = self.tabview.add("📁 Converted Library")
         self.tab_console = self.tabview.add("💻 Console")
 
+        self.sidebar_buttons = {}
+        for tab_name in ("⚡ Converter", "📁 Converted Library", "💻 Console"):
+            button = ctk.CTkButton(
+                sidebar,
+                text=tab_name,
+                anchor="w",
+                height=38,
+                corner_radius=7,
+                fg_color=THEME["magenta"] if tab_name == "⚡ Converter" else "transparent",
+                hover_color=THEME["magenta_hover"],
+                text_color=THEME["text_primary"],
+                font=ctk.CTkFont(size=12, weight="bold"),
+                command=lambda name=tab_name: self._select_sidebar_tab(name)
+            )
+            button.pack(fill="x", padx=10, pady=3)
+            self.sidebar_buttons[tab_name] = button
+
+        ctk.CTkFrame(sidebar, height=1, fg_color=THEME["card_border"]).pack(fill="x", padx=14, pady=(14, 10))
+
+        self.update_btn = ctk.CTkButton(
+            sidebar,
+            text="🔄 Check for Updates",
+            font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
+            fg_color=THEME["card_inner"],
+            hover_color=THEME["card_border_glow"],
+            border_width=1,
+            border_color=THEME["card_border"],
+            text_color=THEME["text_primary"],
+            height=32,
+            corner_radius=8,
+            command=self._on_check_updates_clicked
+        )
+        self.update_btn.pack(side="bottom", fill="x", padx=12, pady=14)
+
+        # CTkTabview provides the content frames we already use, but its own
+        # top navigation is redundant now that navigation lives in the sidebar.
+        self.tabview._segmented_button.grid_forget()
+
         self.tabview.set("⚡ Converter")
+
+    def _select_sidebar_tab(self, tab_name: str):
+        self.tabview.set(tab_name)
+        for name, button in self.sidebar_buttons.items():
+            button.configure(fg_color=THEME["magenta"] if name == tab_name else "transparent")
 
     # -------------------------------------------------------------
     # 3. TAB 1: STUDIO / CONVERTER
@@ -902,6 +952,28 @@ class JaneConverterApp(ctk.CTk):
         )
         self.mode_selector.set("🎵 Audio Format")
         self.mode_selector.pack(side="right")
+
+        category_box = ctk.CTkFrame(s_header, fg_color="transparent")
+        category_box.pack(side="right", padx=(0, 10))
+        ctk.CTkLabel(
+            category_box,
+            text="Save as",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=THEME["text_muted"]
+        ).pack(side="left", padx=(0, 6))
+        self.category_menu = ctk.CTkOptionMenu(
+            category_box,
+            values=["Music", "Video", "Miscellaneous"],
+            width=125,
+            height=28,
+            fg_color=THEME["input_bg"],
+            button_color=THEME["card_border_glow"],
+            button_hover_color=THEME["cyan_hover"],
+            dropdown_fg_color=THEME["card_bg"],
+            font=ctk.CTkFont(size=11)
+        )
+        self.category_menu.set("Music")
+        self.category_menu.pack(side="left")
 
         # Parameters Grid Container
         grid_frame = ctk.CTkFrame(settings_card, fg_color="transparent")
@@ -1171,22 +1243,25 @@ class JaneConverterApp(ctk.CTk):
 
         items = []
         try:
-            for entry in os.scandir(dest_dir):
-                if entry.is_file():
-                    ext = os.path.splitext(entry.name)[1].lower().strip(".")
-                    if ext in SUPPORTED_AUDIO_FORMATS or ext in SUPPORTED_VIDEO_FORMATS:
-                        items.append((entry.stat().st_mtime, entry.path, entry.name, entry.stat().st_size, ext, False, 0))
-                elif entry.is_dir():
-                    count = 0
-                    sub_sz = 0
-                    for sub in os.scandir(entry.path):
-                        if sub.is_file():
-                            sub_ext = os.path.splitext(sub.name)[1].lower().strip(".")
-                            if sub_ext in SUPPORTED_AUDIO_FORMATS or sub_ext in SUPPORTED_VIDEO_FORMATS:
-                                count += 1
-                                sub_sz += sub.stat().st_size
-                    if count > 0:
-                        items.append((entry.stat().st_mtime, entry.path, entry.name, sub_sz, "folder", True, count))
+            media_exts = SUPPORTED_AUDIO_FORMATS | SUPPORTED_VIDEO_FORMATS
+            playlist_dirs = set()
+            # Playlist exports contain a metadata folder; show them as one item.
+            for root, dirs, files in os.walk(dest_dir):
+                media_files = [f for f in files if os.path.splitext(f)[1].lower().strip(".") in media_exts]
+                if media_files and os.path.isdir(os.path.join(root, "metadata")):
+                    playlist_dirs.add(os.path.abspath(root))
+                    total_size = sum(os.path.getsize(os.path.join(root, f)) for f in media_files)
+                    items.append((os.path.getmtime(root), root, os.path.basename(root), total_size, "folder", True, len(media_files)))
+
+            for root, dirs, files in os.walk(dest_dir):
+                root_abs = os.path.abspath(root)
+                if any(root_abs == p or root_abs.startswith(p + os.sep) for p in playlist_dirs):
+                    continue
+                for filename in files:
+                    path = os.path.join(root, filename)
+                    ext = os.path.splitext(filename)[1].lower().strip(".")
+                    if ext in media_exts:
+                        items.append((os.path.getmtime(path), path, filename, os.path.getsize(path), ext, False, 0))
         except Exception:
             pass
 
@@ -1206,6 +1281,8 @@ class JaneConverterApp(ctk.CTk):
             row = ctk.CTkFrame(self.library_scroll, fg_color=THEME["card_inner"], corner_radius=6, height=44)
             row.pack(fill="x", padx=4, pady=3)
             row.pack_propagate(False)
+            parent_rel = os.path.relpath(os.path.dirname(path), dest_dir)
+            location = "" if parent_rel == "." else f"  ·  {parent_rel.replace(os.sep, ' / ')}"
 
             if is_dir:
                 tag_lbl = ctk.CTkLabel(
@@ -1222,7 +1299,7 @@ class JaneConverterApp(ctk.CTk):
 
                 name_lbl = ctk.CTkLabel(
                     row,
-                    text=f"{name} ({count} tracks)",
+                    text=f"{name} ({count} tracks){location}",
                     font=ctk.CTkFont(size=12, weight="bold"),
                     text_color=THEME["text_primary"],
                     anchor="w"
@@ -1234,26 +1311,26 @@ class JaneConverterApp(ctk.CTk):
 
                 open_b = ctk.CTkButton(
                     row,
-                    text="📂 Open",
+                    text="📂 Folder",
                     width=65,
                     height=24,
                     fg_color=THEME["input_bg"],
                     hover_color=THEME["cyan_hover"],
                     text_color=THEME["cyan"],
                     font=ctk.CTkFont(size=11),
-                    command=lambda p=path: os.startfile(p)
+                    command=lambda p=path: self._open_file_location(p)
                 )
                 open_b.pack(side="right", padx=(4, 10))
 
                 del_b = ctk.CTkButton(
                     row,
-                    text="🗑️",
-                    width=32,
+                    text="🗑️ Delete",
+                    width=70,
                     height=24,
                     fg_color=THEME["input_bg"],
                     hover_color="#991b1b",
                     font=ctk.CTkFont(size=11),
-                    command=lambda p=path: self._delete_library_dir(p)
+                    command=lambda p=path, n=name: self._delete_library_dir(p, n)
                 )
                 del_b.pack(side="right", padx=2)
 
@@ -1276,7 +1353,7 @@ class JaneConverterApp(ctk.CTk):
 
                 name_lbl = ctk.CTkLabel(
                     row,
-                    text=name,
+                    text=f"{name}{location}",
                     font=ctk.CTkFont(size=12, weight="bold"),
                     text_color=THEME["text_primary"],
                     anchor="w"
@@ -1286,33 +1363,47 @@ class JaneConverterApp(ctk.CTk):
                 sz_str = f"{sz / (1024 * 1024):.1f} MB"
                 ctk.CTkLabel(row, text=sz_str, font=ctk.CTkFont(size=11), text_color=THEME["text_dark"]).pack(side="left", padx=8)
 
-                play_b = ctk.CTkButton(
+                open_b = ctk.CTkButton(
                     row,
-                    text="▶ Play",
+                    text="📂 Folder",
                     width=65,
                     height=24,
                     fg_color=THEME["input_bg"],
                     hover_color=THEME["cyan_hover"],
                     text_color=THEME["cyan"],
                     font=ctk.CTkFont(size=11),
-                    command=lambda p=path: self._play_file(p)
+                    command=lambda p=path: self._open_file_location(p)
                 )
-                play_b.pack(side="right", padx=(4, 10))
+                open_b.pack(side="right", padx=(4, 10))
 
                 del_b = ctk.CTkButton(
                     row,
-                    text="🗑️",
-                    width=32,
+                    text="🗑️ Delete",
+                    width=70,
                     height=24,
                     fg_color=THEME["input_bg"],
                     hover_color="#991b1b",
                     font=ctk.CTkFont(size=11),
-                    command=lambda p=path: self._delete_library_file(p)
+                    command=lambda p=path, n=name: self._delete_library_file(p, n)
                 )
                 del_b.pack(side="right", padx=2)
 
-    def _delete_library_dir(self, dir_path: str):
+    def _open_file_location(self, file_path: str):
+        """Open Explorer with the converted file selected."""
+        if not os.path.exists(file_path):
+            return
+        try:
+            subprocess.Popen(["explorer", f"/select,{os.path.abspath(file_path)}"])
+        except Exception:
+            try:
+                os.startfile(os.path.dirname(file_path) if os.path.isfile(file_path) else file_path)
+            except Exception as e:
+                self.status_label.configure(text=f"Could not open file location: {e}")
+
+    def _delete_library_dir(self, dir_path: str, name: str = "this playlist"):
         if os.path.exists(dir_path):
+            if not messagebox.askyesno("Confirm deletion", f"Delete the entire playlist folder '{name}'?\n\nThis cannot be undone.", icon="warning"):
+                return
             import shutil
             try:
                 shutil.rmtree(dir_path, ignore_errors=True)
@@ -1320,15 +1411,10 @@ class JaneConverterApp(ctk.CTk):
             except Exception:
                 pass
 
-    def _play_file(self, file_path: str):
+    def _delete_library_file(self, file_path: str, name: str = "this file"):
         if os.path.exists(file_path):
-            try:
-                os.startfile(file_path)
-            except Exception as e:
-                self.status_label.configure(text=f"Could not open file: {e}")
-
-    def _delete_library_file(self, file_path: str):
-        if os.path.exists(file_path):
+            if not messagebox.askyesno("Confirm deletion", f"Delete '{name}'?\n\nThis cannot be undone.", icon="warning"):
+                return
             try:
                 os.remove(file_path)
                 self._refresh_library()
@@ -1571,6 +1657,10 @@ class JaneConverterApp(ctk.CTk):
             self.sr_menu.set("Auto (Match Source)")
 
     def _on_mode_toggled(self, selected_mode: str):
+        # Keep the category aligned with the selected media mode unless the user
+        # deliberately chose the general Miscellaneous bucket.
+        if hasattr(self, "category_menu") and self.category_menu.get() != "Miscellaneous":
+            self.category_menu.set("Music" if "Audio" in selected_mode else "Video")
         if "Audio" in selected_mode:
             self.format_menu.configure(values=["MP3", "WAV", "FLAC", "AAC", "OGG"])
             self.format_menu.set("MP3")
@@ -1741,6 +1831,7 @@ class JaneConverterApp(ctk.CTk):
             "save_cover_art": save_cover_art,
             "save_metadata": save_metadata,
             "resolution": resolution,
+            "content_category": self.category_menu.get(),
         }
 
     def _validate_destination(self, output_dir: str) -> bool:
@@ -1797,6 +1888,7 @@ class JaneConverterApp(ctk.CTk):
                 use_gpu=settings["use_gpu"],
                 save_cover_art=settings["save_cover_art"],
                 save_metadata=settings["save_metadata"],
+                content_category=settings["content_category"],
                 abort_event=self.abort_requested,
                 progress_callback=lambda f, m: self._post_ui(lambda: self._apply_progress(f, m))
             )
@@ -1889,6 +1981,7 @@ class JaneConverterApp(ctk.CTk):
                 use_gpu=settings["use_gpu"],
                 save_cover_art=settings["save_cover_art"],
                 save_metadata=settings["save_metadata"],
+                content_category=settings["content_category"],
                 abort_event=self.abort_requested,
                 progress_callback=lambda f, m: self._post_ui(lambda: self._apply_progress(f, m))
             )
