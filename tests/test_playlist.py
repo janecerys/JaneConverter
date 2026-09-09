@@ -144,7 +144,7 @@ def test_process_playlist_conversion_local_files():
 
         assert summary["successful_count"] == 2
         assert summary["failed_count"] == 0
-        expected_folder = os.path.join(out_dir, "Kotomi Mixtape")
+        expected_folder = os.path.join(out_dir, "Music", "Local Files", "Kotomi Mixtape")
         assert os.path.exists(expected_folder)
 
         file1 = os.path.join(expected_folder, "1. First Song.mp3")

@@ -1,8 +1,5 @@
 """
-Auto-Update Engine for JaneConverter
-Handles automatic updates for both:
-1. Stream extractor engine (yt-dlp via PyPI) for real-time security cipher updates.
-2. JaneConverter repository self-patching via Git origin/main with automatic dependency refreshes.
+Update checks and explicitly requested update operations for JaneConverter.
 """
 
 import os
@@ -12,10 +9,15 @@ from typing import Optional, Dict, Any, Callable
 import requests
 import yt_dlp
 
-REPO_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+REPO_DIR = os.path.realpath(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 def _run_git_cmd(args: list, timeout: float = 10.0) -> subprocess.CompletedProcess:
     no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    # Windows can mark a repository as "dubious" when setup and the app run
+    # under different accounts. Scope the exception to this exact checkout.
+    if args and args[0] == "git":
+        safe_repo = REPO_DIR.replace("\\", "/")
+        args = ["git", "-c", f"safe.directory={safe_repo}", *args[1:]]
     return subprocess.run(
         args,
         cwd=REPO_DIR,
@@ -132,7 +134,8 @@ def check_for_repo_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
         "error": "Unable to determine repository status"
     }
 
-def apply_repo_update(status_callback: Optional[Callable[[str], None]] = None) -> Dict[str, Any]:
+def apply_repo_update(status_callback: Optional[Callable[[str], None]] = None,
+                      allow_live_update: bool = False) -> Dict[str, Any]:
     """
     Pulls latest commits from the configured upstream, installs updated dependencies, and recompiles launcher if needed.
     """
@@ -140,6 +143,10 @@ def apply_repo_update(status_callback: Optional[Callable[[str], None]] = None) -
         if status_callback:
             status_callback(msg)
         print(f"[RepoUpdate] {msg}")
+
+    if not allow_live_update:
+        log("Application updates are staged outside the running process. Use a published release installer to apply them safely.")
+        return {"success": False, "error": "Live application updates are disabled"}
 
     if not is_git_repo():
         log("Cannot auto-patch: not a Git clone.")
@@ -293,7 +300,7 @@ def update_engine(status_callback: Optional[Callable[[str], None]] = None,
         return False
 
 def check_and_apply_all_updates(status_callback: Optional[Callable[[str], None]] = None,
-                                auto_apply: bool = True) -> Dict[str, Any]:
+                                auto_apply: bool = False) -> Dict[str, Any]:
     """
     Coordinates checking and applying updates for both the JaneConverter application repository
     and the real-time yt-dlp extractor engine. With auto_apply=False, only reports availability
@@ -330,7 +337,7 @@ def check_and_apply_all_updates(status_callback: Optional[Callable[[str], None]]
     repo_info = check_for_repo_updates()
     if repo_info.get("has_update") and auto_apply:
         log(f"New repository commits found (current: {repo_info.get('current_commit')} -> latest: {repo_info.get('latest_commit')}).")
-        res = apply_repo_update(status_callback=status_callback)
+        res = apply_repo_update(status_callback=status_callback, allow_live_update=auto_apply)
         if res.get("success"):
             repo_updated = True
         else:
@@ -343,7 +350,11 @@ def check_and_apply_all_updates(status_callback: Optional[Callable[[str], None]]
         else:
             log(f"JaneConverter code is already up to date ({repo_info.get('current_commit')}).")
 
-    already_up_to_date = (not repo_updated) and (not engine_updated) and len(errors) == 0
+    already_up_to_date = (
+        not repo_updated and not engine_updated and len(errors) == 0
+        and not repo_info.get("has_update")
+        and not (engine_info and engine_info.get("has_update"))
+    )
 
     return {
         "repo_updated": repo_updated,

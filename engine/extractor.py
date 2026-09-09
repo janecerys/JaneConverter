@@ -6,6 +6,7 @@ Facebook, Reddit, Vimeo, Twitch, adult sites, and Spotify metadata matching) or 
 
 import os
 import re
+import time
 import urllib.parse
 from typing import Optional, Dict, Any, Callable
 import json
@@ -47,22 +48,27 @@ def identify_source_type(url_or_path: str) -> str:
     if not is_url(url_or_path):
         return "local_file"
 
-    url_lower = url_or_path.lower()
-    if "spotify.com" in url_lower:
+    parsed = urllib.parse.urlparse(url_or_path.strip())
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+
+    def matches(*domains: str) -> bool:
+        return any(hostname == domain or hostname.endswith("." + domain) for domain in domains)
+
+    if matches("spotify.com"):
         return "spotify"
-    if "youtube.com" in url_lower or "youtu.be" in url_lower:
+    if matches("youtube.com", "youtu.be"):
         return "youtube"
-    if "soundcloud.com" in url_lower:
+    if matches("soundcloud.com"):
         return "soundcloud"
-    if "tiktok.com" in url_lower:
+    if matches("tiktok.com"):
         return "tiktok"
-    if "twitter.com" in url_lower or "x.com" in url_lower:
+    if matches("twitter.com", "x.com"):
         return "twitter"
-    if "facebook.com" in url_lower or "fb.watch" in url_lower:
+    if matches("facebook.com", "fb.watch"):
         return "facebook"
-    if "reddit.com" in url_lower:
+    if matches("reddit.com"):
         return "reddit"
-    if "twitch.tv" in url_lower:
+    if matches("twitch.tv"):
         return "twitch"
     return "generic_url"
 
@@ -73,16 +79,20 @@ def is_playlist_url(url_or_path: str) -> bool:
     """
     if not is_url(url_or_path):
         return False
-    url_lower = url_or_path.lower()
-    if "spotify.com" in url_lower and ("/playlist/" in url_lower or "/album/" in url_lower):
+    parsed = urllib.parse.urlparse(url_or_path.strip())
+    source_type = identify_source_type(url_or_path)
+    path_lower = parsed.path.lower()
+    query_lower = parsed.query.lower()
+    if source_type == "spotify" and ("/playlist/" in path_lower or "/album/" in path_lower):
         return True
-    if ("youtube.com" in url_lower or "youtu.be" in url_lower) and "list=" in url_lower:
+    if source_type == "youtube" and "list=" in query_lower:
         return True
-    if "soundcloud.com" in url_lower and "/sets/" in url_lower:
+    if source_type == "soundcloud" and "/sets/" in path_lower:
         return True
-    if "bandcamp.com" in url_lower and "/album/" in url_lower:
+    hostname = (parsed.hostname or "").lower().rstrip(".")
+    if (hostname == "bandcamp.com" or hostname.endswith(".bandcamp.com")) and "/album/" in path_lower:
         return True
-    if "/playlist/" in url_lower or "/sets/" in url_lower:
+    if "/playlist/" in path_lower or "/sets/" in path_lower:
         return True
     return False
 
@@ -274,9 +284,14 @@ def fetch_media_stream(
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    def report(pct: float, msg: str):
+    last_report_time = [0.0]
+
+    def report(pct: float, msg: str, force: bool = False):
         if progress_callback:
-            progress_callback(pct, msg)
+            now = time.monotonic()
+            if force or now - last_report_time[0] >= 0.15 or pct in (0.0, 1.0):
+                last_report_time[0] = now
+                progress_callback(max(0.0, min(1.0, pct)), msg)
 
     source_type = identify_source_type(source)
 
@@ -359,7 +374,7 @@ def fetch_media_stream(
             scaled_pct = 0.15 + (percent / 100.0) * 0.60
             report(scaled_pct, f"Downloading stream: {percent:.1f}% ({speed_mb:.1f} MB/s)")
         elif progress_callback and d.get("status") == "finished":
-            report(0.75, "Stream download complete. Preparing conversion...")
+            report(0.75, "Stream download complete. Preparing conversion...", force=True)
 
     format_selector = "bestaudio/best" if audio_only else "bv*[height<=2160]+ba/b[height<=2160]/best"
 

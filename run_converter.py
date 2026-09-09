@@ -8,7 +8,10 @@ import sys
 import re
 import uuid
 import shutil
+import json
+import hashlib
 import argparse
+import time
 from typing import Optional, Dict, Any, Callable
 
 if sys.stdout is not None and hasattr(sys.stdout, "encoding") and sys.stdout.encoding != "utf-8":
@@ -17,10 +20,6 @@ if sys.stdout is not None and hasattr(sys.stdout, "encoding") and sys.stdout.enc
         sys.stderr.reconfigure(encoding="utf-8")
     except Exception:
         pass
-
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_CONVERTED_DIR = os.path.join(BASE_DIR, "converted")
-DEFAULT_TEMP_DIR = os.path.join(BASE_DIR, "temp")
 
 from engine.extractor import (
     is_url, sanitize_filename, fetch_media_stream,
@@ -33,10 +32,11 @@ from engine.converter import (
     SUPPORTED_VIDEO_FORMATS,
     get_best_hardware_encoder
 )
-from engine.updater import update_engine
+from engine.updater import update_engine, check_for_engine_updates
 from engine.version import __version__
+from engine.paths import DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR
 
-MIN_FREE_DISK_BYTES = 1 * 1024 * 1024 * 1024  # require 1 GB headroom before processing
+MIN_FREE_DISK_BYTES = 256 * 1024 * 1024  # keep a reasonable minimum without rejecting small conversions
 
 
 def media_library_folder(
@@ -48,10 +48,6 @@ def media_library_folder(
     """Return the organized library folder for a converted item."""
     media_kind = "Music" if target_format.lower().strip(".") in SUPPORTED_AUDIO_FORMATS else "Videos"
     category = str(content_category or "").strip().lower()
-    if category == "music":
-        return os.path.join(output_dir, "Music")
-    if category in ("video", "videos"):
-        return os.path.join(output_dir, "Videos")
     if category in ("miscellaneous", "misc"):
         misc_kind = "Audio" if media_kind == "Music" else "Videos"
         return os.path.join(output_dir, "Miscellaneous", misc_kind)
@@ -73,6 +69,25 @@ def media_library_folder(
     return os.path.join(output_dir, media_kind, source_label)
 
 
+def _unique_directory_path(parent: str, name: str) -> str:
+    """Return a new directory path without merging two exports with the same title."""
+    candidate = os.path.join(parent, name)
+    if not os.path.exists(candidate):
+        return candidate
+    index = 2
+    while True:
+        candidate = os.path.join(parent, f"{name} ({index})")
+        if not os.path.exists(candidate):
+            return candidate
+        index += 1
+
+
+def _metadata_folder(parent: str, source: str, title: str) -> str:
+    """Give each single export an isolated metadata directory."""
+    token = hashlib.sha256(f"{source}\0{title}".encode("utf-8", errors="replace")).hexdigest()[:10]
+    return os.path.join(parent, "metadata", f"{sanitize_filename(title)}_{token}")
+
+
 def playlist_source_type(selected_entries: list) -> str:
     """Infer the source platform for a playlist batch from its first item."""
     for entry in selected_entries:
@@ -81,17 +96,20 @@ def playlist_source_type(selected_entries: list) -> str:
             return identify_source_type(source)
     return "other"
 
-def ensure_free_disk_space(path: str, min_free_bytes: int = MIN_FREE_DISK_BYTES):
+def ensure_free_disk_space(path: str, min_free_bytes: int = MIN_FREE_DISK_BYTES,
+                           estimated_bytes: int = 0):
     """Raises RuntimeError if the drive holding `path` has less than the required free space."""
+    required = max(min_free_bytes, int(estimated_bytes or 0) * 2)
     try:
         usage = shutil.disk_usage(path)
     except Exception:
         return  # Un probing-able path; let downstream operations surface real errors
-    if usage.free < min_free_bytes:
+    if usage.free < required:
         free_gb = usage.free / (1024 ** 3)
         raise RuntimeError(
             f"Not enough disk space at '{os.path.abspath(path)}' "
-            f"({free_gb:.1f} GB free). Free up space and try again."
+            f"({free_gb:.1f} GB free; about {required / (1024 ** 3):.1f} GB is recommended). "
+            "Free up space and try again."
         )
 
 def write_credits_file(output_path: str, meta: Dict[str, Any]) -> str:
@@ -197,14 +215,26 @@ def process_conversion(
         output_dir = DEFAULT_CONVERTED_DIR
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(DEFAULT_TEMP_DIR, exist_ok=True)
-    ensure_free_disk_space(output_dir)
+    estimated_size = 0
+    if os.path.isfile(source):
+        try:
+            estimated_size = os.path.getsize(source)
+        except OSError:
+            pass
+    ensure_free_disk_space(output_dir, estimated_bytes=estimated_size)
 
     active_gpu = use_gpu if use_gpu is not None else use_nvenc
 
+    last_report = [0.0, 0.0]
+
     def report(pct: float, msg: str):
-        if progress_callback:
-            progress_callback(pct, msg)
-        print(f"[{int(pct * 100)}%] {msg}")
+        pct = max(last_report[1], max(0.0, min(1.0, float(pct))))
+        now = time.monotonic()
+        if pct >= 1.0 or now - last_report[0] >= 0.15 or int(pct * 100) != int(last_report[1] * 100):
+            last_report[:] = [now, pct]
+            if progress_callback:
+                progress_callback(pct, msg)
+            print(f"[{int(pct * 100)}%] {msg}")
 
     target_format = target_format.lower().strip(".")
     is_audio_target = target_format in SUPPORTED_AUDIO_FORMATS
@@ -250,10 +280,13 @@ def process_conversion(
             output_dir, target_format, stream_info.get("source_type", "other"), content_category
         )
         os.makedirs(organized_output_dir, exist_ok=True)
+        metadata_dir = _metadata_folder(organized_output_dir, source, title)
+        if save_cover_art or save_metadata:
+            os.makedirs(metadata_dir, exist_ok=True)
 
         # Save standalone cover art image if requested
         if save_cover_art and cover_path and os.path.exists(cover_path):
-            standalone_cover = os.path.join(organized_output_dir, f"{safe_title}.jpg")
+            standalone_cover = os.path.join(metadata_dir, f"{safe_title}.jpg")
             try:
                 shutil.copy2(cover_path, standalone_cover)
                 print(f"[+] Saved cover art: {os.path.basename(standalone_cover)}")
@@ -262,7 +295,7 @@ def process_conversion(
 
         # Save metadata text file if requested
         if save_metadata:
-            meta_path = os.path.join(organized_output_dir, f"{safe_title}_info.txt")
+            meta_path = os.path.join(metadata_dir, f"{safe_title}_info.txt")
             write_credits_file(meta_path, {
                 "title": title,
                 "artist": artist,
@@ -309,6 +342,20 @@ def process_conversion(
         print("\n" + "=" * 60)
         print(f"DONE! Exported: {os.path.abspath(result_path)}")
         print("=" * 60)
+        if save_metadata:
+            manifest_path = os.path.join(metadata_dir, "manifest.json")
+            try:
+                with open(manifest_path, "w", encoding="utf-8") as manifest_file:
+                    json.dump({
+                        "media_path": os.path.abspath(result_path),
+                        "metadata_dir": os.path.abspath(metadata_dir),
+                        "source": source,
+                        "source_type": stream_info.get("source_type", "other"),
+                        "category": content_category or ("Music" if is_audio_target else "Videos"),
+                        "title": title,
+                    }, manifest_file, indent=2, ensure_ascii=False)
+            except OSError as exc:
+                print(f"[!] Could not write metadata manifest: {exc}")
         return result_path
 
     finally:
@@ -357,7 +404,7 @@ def process_playlist_conversion(
     source_type = source_type or playlist_source_type(selected_entries)
     organized_output_dir = media_library_folder(output_dir, target_format, source_type, content_category)
     safe_folder = sanitize_filename(playlist_title) or "Playlist_Media"
-    playlist_dir = os.path.join(organized_output_dir, safe_folder)
+    playlist_dir = _unique_directory_path(organized_output_dir, safe_folder)
     metadata_dir = os.path.join(playlist_dir, "metadata")
     os.makedirs(playlist_dir, exist_ok=True)
     os.makedirs(DEFAULT_TEMP_DIR, exist_ok=True)
@@ -371,10 +418,16 @@ def process_playlist_conversion(
     if total_items == 0:
         raise ValueError("No playlist items selected for conversion.")
 
+    last_report = [0.0, 0.0]
+
     def report_overall(frac: float, msg: str):
-        if progress_callback:
-            progress_callback(frac, msg)
-        print(f"[{int(frac * 100)}%] {msg}")
+        frac = max(last_report[1], max(0.0, min(1.0, float(frac))))
+        now = time.monotonic()
+        if frac >= 1.0 or now - last_report[0] >= 0.15 or int(frac * 100) != int(last_report[1] * 100):
+            last_report[:] = [now, frac]
+            if progress_callback:
+                progress_callback(frac, msg)
+            print(f"[{int(frac * 100)}%] {msg}")
 
     enc_info = get_best_hardware_encoder()
     gpu_desc = f"{enc_info['short_name']} ({enc_info['encoder_label']})" if active_gpu and enc_info["has_gpu"] else "CPU Multi-Core"
@@ -390,16 +443,11 @@ def process_playlist_conversion(
     print("=" * 60)
 
     # Pre-fetch album / playlist cover art if available
-    playlist_cover_dest = os.path.join(playlist_dir, "cover.jpg")
+    playlist_cover_dest = os.path.join(metadata_dir, "cover.jpg")
     if save_cover_art and not os.path.exists(playlist_cover_dest):
         first_thumb = next((e.get("thumbnail") for e in selected_entries if e.get("thumbnail")), None)
         if first_thumb:
             download_and_convert_thumbnail(first_thumb, playlist_cover_dest)
-            meta_cover_copy = os.path.join(metadata_dir, "cover.jpg")
-            try:
-                shutil.copy2(playlist_cover_dest, meta_cover_copy)
-            except Exception:
-                pass
 
     converted_files = []
     failed_files = []
@@ -427,7 +475,7 @@ def process_playlist_conversion(
         def item_progress_hook(sub_frac: float, sub_msg: str):
             if abort_event and abort_event.is_set():
                 raise KeyboardInterrupt("Playlist conversion aborted by user.")
-            scaled_pct = base_pct + (sub_frac * slice_pct)
+            scaled_pct = max(base_pct, base_pct + (sub_frac * slice_pct))
             report_overall(scaled_pct, f"[{i+1}/{total_items}] #{idx}: {clean_title} ({int(sub_frac * 100)}%)")
 
         report_overall(base_pct, f"[{i+1}/{total_items}] Fetching #{idx}: {clean_title}...")
@@ -554,6 +602,22 @@ def process_playlist_conversion(
         except Exception:
             pass
 
+    if save_metadata:
+        try:
+            with open(os.path.join(metadata_dir, "manifest.json"), "w", encoding="utf-8") as manifest_file:
+                json.dump({
+                    "playlist_title": playlist_title,
+                    "source_type": source_type,
+                    "category": content_category or ("Music" if is_audio_target else "Videos"),
+                    "playlist_dir": os.path.abspath(playlist_dir),
+                    "metadata_dir": os.path.abspath(metadata_dir),
+                    "total_selected": total_items,
+                    "converted_files": [os.path.abspath(p) for p in converted_files],
+                    "failed_files": failed_files,
+                }, manifest_file, indent=2, ensure_ascii=False)
+        except OSError as exc:
+            print(f"[!] Could not write playlist manifest: {exc}")
+
     report_overall(1.0, f"Completed playlist! {len(converted_files)}/{total_items} tracks converted.")
     print("=" * 60)
     print(f"PLAYLIST SUMMARY: {len(converted_files)} succeeded, {len(failed_files)} failed.")
@@ -615,6 +679,8 @@ def main():
     parser.add_argument("--playlist", "-p", action="store_true", help="Force treat input source as playlist")
     parser.add_argument("--no-cover-art", action="store_true", help="Disable downloading and embedding cover art")
     parser.add_argument("--no-metadata", action="store_true", help="Disable exporting credits and metadata text files")
+    parser.add_argument("--category", choices=("Music", "Video", "Miscellaneous"), default=None,
+                        help="Library category. Miscellaneous stores media under Audio or Videos.")
     parser.add_argument("--no-update", action="store_true", help="Skip the yt-dlp extractor engine update check on startup")
     parser.add_argument("--version", action="version", version=f"JaneConverter {__version__}")
 
@@ -622,7 +688,12 @@ def main():
     args.format, args.bitrate = validate_cli_args(args, parser)
 
     if not args.no_update:
-        update_engine(status_callback=lambda m: print(f"[AutoUpdate] {m}"))
+        engine_info = check_for_engine_updates()
+        if engine_info.get("has_update"):
+            print(
+                f"[AutoUpdate] Extractor engine update available: "
+                f"v{engine_info.get('current_version')} -> v{engine_info.get('latest_version')}."
+            )
 
     save_cover = not args.no_cover_art
     save_meta = not args.no_metadata
@@ -645,7 +716,8 @@ def main():
             use_gpu=use_gpu,
             save_cover_art=save_cover,
             save_metadata=save_meta,
-            keep_temp=args.keep_temp
+            keep_temp=args.keep_temp,
+            content_category=args.category
         )
         failed = summary.get("failed_count", 0)
         if failed:
@@ -664,7 +736,8 @@ def main():
             use_gpu=use_gpu,
             save_cover_art=save_cover,
             save_metadata=save_meta,
-            keep_temp=args.keep_temp
+            keep_temp=args.keep_temp,
+            content_category=args.category
         )
 
 if __name__ == "__main__":

@@ -43,6 +43,24 @@ if (-not $pyCmd) {
 }
 $pyVer = & python --version 2>&1
 Write-Host "-> Found: $pyVer" -ForegroundColor Green
+$pyVersionMatch = [regex]::Match(($pyVer | Out-String), '([0-9]+)\.([0-9]+)')
+if ($pyVersionMatch.Success) {
+    $pyMajor = [int]$pyVersionMatch.Groups[1].Value
+    $pyMinor = [int]$pyVersionMatch.Groups[2].Value
+    if (($pyMajor -lt 3) -or (($pyMajor -eq 3) -and ($pyMinor -lt 10))) {
+        Write-Host "ERROR: Python 3.10 or newer is required." -ForegroundColor Red
+        exit 1
+    }
+}
+
+# Keep JaneConverter's dependencies isolated from the user's other Python work.
+$venvPath = Join-Path $scriptDir ".venv"
+$venvPython = Join-Path $venvPath "Scripts\python.exe"
+$venvPythonw = Join-Path $venvPath "Scripts\pythonw.exe"
+if (-not (Test-Path $venvPython)) {
+    Write-Host "Creating private JaneConverter Python environment..." -ForegroundColor Cyan
+    Invoke-Native { python -m venv $venvPath } "Private Python environment"
+}
 
 # 2. Check FFmpeg (Required for audio/video conversion)
 Write-Host "[2/6] Checking FFmpeg engine..." -ForegroundColor Yellow
@@ -58,6 +76,10 @@ if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
 } else {
     Write-Host "ERROR: FFmpeg was not detected in PATH. FFmpeg is required for media conversion." -ForegroundColor Red
     Write-Host "Please install FFmpeg or restart your terminal if it was just installed via winget." -ForegroundColor Red
+    exit 1
+}
+if (-not (Get-Command ffprobe -ErrorAction SilentlyContinue)) {
+    Write-Host "ERROR: ffprobe was not detected. Install the complete FFmpeg package and try again." -ForegroundColor Red
     exit 1
 }
 
@@ -79,14 +101,14 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
 
 # 4. Install Python Dependencies
 Write-Host "[4/6] Installing Python studio dependencies..." -ForegroundColor Yellow
-Invoke-Native { python -m pip install --upgrade pip --quiet } "Pip upgrade"
-Invoke-Native { python -m pip install -r requirements.txt --quiet } "Requirements installation"
+Invoke-Native { & $venvPython -m pip install --upgrade pip --quiet } "Pip upgrade"
+Invoke-Native { & $venvPython -m pip install -r requirements.txt --quiet } "Requirements installation"
 Write-Host "-> Python dependencies installed." -ForegroundColor Green
 
 # 5. Verify Core Python Modules
 Write-Host "[5/6] Verifying core modules..." -ForegroundColor Yellow
 $verifyCmd = "import customtkinter, psutil, PIL, yt_dlp, requests; print('OK')"
-$verifyOut = & python -c $verifyCmd 2>&1
+$verifyOut = & $venvPython -c $verifyCmd 2>&1
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: Dependency verification failed:`n$verifyOut" -ForegroundColor Red
     exit 1
@@ -122,7 +144,7 @@ try {
     if ($buildSuccess -and (Test-Path "$scriptDir\JaneConverter.exe")) {
         $sc.TargetPath = "$scriptDir\JaneConverter.exe"
     } else {
-        $sc.TargetPath = "pythonw.exe"
+        $sc.TargetPath = $venvPythonw
         $sc.Arguments = "`"$scriptDir\gui.py`""
     }
     $sc.WorkingDirectory = $scriptDir
@@ -146,5 +168,5 @@ Write-Host "Launching JaneConverter Studio..." -ForegroundColor Cyan
 if ($buildSuccess -and (Test-Path "$scriptDir\JaneConverter.exe")) {
     Start-Process "$scriptDir\JaneConverter.exe"
 } else {
-    Start-Process "pythonw.exe" -ArgumentList "`"$scriptDir\gui.py`"" -WorkingDirectory $scriptDir
+    Start-Process $venvPythonw -ArgumentList "`"$scriptDir\gui.py`"" -WorkingDirectory $scriptDir
 }

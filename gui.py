@@ -8,10 +8,10 @@ Spotify metadata matching, and local files with NVENC GPU hardware acceleration.
 import os
 import sys
 import time
-import queue
 import threading
 import platform
 import subprocess
+import json
 from typing import Callable, Optional, Dict, Any
 
 import customtkinter as ctk
@@ -54,10 +54,12 @@ from engine.converter import (
     get_host_gpus
 )
 from engine.updater import (
-    update_engine,
     check_for_repo_updates,
+    check_for_engine_updates,
     check_and_apply_all_updates
 )
+from engine.events import CoalescingCallbackQueue, BoundedLogQueue
+from engine.paths import DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR, CONFIG_PATH
 from run_converter import process_conversion, process_playlist_conversion
 
 THEME = {
@@ -140,9 +142,10 @@ def get_system_hardware_info() -> Dict[str, Any]:
 
 class StdoutRedirector:
     """Redirects stdout/stderr to a queue for the UI console log, echoing to the original stream."""
-    def __init__(self, log_queue: queue.Queue, original=None):
+    def __init__(self, log_queue, original=None):
         self.log_queue = log_queue
         self.original = original
+        self.encoding = getattr(original, "encoding", "utf-8")
 
     def write(self, text: str):
         if text:
@@ -160,6 +163,9 @@ class StdoutRedirector:
             except Exception:
                 pass
 
+    def isatty(self):
+        return bool(self.original and getattr(self.original, "isatty", lambda: False)())
+
 class PlaylistSelectionWindow(ctk.CTkToplevel):
     """
     Interactive modal dialog allowing users to inspect playlist tracks,
@@ -174,6 +180,7 @@ class PlaylistSelectionWindow(ctk.CTkToplevel):
         self.playlist_title = playlist_data.get("playlist_title", "Playlist")
         self.check_vars = {}
         self.row_widgets = []
+        self._filter_after_id = None
 
         self.title(f"Select Tracks: {self.playlist_title}")
         self.geometry("820x660")
@@ -432,6 +439,12 @@ class PlaylistSelectionWindow(ctk.CTkToplevel):
         self.row_widgets.append((row, entry, var))
 
     def _filter_tracks(self, event=None):
+        if self._filter_after_id is not None:
+            self.after_cancel(self._filter_after_id)
+        self._filter_after_id = self.after(180, self._apply_filter)
+
+    def _apply_filter(self):
+        self._filter_after_id = None
         q = self.search_entry.get().strip().lower()
         for row, entry, _ in self.row_widgets:
             t = entry.get("title", "").lower()
@@ -503,12 +516,21 @@ class JaneConverterApp(ctk.CTk):
             pass
 
         # State tracking
-        self.log_queue = queue.Queue()
-        self.ui_queue = queue.Queue()
+        self.log_queue = BoundedLogQueue(max_items=4000)
+        self.ui_queue = CoalescingCallbackQueue(max_callbacks=256)
         self.is_converting = False
         self.abort_requested = threading.Event()
+        self.shutdown_event = threading.Event()
+        self._closing = False
+        self._active_worker = None
+        self._library_refresh_token = 0
+        self._log_char_count = 0
+        self._original_stdout = sys.stdout
+        self._original_stderr = sys.stderr
         self.start_conversion_time = 0
         self.last_converted_file = None
+        self.sidebar_collapsed = False
+        self.sidebar_animation_id = None
 
         # Clean up stale temp directories from previous sessions
         self._cleanup_stale_temp()
@@ -519,6 +541,7 @@ class JaneConverterApp(ctk.CTk):
         self._build_studio_tab()
         self._build_library_tab()
         self._build_console_tab()
+        self._load_user_settings()
 
         # Start telemetry and logging threads
         self._start_log_listener()
@@ -526,32 +549,38 @@ class JaneConverterApp(ctk.CTk):
         self._start_hardware_monitor()
         self._start_engine_auto_updater()
 
-        # Install the console redirector once, process-wide, so worker threads never
-        # race on swapping sys.stdout/sys.stderr.
+        # Keep legacy print-based engine diagnostics bounded while the backend is
+        # migrated to structured logging. The original streams are restored on exit.
         sys.stdout = StdoutRedirector(self.log_queue, sys.stdout)
         sys.stderr = StdoutRedirector(self.log_queue, sys.stderr)
 
         # Handle clean window close and terminate process
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-    def _post_ui(self, fn):
+    def _post_ui(self, fn, key=None, priority=False):
         """Thread-safe way for worker threads to run a callable on the UI thread."""
-        self.ui_queue.put(fn)
+        return self.ui_queue.put(fn, key=key, priority=priority)
+
+    def _post_progress(self, fraction: float, message: str):
+        """Post only the newest progress state; stale progress is never queued."""
+        if self._closing:
+            return
+        fraction = max(0.0, min(1.0, float(fraction)))
+        self.ui_queue.put(
+            lambda f=fraction, m=message: self._apply_progress(f, m),
+            key="conversion-progress"
+        )
 
     def _start_ui_pump(self):
         def pump():
-            while True:
-                try:
-                    fn = self.ui_queue.get_nowait()
-                except queue.Empty:
-                    break
+            # A bounded slice keeps Tk responsive even if a producer is noisy.
+            for fn in self.ui_queue.drain(max_items=64, time_budget_ms=12):
                 try:
                     fn()
                 except Exception as e:
-                    import traceback
-                    traceback.print_exc()
                     self.log_queue.put(f"[UI] Error in UI update: {e}\n")
-            self.after(80, pump)
+            if not self._closing:
+                self.after(50, pump)
 
         self.after(80, pump)
 
@@ -575,8 +604,9 @@ class JaneConverterApp(ctk.CTk):
                 pass
 
     def _on_close(self):
+        if self._closing:
+            return
         if self.is_converting:
-            from tkinter import messagebox
             confirm = messagebox.askyesno(
                 "Conversion In Progress",
                 "A conversion is still running. Aborting now will discard its progress.\n\nAbort and close JaneConverter?",
@@ -584,27 +614,53 @@ class JaneConverterApp(ctk.CTk):
             )
             if not confirm:
                 return
+            self._closing = True
             self.abort_requested.set()
+            self.is_converting = False
+            self.withdraw()
+            self._wait_for_worker_shutdown(time.monotonic() + 8.0)
+            return
+        self._finalize_close()
+
+    def _wait_for_worker_shutdown(self, deadline: float):
+        worker = self._active_worker
+        if worker and worker.is_alive() and time.monotonic() < deadline:
+            self.after(100, lambda: self._wait_for_worker_shutdown(deadline))
+            return
+        self._finalize_close()
+
+    def _finalize_close(self):
+        self._closing = True
+        self.shutdown_event.set()
+        self._save_user_settings()
+        if sys.stdout is not self._original_stdout:
+            sys.stdout = self._original_stdout
+        if sys.stderr is not self._original_stderr:
+            sys.stderr = self._original_stderr
         try:
             self.destroy()
         except Exception:
             pass
-        os._exit(0)
 
     def _start_engine_auto_updater(self):
         def worker():
             def on_status(msg):
                 self.log_queue.put(f"[AutoUpdate] {msg}\n")
-            update_engine(status_callback=on_status)
             try:
+                engine_info = check_for_engine_updates()
+                if engine_info.get("has_update"):
+                    on_status(
+                        f"Extractor engine update available: v{engine_info.get('current_version')} -> "
+                        f"v{engine_info.get('latest_version')}."
+                    )
                 repo_info = check_for_repo_updates()
                 if repo_info.get("has_update"):
                     commits = repo_info.get("commits_behind", 1)
                     s = "s" if commits > 1 else ""
                     on_status(f"JaneConverter update available ({commits} new commit{s}). Click 'Check for Updates' to patch.")
-            except Exception:
-                pass
-        threading.Thread(target=worker, daemon=True).start()
+            except Exception as exc:
+                on_status(f"Update check unavailable: {exc}")
+        threading.Thread(target=worker, daemon=True, name="update-check",).start()
 
     def _on_check_updates_clicked(self):
         if getattr(self, "_is_checking_updates", False):
@@ -612,9 +668,8 @@ class JaneConverterApp(ctk.CTk):
 
         confirmed = messagebox.askyesno(
             "Check for Updates",
-            "JaneConverter will check for new application commits and a newer yt-dlp engine,\n"
-            "then download and install them automatically.\n\n"
-            "Application updates restart nothing — you'll be asked to restart afterwards.\n\n"
+            "JaneConverter will check for a newer application version and extractor engine.\n\n"
+            "This check is read-only. If an update is available, you can choose when to install it.\n\n"
             "Continue?"
         )
         if not confirmed:
@@ -628,7 +683,7 @@ class JaneConverterApp(ctk.CTk):
                 self.log_queue.put(f"[AutoUpdate] {msg}\n")
 
             try:
-                result = check_and_apply_all_updates(status_callback=on_status)
+                result = check_and_apply_all_updates(status_callback=on_status, auto_apply=False)
             except Exception as e:
                 result = {
                     "repo_updated": False,
@@ -643,7 +698,7 @@ class JaneConverterApp(ctk.CTk):
 
     def _on_update_completed(self, result: Dict[str, Any]):
         self._is_checking_updates = False
-        self.update_btn.configure(state="normal", text="🔄 Check for Updates")
+        self.update_btn.configure(state="normal", text="⟳" if self.sidebar_collapsed else "🔄 Check for Updates")
 
         if result.get("repo_updated") or result.get("engine_updated"):
             changes = []
@@ -656,6 +711,17 @@ class JaneConverterApp(ctk.CTk):
             if result.get("repo_updated"):
                 body += "\n\nPlease restart JaneConverter to run the updated code."
             messagebox.showinfo("Updates Installed", body)
+        elif result.get("repo_update_available") or result.get("engine_update_available"):
+            available = []
+            if result.get("repo_update_available"):
+                available.append(f"JaneConverter application ({result.get('commits_behind', 1)} commit(s))")
+            if result.get("engine_update_available"):
+                available.append("the extractor engine")
+            messagebox.showinfo(
+                "Updates Available",
+                "Updates are available for " + " and ".join(available) + ".\n\n"
+                "They were not installed automatically. Please use a published release installer or update the app during a maintenance window."
+            )
         elif result.get("already_up_to_date"):
             commit = result.get("current_commit", "latest")
             eng_ver = result.get("current_engine_version", "latest")
@@ -744,7 +810,7 @@ class JaneConverterApp(ctk.CTk):
         content_frame = ctk.CTkFrame(self, fg_color="transparent")
         content_frame.pack(fill="both", expand=True, padx=16, pady=(0, 12))
 
-        sidebar = ctk.CTkFrame(
+        self.sidebar = ctk.CTkFrame(
             content_frame,
             width=190,
             fg_color=THEME["card_bg"],
@@ -752,15 +818,32 @@ class JaneConverterApp(ctk.CTk):
             border_width=1,
             border_color=THEME["card_border"]
         )
-        sidebar.pack(side="left", fill="y", padx=(0, 12))
-        sidebar.pack_propagate(False)
+        self.sidebar.pack(side="left", fill="y", padx=(0, 12))
+        self.sidebar.pack_propagate(False)
 
-        ctk.CTkLabel(
-            sidebar,
+        sidebar_header = ctk.CTkFrame(self.sidebar, fg_color="transparent")
+        sidebar_header.pack(fill="x", padx=10, pady=(12, 8))
+        self.sidebar_heading = ctk.CTkLabel(
+            sidebar_header,
             text="WORKSPACE",
             font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
             text_color=THEME["text_dark"]
-        ).pack(anchor="w", padx=18, pady=(18, 10))
+        )
+        self.sidebar_heading.pack(side="left", padx=8)
+
+        self.sidebar_toggle = ctk.CTkButton(
+            sidebar_header,
+            text="‹",
+            width=30,
+            height=28,
+            corner_radius=7,
+            fg_color=THEME["input_bg"],
+            hover_color=THEME["card_border_glow"],
+            text_color=THEME["text_primary"],
+            font=ctk.CTkFont(size=20, weight="bold"),
+            command=self._toggle_sidebar
+        )
+        self.sidebar_toggle.pack(side="right")
 
         self.tabview = ctk.CTkTabview(
             content_frame,
@@ -783,9 +866,14 @@ class JaneConverterApp(ctk.CTk):
         self.tab_console = self.tabview.add("💻 Console")
 
         self.sidebar_buttons = {}
+        self.sidebar_tab_icons = {
+            "⚡ Converter": "⚡",
+            "📁 Converted Library": "📁",
+            "💻 Console": "💻",
+        }
         for tab_name in ("⚡ Converter", "📁 Converted Library", "💻 Console"):
             button = ctk.CTkButton(
-                sidebar,
+                self.sidebar,
                 text=tab_name,
                 anchor="w",
                 height=38,
@@ -799,10 +887,10 @@ class JaneConverterApp(ctk.CTk):
             button.pack(fill="x", padx=10, pady=3)
             self.sidebar_buttons[tab_name] = button
 
-        ctk.CTkFrame(sidebar, height=1, fg_color=THEME["card_border"]).pack(fill="x", padx=14, pady=(14, 10))
+        ctk.CTkFrame(self.sidebar, height=1, fg_color=THEME["card_border"]).pack(fill="x", padx=14, pady=(14, 10))
 
         self.update_btn = ctk.CTkButton(
-            sidebar,
+            self.sidebar,
             text="🔄 Check for Updates",
             font=ctk.CTkFont(family="Segoe UI", size=11, weight="bold"),
             fg_color=THEME["card_inner"],
@@ -826,6 +914,54 @@ class JaneConverterApp(ctk.CTk):
         self.tabview.set(tab_name)
         for name, button in self.sidebar_buttons.items():
             button.configure(fg_color=THEME["magenta"] if name == tab_name else "transparent")
+
+    def _toggle_sidebar(self):
+        """Animate the workspace sidebar between expanded and compact modes."""
+        if self.sidebar_animation_id is not None:
+            return
+
+        self.sidebar_collapsed = not self.sidebar_collapsed
+        target_width = 58 if self.sidebar_collapsed else 190
+        start_width = self.sidebar.winfo_width() or (190 if not self.sidebar_collapsed else 58)
+        direction = 1 if target_width > start_width else -1
+
+        self.sidebar_toggle.configure(state="disabled")
+
+        def animate(width):
+            distance = abs(target_width - width)
+            if distance <= 10:
+                self.sidebar.configure(width=target_width)
+                self.sidebar_animation_id = None
+                self.sidebar_toggle.configure(
+                    state="normal",
+                    text="›" if self.sidebar_collapsed else "‹"
+                )
+                self._apply_sidebar_compact_mode()
+                return
+
+            next_width = width + direction * min(12, distance)
+            self.sidebar.configure(width=next_width)
+            self.sidebar_animation_id = self.after(12, lambda: animate(next_width))
+
+        animate(start_width)
+
+    def _apply_sidebar_compact_mode(self):
+        """Update labels and alignment after the sidebar animation completes."""
+        compact = self.sidebar_collapsed
+        self.sidebar_heading.configure(text="" if compact else "WORKSPACE")
+        for name, button in self.sidebar_buttons.items():
+            button.configure(
+                text=self.sidebar_tab_icons[name] if compact else name,
+                anchor="center" if compact else "w"
+            )
+        self.update_btn.configure(
+            text="⟳" if compact and self.update_btn.cget("state") != "disabled" else self.update_btn.cget("text"),
+            width=32 if compact else 0
+        )
+        if compact and self.update_btn.cget("state") == "disabled":
+            self.update_btn.configure(text="⏳")
+        elif not compact and self.update_btn.cget("state") != "disabled":
+            self.update_btn.configure(text="🔄 Check for Updates")
 
     # -------------------------------------------------------------
     # 3. TAB 1: STUDIO / CONVERTER
@@ -1234,38 +1370,79 @@ class JaneConverterApp(ctk.CTk):
         self._refresh_library()
 
     def _refresh_library(self):
+        """Refresh the library asynchronously so slow disks never freeze the UI."""
+        self._library_refresh_token += 1
+        token = self._library_refresh_token
         for w in self.library_scroll.winfo_children():
             w.destroy()
 
         dest_dir = self.dest_entry.get().strip() or DEFAULT_CONVERTED_DIR
         if not os.path.exists(dest_dir):
             return
+        ctk.CTkLabel(
+            self.library_scroll,
+            text="Refreshing converted library...",
+            font=ctk.CTkFont(size=12),
+            text_color=THEME["text_dark"]
+        ).pack(pady=40)
+        threading.Thread(
+            target=self._discover_library_items,
+            args=(os.path.abspath(dest_dir), token),
+            daemon=True,
+            name="library-discovery"
+        ).start()
 
+    def _discover_library_items(self, dest_dir: str, token: int):
+        """Discover media and playlist summaries away from Tk's event thread."""
         items = []
+        media_exts = SUPPORTED_AUDIO_FORMATS | SUPPORTED_VIDEO_FORMATS
         try:
-            media_exts = SUPPORTED_AUDIO_FORMATS | SUPPORTED_VIDEO_FORMATS
-            playlist_dirs = set()
-            # Playlist exports contain a metadata folder; show them as one item.
             for root, dirs, files in os.walk(dest_dir):
-                media_files = [f for f in files if os.path.splitext(f)[1].lower().strip(".") in media_exts]
-                if media_files and os.path.isdir(os.path.join(root, "metadata")):
-                    playlist_dirs.add(os.path.abspath(root))
-                    total_size = sum(os.path.getsize(os.path.join(root, f)) for f in media_files)
-                    items.append((os.path.getmtime(root), root, os.path.basename(root), total_size, "folder", True, len(media_files)))
-
-            for root, dirs, files in os.walk(dest_dir):
-                root_abs = os.path.abspath(root)
-                if any(root_abs == p or root_abs.startswith(p + os.sep) for p in playlist_dirs):
-                    continue
+                media_paths = []
                 for filename in files:
-                    path = os.path.join(root, filename)
                     ext = os.path.splitext(filename)[1].lower().strip(".")
                     if ext in media_exts:
-                        items.append((os.path.getmtime(path), path, filename, os.path.getsize(path), ext, False, 0))
-        except Exception:
-            pass
-
+                        path = os.path.join(root, filename)
+                        try:
+                            media_paths.append((path, os.path.getsize(path), os.path.getmtime(path)))
+                        except OSError:
+                            continue
+                playlist_marker = os.path.join(root, "metadata", "playlist_credits.txt")
+                if media_paths and os.path.isfile(playlist_marker):
+                    try:
+                        modified = os.path.getmtime(root)
+                    except OSError:
+                        modified = max(p[2] for p in media_paths)
+                    items.append((modified, root, os.path.basename(root), sum(p[1] for p in media_paths), "folder", True, len(media_paths)))
+                    dirs[:] = []
+                    continue
+                for path, size, modified in media_paths:
+                    items.append((modified, path, os.path.basename(path), size, os.path.splitext(path)[1].lower().strip("."), False, 0))
+        except OSError as exc:
+            self._post_ui(lambda e=exc, t=token: self._on_library_discovery_error(t, e), priority=True)
+            return
         items.sort(key=lambda x: x[0], reverse=True)
+        self._post_ui(lambda found=items, t=token: self._render_library_snapshot(t, found), priority=True)
+
+    def _on_library_discovery_error(self, token: int, error: Exception):
+        if token != self._library_refresh_token:
+            return
+        for w in self.library_scroll.winfo_children():
+            w.destroy()
+        ctk.CTkLabel(
+            self.library_scroll,
+            text=f"Could not read the converted library.\n{error}",
+            font=ctk.CTkFont(size=12),
+            text_color=THEME["yellow"]
+        ).pack(pady=40)
+
+    def _render_library_snapshot(self, token: int, items: list, start: int = 0):
+        if token != self._library_refresh_token or self._closing:
+            return
+        dest_dir = os.path.abspath(self.dest_entry.get().strip() or DEFAULT_CONVERTED_DIR)
+        if start == 0:
+            for w in self.library_scroll.winfo_children():
+                w.destroy()
 
         if not items:
             empty_lbl = ctk.CTkLabel(
@@ -1277,7 +1454,7 @@ class JaneConverterApp(ctk.CTk):
             empty_lbl.pack(pady=40)
             return
 
-        for _, path, name, sz, ext, is_dir, count in items:
+        for _, path, name, sz, ext, is_dir, count in items[start:start + 40]:
             row = ctk.CTkFrame(self.library_scroll, fg_color=THEME["card_inner"], corner_radius=6, height=44)
             row.pack(fill="x", padx=4, pady=3)
             row.pack_propagate(False)
@@ -1297,6 +1474,31 @@ class JaneConverterApp(ctk.CTk):
                 )
                 tag_lbl.pack(side="left", padx=(10, 8))
 
+                open_b = ctk.CTkButton(
+                    row,
+                    text="📂",
+                    width=32,
+                    height=24,
+                    fg_color=THEME["input_bg"],
+                    hover_color=THEME["cyan_hover"],
+                    text_color=THEME["cyan"],
+                    font=ctk.CTkFont(size=11),
+                    command=lambda p=path: self._open_file_location(p)
+                )
+                open_b.pack(side="left", padx=(0, 2))
+
+                del_b = ctk.CTkButton(
+                    row,
+                    text="🗑️",
+                    width=32,
+                    height=24,
+                    fg_color=THEME["input_bg"],
+                    hover_color="#991b1b",
+                    font=ctk.CTkFont(size=11),
+                    command=lambda p=path, n=name: self._delete_library_dir(p, n)
+                )
+                del_b.pack(side="left", padx=(0, 4))
+
                 name_lbl = ctk.CTkLabel(
                     row,
                     text=f"{name} ({count} tracks){location}",
@@ -1308,31 +1510,6 @@ class JaneConverterApp(ctk.CTk):
 
                 sz_str = f"{sz / (1024 * 1024):.1f} MB"
                 ctk.CTkLabel(row, text=sz_str, font=ctk.CTkFont(size=11), text_color=THEME["text_dark"]).pack(side="left", padx=8)
-
-                open_b = ctk.CTkButton(
-                    row,
-                    text="📂 Folder",
-                    width=65,
-                    height=24,
-                    fg_color=THEME["input_bg"],
-                    hover_color=THEME["cyan_hover"],
-                    text_color=THEME["cyan"],
-                    font=ctk.CTkFont(size=11),
-                    command=lambda p=path: self._open_file_location(p)
-                )
-                open_b.pack(side="right", padx=(4, 10))
-
-                del_b = ctk.CTkButton(
-                    row,
-                    text="🗑️ Delete",
-                    width=70,
-                    height=24,
-                    fg_color=THEME["input_bg"],
-                    hover_color="#991b1b",
-                    font=ctk.CTkFont(size=11),
-                    command=lambda p=path, n=name: self._delete_library_dir(p, n)
-                )
-                del_b.pack(side="right", padx=2)
 
             else:
                 is_video = ext in SUPPORTED_VIDEO_FORMATS
@@ -1351,6 +1528,31 @@ class JaneConverterApp(ctk.CTk):
                 )
                 tag_lbl.pack(side="left", padx=(10, 8))
 
+                open_b = ctk.CTkButton(
+                    row,
+                    text="📂",
+                    width=32,
+                    height=24,
+                    fg_color=THEME["input_bg"],
+                    hover_color=THEME["cyan_hover"],
+                    text_color=THEME["cyan"],
+                    font=ctk.CTkFont(size=11),
+                    command=lambda p=path: self._open_file_location(p)
+                )
+                open_b.pack(side="left", padx=(0, 2))
+
+                del_b = ctk.CTkButton(
+                    row,
+                    text="🗑️",
+                    width=32,
+                    height=24,
+                    fg_color=THEME["input_bg"],
+                    hover_color="#991b1b",
+                    font=ctk.CTkFont(size=11),
+                    command=lambda p=path, n=name: self._delete_library_file(p, n)
+                )
+                del_b.pack(side="left", padx=(0, 4))
+
                 name_lbl = ctk.CTkLabel(
                     row,
                     text=f"{name}{location}",
@@ -1363,40 +1565,41 @@ class JaneConverterApp(ctk.CTk):
                 sz_str = f"{sz / (1024 * 1024):.1f} MB"
                 ctk.CTkLabel(row, text=sz_str, font=ctk.CTkFont(size=11), text_color=THEME["text_dark"]).pack(side="left", padx=8)
 
-                open_b = ctk.CTkButton(
-                    row,
-                    text="📂 Folder",
-                    width=65,
-                    height=24,
-                    fg_color=THEME["input_bg"],
-                    hover_color=THEME["cyan_hover"],
-                    text_color=THEME["cyan"],
-                    font=ctk.CTkFont(size=11),
-                    command=lambda p=path: self._open_file_location(p)
-                )
-                open_b.pack(side="right", padx=(4, 10))
-
-                del_b = ctk.CTkButton(
-                    row,
-                    text="🗑️ Delete",
-                    width=70,
-                    height=24,
-                    fg_color=THEME["input_bg"],
-                    hover_color="#991b1b",
-                    font=ctk.CTkFont(size=11),
-                    command=lambda p=path, n=name: self._delete_library_file(p, n)
-                )
-                del_b.pack(side="right", padx=2)
+        next_start = start + min(40, len(items) - start)
+        if next_start < len(items):
+            self.after(10, lambda: self._render_library_snapshot(token, items, next_start))
 
     def _open_file_location(self, file_path: str):
-        """Open Explorer with the converted file selected."""
-        if not os.path.exists(file_path):
+        """Open Explorer at a converted file, selecting that exact file."""
+        self._open_explorer_location(file_path, select_file=True)
+
+    def _open_explorer_location(self, target_path: str, select_file: bool = False):
+        """Open a file or folder in Windows Explorer without losing the target path."""
+        if not target_path:
             return
+        target_path = os.path.normpath(os.path.abspath(target_path))
+        if not os.path.exists(target_path):
+            self.status_label.configure(text="That export is no longer available. Refresh the library.")
+            return
+
         try:
-            subprocess.Popen(["explorer", f"/select,{os.path.abspath(file_path)}"])
+            if os.path.isdir(target_path) or not select_file:
+                os.startfile(target_path)
+                return
+
+            explorer_exe = os.path.join(
+                os.environ.get("WINDIR", r"C:\\Windows"), "explorer.exe"
+            )
+            # Explorer's /select syntax must keep the path in the same command
+            # argument, especially when the export path contains spaces.
+            subprocess.Popen(
+                f'"{explorer_exe}" /select,"{target_path}"',
+                close_fds=True
+            )
         except Exception:
             try:
-                os.startfile(os.path.dirname(file_path) if os.path.isfile(file_path) else file_path)
+                fallback = os.path.dirname(target_path) if os.path.isfile(target_path) else target_path
+                os.startfile(fallback)
             except Exception as e:
                 self.status_label.configure(text=f"Could not open file location: {e}")
 
@@ -1406,10 +1609,10 @@ class JaneConverterApp(ctk.CTk):
                 return
             import shutil
             try:
-                shutil.rmtree(dir_path, ignore_errors=True)
+                shutil.rmtree(dir_path)
                 self._refresh_library()
-            except Exception:
-                pass
+            except Exception as exc:
+                messagebox.showerror("Could Not Delete", f"JaneConverter could not delete this playlist.\n\n{exc}")
 
     def _delete_library_file(self, file_path: str, name: str = "this file"):
         if os.path.exists(file_path):
@@ -1418,8 +1621,8 @@ class JaneConverterApp(ctk.CTk):
             try:
                 os.remove(file_path)
                 self._refresh_library()
-            except Exception:
-                pass
+            except Exception as exc:
+                messagebox.showerror("Could Not Delete", f"JaneConverter could not delete this file.\n\n{exc}")
 
     # -------------------------------------------------------------
     # 5. TAB 3: CONSOLE
@@ -1477,14 +1680,19 @@ class JaneConverterApp(ctk.CTk):
 
     def _start_log_listener(self):
         def check_queue():
-            while not self.log_queue.empty():
-                try:
-                    text = self.log_queue.get_nowait()
-                    self.log_box.insert("end", text)
-                    self.log_box.see("end")
-                except queue.Empty:
-                    break
-            self.after(100, check_queue)
+            batch = self.log_queue.get_batch(max_items=250)
+            if batch:
+                text = "".join(batch)
+                self.log_box.insert("end", text)
+                self.log_box.see("end")
+                self._log_char_count += len(text)
+                # Keep the visible console bounded so long-running jobs do not
+                # turn the textbox into an ever-growing memory sink.
+                if self._log_char_count > 1_000_000:
+                    self.log_box.delete("1.0", "1.0 + 250000 chars")
+                    self._log_char_count = 750_000
+            if not self._closing:
+                self.after(100, check_queue)
 
         self.after(100, check_queue)
 
@@ -1495,12 +1703,64 @@ class JaneConverterApp(ctk.CTk):
             self.clipboard_append(txt)
 
     def _clear_logs(self):
-        while not self.log_queue.empty():
-            try:
-                self.log_queue.get_nowait()
-            except queue.Empty:
-                break
+        self.log_queue.clear()
         self.log_box.delete("1.0", "end")
+        self._log_char_count = 0
+
+    def _load_user_settings(self):
+        """Load harmless convenience settings without making startup depend on them."""
+        try:
+            with open(CONFIG_PATH, "r", encoding="utf-8") as settings_file:
+                settings = json.load(settings_file)
+            destination = settings.get("destination", "")
+            if destination and os.path.isdir(destination):
+                self.dest_entry.delete(0, "end")
+                self.dest_entry.insert(0, destination)
+            saved_mode = settings.get("mode")
+            if saved_mode in ("🎵 Audio Format", "🎬 Video Format"):
+                self.mode_selector.set(saved_mode)
+                self._on_mode_toggled(saved_mode)
+            saved_format = str(settings.get("format", "")).upper()
+            if saved_format in self.format_menu.cget("values"):
+                self.format_menu.set(saved_format)
+                self._on_format_changed(saved_format)
+            saved_category = settings.get("category")
+            if saved_category in self.category_menu.cget("values"):
+                self.category_menu.set(saved_category)
+            for widget, key in (
+                (self.norm_switch, "normalize_audio"),
+                (self.gpu_switch, "use_gpu"),
+                (self.save_art_switch, "save_cover_art"),
+                (self.save_meta_switch, "save_metadata"),
+            ):
+                if key in settings:
+                    widget.select() if settings[key] else widget.deselect()
+            if settings.get("sidebar_collapsed"):
+                self.sidebar_collapsed = True
+                self.sidebar.configure(width=58)
+                self._apply_sidebar_compact_mode()
+        except (OSError, ValueError, TypeError):
+            pass
+
+    def _save_user_settings(self, settings: Optional[Dict[str, Any]] = None):
+        try:
+            os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
+            settings = settings or {}
+            with open(CONFIG_PATH, "w", encoding="utf-8") as settings_file:
+                json.dump({
+                    "destination": self.dest_entry.get().strip(),
+                    "sidebar_collapsed": bool(self.sidebar_collapsed),
+                    "mode": self.mode_selector.get(),
+                    "format": self.format_menu.get(),
+                    "category": self.category_menu.get(),
+                    "normalize_audio": bool(self.norm_switch.get()),
+                    "use_gpu": bool(self.gpu_switch.get()),
+                    "save_cover_art": bool(self.save_art_switch.get()),
+                    "save_metadata": bool(self.save_meta_switch.get()),
+                    **settings,
+                }, settings_file, indent=2)
+        except OSError:
+            pass
 
     # -------------------------------------------------------------
     # 6. HARDWARE TELEMETRY LOOP
@@ -1511,8 +1771,7 @@ class JaneConverterApp(ctk.CTk):
             psutil.cpu_percent(None)
 
         def loop():
-            while True:
-                time.sleep(1.5)
+            while not self.shutdown_event.wait(1.5):
                 cpu_val = 0.0
                 ram_pct = 0.0
                 ram_used_gb = 0.0
@@ -1546,7 +1805,7 @@ class JaneConverterApp(ctk.CTk):
 
                 stats = (cpu_val, ram_pct, ram_used_gb, ram_tot_gb,
                          gpu_util, gpu_used_mb, gpu_tot_mb, gpu_temp)
-                self._post_ui(lambda s=stats: self._apply_hardware_stats(*s))
+                self._post_ui(lambda s=stats: self._apply_hardware_stats(*s), key="hardware-stats")
 
         threading.Thread(target=loop, daemon=True).start()
 
@@ -1703,10 +1962,11 @@ class JaneConverterApp(ctk.CTk):
     def _open_output_folder(self):
         out_dir = self.dest_entry.get().strip() or DEFAULT_CONVERTED_DIR
         os.makedirs(out_dir, exist_ok=True)
-        try:
-            os.startfile(out_dir)
-        except Exception:
-            pass
+        recent_file = self.last_converted_file
+        if recent_file and os.path.isfile(recent_file):
+            self._open_explorer_location(recent_file, select_file=True)
+        else:
+            self._open_explorer_location(out_dir)
 
     # -------------------------------------------------------------
     # 8. CONVERSION RUNNER & PLAYLIST WORKFLOW
@@ -1729,12 +1989,12 @@ class JaneConverterApp(ctk.CTk):
             try:
                 pdata = fetch_playlist_entries(
                     url=source,
-                    progress_callback=lambda f, m: self._post_ui(lambda: self._apply_progress(f, m))
+                    progress_callback=self._post_progress
                 )
-                self._post_ui(lambda: self._on_playlist_fetched(pdata))
+                self._post_ui(lambda: self._on_playlist_fetched(pdata), priority=True)
             except Exception as e:
                 error_message = str(e)
-                self._post_ui(lambda: self._on_playlist_fetch_error(error_message))
+                self._post_ui(lambda: self._on_playlist_fetch_error(error_message), priority=True)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -1822,7 +2082,7 @@ class JaneConverterApp(ctk.CTk):
         else:
             sample_rate = 48000
 
-        return {
+        settings = {
             "format": raw_fmt,
             "bitrate": bitrate,
             "sample_rate": sample_rate,
@@ -1833,6 +2093,8 @@ class JaneConverterApp(ctk.CTk):
             "resolution": resolution,
             "content_category": self.category_menu.get(),
         }
+        self._save_user_settings(settings)
+        return settings
 
     def _validate_destination(self, output_dir: str) -> bool:
         """Ensures the destination folder exists or can be created; shows an error dialog otherwise."""
@@ -1867,11 +2129,13 @@ class JaneConverterApp(ctk.CTk):
         self.progress_bar.set(0.01)
         self.status_label.configure(text=f"Batch converting {len(selected_entries)} playlist items...")
 
-        threading.Thread(
+        self._active_worker = threading.Thread(
             target=self._run_playlist_worker,
             args=(playlist_title, selected_entries, output_dir, settings),
-            daemon=True
-        ).start()
+            daemon=True,
+            name="playlist-conversion"
+        )
+        self._active_worker.start()
 
     def _run_playlist_worker(self, playlist_title, selected_entries, output_dir, settings):
         try:
@@ -1890,22 +2154,26 @@ class JaneConverterApp(ctk.CTk):
                 save_metadata=settings["save_metadata"],
                 content_category=settings["content_category"],
                 abort_event=self.abort_requested,
-                progress_callback=lambda f, m: self._post_ui(lambda: self._apply_progress(f, m))
+                progress_callback=self._post_progress
             )
-            first_file = summary["converted_files"][0] if summary["converted_files"] else None
-            self._post_ui(lambda: self._on_playlist_conversion_success(summary, first_file))
+            last_file = summary["converted_files"][-1] if summary["converted_files"] else None
+            self._post_ui(lambda: self._on_playlist_conversion_success(summary, last_file), priority=True)
         except KeyboardInterrupt:
-            self._post_ui(self._on_conversion_aborted)
+            self._post_ui(self._on_conversion_aborted, priority=True)
         except Exception as e:
             error_message = str(e)
             if self.abort_requested.is_set() or "aborted" in error_message.lower():
-                self._post_ui(self._on_conversion_aborted)
+                self._post_ui(self._on_conversion_aborted, priority=True)
             else:
                 import traceback
                 traceback.print_exc()
-                self._post_ui(lambda: self._on_conversion_error(error_message))
+                self._post_ui(lambda: self._on_conversion_error(error_message), priority=True)
 
     def _on_playlist_conversion_success(self, summary: Dict[str, Any], first_file: Optional[str] = None):
+        if self._closing:
+            self.is_converting = False
+            self._finalize_close()
+            return
         self.last_converted_file = first_file
         self.is_converting = False
         self.abort_requested.clear()
@@ -1961,11 +2229,13 @@ class JaneConverterApp(ctk.CTk):
         self.progress_bar.set(0.02)
         self.status_label.configure(text="Initializing transcode pipeline...")
 
-        threading.Thread(
+        self._active_worker = threading.Thread(
             target=self._run_conversion_worker,
             args=(source, output_dir, settings),
-            daemon=True
-        ).start()
+            daemon=True,
+            name="media-conversion"
+        )
+        self._active_worker.start()
 
     def _run_conversion_worker(self, source, output_dir, settings):
         try:
@@ -1983,19 +2253,19 @@ class JaneConverterApp(ctk.CTk):
                 save_metadata=settings["save_metadata"],
                 content_category=settings["content_category"],
                 abort_event=self.abort_requested,
-                progress_callback=lambda f, m: self._post_ui(lambda: self._apply_progress(f, m))
+                progress_callback=self._post_progress
             )
-            self._post_ui(lambda: self._on_conversion_success(result_path))
+            self._post_ui(lambda: self._on_conversion_success(result_path), priority=True)
         except KeyboardInterrupt:
-            self._post_ui(self._on_conversion_aborted)
+            self._post_ui(self._on_conversion_aborted, priority=True)
         except Exception as e:
             error_message = str(e)
             if self.abort_requested.is_set() or "aborted" in error_message.lower():
-                self._post_ui(self._on_conversion_aborted)
+                self._post_ui(self._on_conversion_aborted, priority=True)
             else:
                 import traceback
                 traceback.print_exc()
-                self._post_ui(lambda: self._on_conversion_error(error_message))
+                self._post_ui(lambda: self._on_conversion_error(error_message), priority=True)
 
     def _apply_progress(self, frac: float, msg: str):
         self.progress_bar.set(frac)
@@ -2007,6 +2277,10 @@ class JaneConverterApp(ctk.CTk):
         return f"{m}m {s:02d}s" if m > 0 else f"{s}s"
 
     def _on_conversion_success(self, result_path: str):
+        if self._closing:
+            self.is_converting = False
+            self._finalize_close()
+            return
         self.last_converted_file = result_path
         self.is_converting = False
         self.abort_requested.clear()
@@ -2021,6 +2295,10 @@ class JaneConverterApp(ctk.CTk):
         print(f"[✓] Conversion complete in {self._format_elapsed()}: {result_path}")
 
     def _on_conversion_error(self, err_msg: str):
+        if self._closing:
+            self.is_converting = False
+            self._finalize_close()
+            return
         self.is_converting = False
         self.abort_requested.clear()
         self.abort_btn.configure(state="disabled")
@@ -2029,8 +2307,23 @@ class JaneConverterApp(ctk.CTk):
         self.progress_bar.set(0.0)
         self.status_label.configure(text="Conversion error encountered.")
 
-        from tkinter import messagebox
-        messagebox.showerror("Conversion Failed", f"An error occurred during transcode:\n{err_msg}")
+        messagebox.showerror("Conversion Failed", self._friendly_error_message(err_msg))
+
+    @staticmethod
+    def _friendly_error_message(err_msg: str) -> str:
+        text = str(err_msg or "Unknown error")
+        lowered = text.lower()
+        if "ffmpeg" in lowered and ("not found" in lowered or "no such file" in lowered):
+            return "JaneConverter could not find FFmpeg. Install FFmpeg and try again.\n\nDetails: " + text
+        if "permission" in lowered or "access is denied" in lowered:
+            return "JaneConverter could not write to the selected folder. Choose another folder or check its permissions.\n\nDetails: " + text
+        if "disk space" in lowered or "no space" in lowered:
+            return "There is not enough free space for this conversion. Free some space and try again.\n\nDetails: " + text
+        if "timeout" in lowered or "timed out" in lowered:
+            return "The source took too long to respond. Check your connection and try again.\n\nDetails: " + text
+        if "private" in lowered or "region-locked" in lowered or "removed" in lowered:
+            return "This source is unavailable, private, region-locked, or removed. Try a publicly accessible link.\n\nDetails: " + text
+        return "An error occurred during conversion. Check the Console tab for more details.\n\nDetails: " + text
 
     def _abort_conversion(self):
         if self.is_converting:
@@ -2047,8 +2340,10 @@ class JaneConverterApp(ctk.CTk):
         self.abort_btn.configure(state="disabled")
         self.progress_bar.set(0.0)
         self.status_label.configure(text="Conversion aborted by user.")
-        from tkinter import messagebox
-        messagebox.showinfo("Aborted", "Conversion was aborted by user.")
+        if self._closing:
+            self._finalize_close()
+        else:
+            messagebox.showinfo("Aborted", "Conversion was aborted by user.")
 
 def main():
     app = JaneConverterApp()

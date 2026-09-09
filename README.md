@@ -19,7 +19,7 @@ JaneConverter downloads media from virtually any online source, matches high-res
 
 The standard way to use JaneConverter is its modern dark-themed desktop studio application. A complete command-line interface is also available for automated workflows and terminal users.
 
-JaneConverter runs directly from its application folder with a native launcher executable (`JaneConverter.exe`), an automated 1-click Windows setup script, and automatic real-time extractor engine updates.
+JaneConverter runs from a private Python environment with a native launcher executable (`JaneConverter.exe`) and an automated 1-click Windows setup script. Update checks are read-only and never patch the running installation silently.
 
 ## What it does
 
@@ -31,7 +31,7 @@ For each media link or local file, JaneConverter:
 4. **Normalizes loudness**: Optionally applies industry-standard EBU R128 loudness normalization (-14 LUFS integrated, -1.5 dB true peak) to match commercial streaming broadcast loudness without clipping.
 5. **Embeds artwork and tags**: Attaches front cover art directly into ID3v2.3 (MP3), FLAC, and M4A containers, and exports formatted production credits files (`_credits.txt`).
 6. **Transcodes media**: Converts audio into 320 kbps MP3, 24-bit PCM WAV, FLAC Level 8, AAC/M4A, or OGG, or video into MP4/MKV via universal hardware acceleration (NVIDIA NVENC, AMD AMF, Intel QuickSync, Apple VideoToolbox, Linux VAAPI, or multi-core CPU threading).
-7. **Organizes playlists**: Sequentially numbers tracks (`1. Track Name`, `2. Track Name`), places the album artwork in the folder root, and isolates all individual track artwork and credits in a clean `metadata/` subfolder.
+7. **Organizes exports**: Saves regular media under `Music/<Source>/` or `Videos/<Source>/`, puts general-purpose material under `Miscellaneous/Audio/` or `Miscellaneous/Videos/`, and keeps metadata in collision-safe `metadata/` subfolders.
 
 ## Before you install
 
@@ -64,7 +64,7 @@ What `setup.bat` does automatically:
 1. Verifies **Python 3.10+** (installs it via winget if missing).
 2. Verifies **FFmpeg** (installs it via winget if missing).
 3. Verifies **Node.js** for YouTube bot challenge handling.
-4. Installs all required Python dependencies from `requirements.txt`.
+4. Creates a private `.venv` and installs all required Python dependencies from `requirements.txt` without changing the user's global Python environment.
 5. Compiles the native `JaneConverter.exe` executable with embedded app icon.
 6. Creates a **JaneConverter** shortcut directly on your Windows Desktop.
 7. Launches the studio window immediately.
@@ -79,11 +79,12 @@ If you prefer to install dependencies manually:
    ```
 2. Install Python dependencies:
    ```powershell
-   python -m pip install -r requirements.txt
+   python -m venv .venv
+   .\.venv\Scripts\python.exe -m pip install -r requirements.txt
    ```
 3. Launch the studio:
    ```powershell
-   python gui.py
+   .\.venv\Scripts\python.exe gui.py
    ```
    Or double-click `JaneConverter.exe`.
 
@@ -105,11 +106,11 @@ Launch JaneConverter from your Desktop shortcut or run `JaneConverter.exe`.
    - **EBU R128 Normalization**: Enable to automatically normalize tracks to -14 LUFS streaming broadcast loudness.
    - **Hardware Acceleration**: Automatically detects your host GPU and displays the active encoder (e.g. NVIDIA NVENC, AMD AMF, Intel Quick Sync, Apple VideoToolbox).
    - **Cover Art & Metadata**: Toggles for embedding cover artwork and exporting formatted production notes.
-3. **Destination Folder**: Choose where converted files are saved (defaults to `converted/`).
+3. **Destination Folder**: Choose where converted files are saved (defaults to JaneConverter's writable user data folder).
 4. **Convert & Abort**:
    - Click **CONVERT MEDIA** to begin processing.
    - Click **Abort** at any time to immediately kill the FFmpeg process, stop downloads, and remove partial files.
-   - Click **Open Folder** to reveal the export folder in Windows Explorer.
+   - Click **Open Folder** to reveal the export folder and select the most recently exported file in Windows Explorer.
 
 ### 2. Playlist Track Selector
 
@@ -124,9 +125,8 @@ When pasting a playlist or album URL (YouTube playlist, Spotify album or playlis
 ### 3. Converted Library Tab
 
 - Lists all exported audio and video files organized by date.
-- Shows file size, duration, format, and creation timestamp.
-- Click **Play** to play any file in your system media player.
-- Click **Folder** to open the specific output directory.
+- Shows file size, format, and its organized source location.
+- Click **Folder** to open the specific output location.
 - Click **Delete** to remove files you no longer need.
 
 ### 4. Console Tab
@@ -141,11 +141,10 @@ When pasting a playlist or album URL (YouTube playlist, Spotify album or playlis
 When exporting playlists or albums, JaneConverter keeps media players and file explorers clean and uncluttered:
 
 ```text
-D:\JaneConverter\converted\<Playlist_Name>\
+%LOCALAPPDATA%\JaneConverter\converted\Music\<Source>\<Playlist_Name>\
 ├── 1. First Track.mp3
 ├── 2. Second Track.mp3
 ├── 3. Third Track.mp3
-├── cover.jpg
 └── metadata/
     ├── 1. First Track.jpg
     ├── 1. First Track_credits.txt
@@ -154,11 +153,12 @@ D:\JaneConverter\converted\<Playlist_Name>\
     ├── 3. Third Track.jpg
     ├── 3. Third Track_credits.txt
     ├── cover.jpg
+    ├── manifest.json
     └── playlist_credits.txt
 ```
 
 - **Clean Media Root**: Media players, car stereos, and DAWs only see sequential audio files (`1. First Track.mp3`, etc.).
-- **Windows Explorer Thumbnails**: `cover.jpg` stays in the folder root so Windows Explorer and music managers immediately display the album art thumbnail.
+- **Metadata stays separate**: Album artwork, credits, and the export manifest remain in `metadata/`, keeping media folders clean.
 - **Isolated Metadata**: Every track's full description, credits, lyrics, tags, and individual artwork are stored in the dedicated `metadata/` subfolder.
 
 ## Use the Command Line
@@ -168,7 +168,7 @@ You can also run conversions directly from PowerShell or Command Prompt:
 ### Single Track / Video Run
 
 ```powershell
-python run_converter.py --source "https://www.youtube.com/watch?v=VIDEO_ID" --format mp3 --bitrate 320k --normalize
+\.venv\Scripts\python.exe run_converter.py --source "https://www.youtube.com/watch?v=VIDEO_ID" --format mp3 --bitrate 320k --normalize
 ```
 
 ### Spotify Track or Album
@@ -181,7 +181,7 @@ python run_converter.py --source "https://open.spotify.com/album/ALBUM_ID" --for
 ### Local File Conversion
 
 ```powershell
-python run_converter.py --source "C:\Music\recording.wav" --format mp3 --bitrate 320k
+\.venv\Scripts\python.exe run_converter.py --source "C:\Music\recording.wav" --format mp3 --bitrate 320k
 ```
 
 ### Command-Line Arguments
@@ -195,9 +195,10 @@ python run_converter.py --source "C:\Music\recording.wav" --format mp3 --bitrate
 | `--normalize` | Apply EBU R128 loudness normalization (-14 LUFS) | Disabled |
 | `--resolution RES` | Video resolution (`original`, `4k`, `1080p`, `720p`, `480p`) | `original` |
 | `--no-gpu` | Disable hardware acceleration and use multi-core CPU | Disabled |
-| `--no-art` | Skip cover art extraction and embedding | Disabled |
+| `--no-cover-art` | Skip cover art extraction and embedding | Disabled |
 | `--no-metadata` | Skip writing credits and metadata `.txt` files | Disabled |
-| `--output-dir PATH` | Directory to save exported files | `converted/` |
+| `--category` | Library category (`Music`, `Video`, or `Miscellaneous`) | Source-based |
+| `--output PATH` | Directory to save exported files | User data `converted/` |
 | `--no-update` | Skip real-time extractor engine update check | Disabled |
 | `--version` | Print the application version and exit | - |
 
@@ -217,12 +218,10 @@ python run_converter.py --help
 
 ## Privacy and Network Use
 
-- **Local files stay local**: When converting local audio or video files, processing happens entirely on your machine with zero network connections.
+- **Local files stay local**: Local conversion does not upload media. Startup update checks are network requests and can be disabled with `--no-update`.
 - **Zero API keys required**: Spotify metadata extraction uses public catalog endpoints and OpenGraph information. No Spotify account, developer keys, or logins are needed.
 - **Direct stream retrieval**: Media streams are fetched directly from host servers without passing through third-party proxy services.
-- **Two-Tier Auto-Updater**:
-  - **Stream Extractor Engine**: On launch, JaneConverter checks PyPI in the background for the latest `yt-dlp` extractor releases, keeping stream extractors working smoothly when online platforms change security signatures.
-  - **Repository Self-Patching**: Click the **🔄 Check for Updates** button in the top header at any time. JaneConverter will automatically fetch and pull the latest code updates from the repository, refresh dependencies, and recompile the launcher with no manual re-downloading required.
+- **Update checks are read-only**: On launch, JaneConverter may check PyPI and the application repository for available updates. It does not install packages, pull Git changes, or replace the launcher automatically.
 
 ## Troubleshooting
 
@@ -265,6 +264,6 @@ JaneConverter is a personal-use tool. It does not host, proxy, or re-distribute 
 
 ## License
 
-Copyright © 2026 project//aspyr. All rights reserved.
+Copyright © 2026 project//aspyr.
 
-JaneConverter is proprietary software, property of project//aspyr. Unauthorized copying, modification, redistribution, or commercial use of this source code or its compiled components is prohibited without the express written permission of the copyright holder.
+JaneConverter is released under the MIT License. See [LICENSE](LICENSE) for the complete terms.
