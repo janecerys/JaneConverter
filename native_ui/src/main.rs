@@ -2,6 +2,7 @@
 
 use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
 use rand::{distributions::Alphanumeric, Rng};
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -33,6 +34,7 @@ const WAV_QUALITY: &[&str] = &["16-bit", "24-bit", "32-bit float"];
 const FLAC_QUALITY: &[&str] = &["16-bit", "24-bit"];
 const OGG_QUALITY: &[&str] = &["q10", "q8", "q6", "q4"];
 const VIDEO_QUALITY: &[&str] = &["best", "high", "balanced", "small"];
+const MAX_LIBRARY_ROWS: usize = 500;
 const ORIGINAL_ICON_PNG: &[u8] =
     include_bytes!(concat!(env!("CARGO_MANIFEST_DIR"), "/../assets/icon.png"));
 
@@ -65,6 +67,14 @@ struct LibraryEntry {
     is_playlist: bool,
     media_count: usize,
     total_bytes: u64,
+}
+
+#[derive(Clone)]
+struct PlaylistItem {
+    index: usize,
+    title: String,
+    artist: String,
+    duration: String,
 }
 
 impl AccessServer {
@@ -226,6 +236,39 @@ fn is_supported_source_url(source: &str) -> bool {
             .any(|character| character == '\r' || character == '\n')
 }
 
+fn parse_playlist_listing(output: &str) -> Result<(String, Vec<PlaylistItem>), String> {
+    let mut title = None;
+    let mut items = Vec::new();
+    for line in output.lines() {
+        if let Some(value) = line.strip_prefix("PLAYLIST\t") {
+            title = Some(value.trim().to_owned());
+            continue;
+        }
+        let Some(value) = line.strip_prefix("ENTRY\t") else {
+            continue;
+        };
+        let mut fields = value.splitn(5, '\t');
+        let index = fields
+            .next()
+            .and_then(|value| value.parse::<usize>().ok())
+            .ok_or_else(|| "Playlist listing returned an invalid item index".to_owned())?;
+        let item_title = fields.next().unwrap_or_default().to_owned();
+        let artist = fields.next().unwrap_or_default().to_owned();
+        let duration = fields.next().unwrap_or_default().to_owned();
+        let has_url = !fields.next().unwrap_or_default().is_empty();
+        if !item_title.is_empty() && has_url {
+            items.push(PlaylistItem {
+                index,
+                title: item_title,
+                artist,
+                duration,
+            });
+        }
+    }
+    let title = title.ok_or_else(|| "Playlist loader returned no playlist title".to_owned())?;
+    Ok((title, items))
+}
+
 fn ready_page(detection: &BrowserDetection) -> String {
     page("Access ready", &format!("<h1>Access confirmed</h1><p>Browser detected: <strong>{}</strong>.</p><p>Return to JaneConverter. The session will be used for the current app session only.</p>", html_escape(&detection.label)))
 }
@@ -265,7 +308,13 @@ enum Event {
     Output(String),
     ConversionFinished(i32),
     UpdateFinished,
+    LibraryLoaded(u64, Vec<LibraryEntry>),
+    LibraryScanFailed(u64),
+    PlaylistLoaded(u64, String, Vec<PlaylistItem>),
+    PlaylistLoadFailed(u64, String),
 }
+
+type EventSender = mpsc::SyncSender<Event>;
 
 struct JaneConverterApp {
     root: PathBuf,
@@ -283,7 +332,7 @@ struct JaneConverterApp {
     normalize: bool,
     status: String,
     progress: f32,
-    logs: Vec<String>,
+    logs: VecDeque<String>,
     running: bool,
     update_checking: bool,
     child: Option<Arc<Mutex<Option<Child>>>>,
@@ -298,19 +347,28 @@ struct JaneConverterApp {
     auth_label: Option<String>,
     library_path: PathBuf,
     library_entries: Vec<LibraryEntry>,
+    library_scan_generation: u64,
+    library_scanning: bool,
     pending_delete: Option<PathBuf>,
     logo_texture: Option<egui::TextureHandle>,
     theme_initialized: bool,
     frontend_preference: String,
     show_interface_settings: bool,
+    playlist_items: Vec<PlaylistItem>,
+    playlist_selected: Vec<bool>,
+    playlist_title: String,
+    playlist_generation: u64,
+    playlist_loading: bool,
+    selected_playlist_indexes: Option<String>,
 }
 
 impl JaneConverterApp {
     fn new(root: PathBuf) -> Self {
         let (access_tx, access_events) = mpsc::channel();
         let frontend_preference = read_frontend_preference(&root);
-        Self {
-            output_dir: root.join("converted").display().to_string(),
+        let default_output = default_data_dir(&root).join("converted");
+        let mut app = Self {
+            output_dir: default_output.display().to_string(),
             root: root.clone(),
             page: Page::Converter,
             sidebar_collapsed: false,
@@ -325,7 +383,7 @@ impl JaneConverterApp {
             normalize: false,
             status: "Ready for URL".to_owned(),
             progress: 0.0,
-            logs: Vec::new(),
+            logs: VecDeque::new(),
             running: false,
             update_checking: false,
             child: None,
@@ -338,37 +396,130 @@ impl JaneConverterApp {
             access_link: None,
             auth_browser: None,
             auth_label: None,
-            library_path: root.join("converted"),
+            library_path: default_output,
             library_entries: Vec::new(),
+            library_scan_generation: 0,
+            library_scanning: false,
             pending_delete: None,
             logo_texture: None,
             theme_initialized: false,
             frontend_preference,
             show_interface_settings: false,
+            playlist_items: Vec::new(),
+            playlist_selected: Vec::new(),
+            playlist_title: String::new(),
+            playlist_generation: 0,
+            playlist_loading: false,
+            selected_playlist_indexes: None,
+        };
+        app.load_settings();
+        app
+    }
+
+    fn load_settings(&mut self) {
+        let settings = read_native_settings(&self.root);
+        if let Some(value) = settings.get("output_dir") {
+            if !value.trim().is_empty() {
+                self.output_dir = value.clone();
+                self.library_path = PathBuf::from(value);
+            }
         }
+        if let Some(value) = settings.get("category") {
+            if ["Music", "Video", "Miscellaneous"].contains(&value.as_str()) {
+                self.category = value.clone();
+            }
+        }
+        if let Some(value) = settings.get("format") {
+            if format_values_for_category(&self.category).contains(&value.as_str()) {
+                self.format = value.clone();
+            }
+        }
+        for (key, target) in [
+            ("save_cover", &mut self.save_cover),
+            ("save_metadata", &mut self.save_metadata),
+            ("use_gpu", &mut self.use_gpu),
+            ("normalize", &mut self.normalize),
+            ("sidebar_collapsed", &mut self.sidebar_collapsed),
+        ] {
+            if let Some(value) = settings.get(key) {
+                if let Ok(parsed) = value.parse::<bool>() {
+                    *target = parsed;
+                }
+            }
+        }
+        if let Some(value) = settings.get("bitrate") {
+            self.bitrate = value.clone();
+        }
+        if let Some(value) = settings.get("resolution") {
+            self.resolution = value.clone();
+        }
+        self.sync_quality_for_format();
+    }
+
+    fn save_settings(&self) {
+        let values = [
+            ("output_dir", self.output_dir.as_str()),
+            ("category", self.category.as_str()),
+            ("format", self.format.as_str()),
+            ("bitrate", self.bitrate.as_str()),
+            ("resolution", self.resolution.as_str()),
+            ("save_cover", if self.save_cover { "true" } else { "false" }),
+            (
+                "save_metadata",
+                if self.save_metadata { "true" } else { "false" },
+            ),
+            ("use_gpu", if self.use_gpu { "true" } else { "false" }),
+            ("normalize", if self.normalize { "true" } else { "false" }),
+            (
+                "sidebar_collapsed",
+                if self.sidebar_collapsed {
+                    "true"
+                } else {
+                    "false"
+                },
+            ),
+        ];
+        let content = values
+            .iter()
+            .map(|(key, value)| format!("{key}={value}\n"))
+            .collect::<String>();
+        let _ = fs::write(native_settings_path(&self.root), content);
     }
 
     fn poll_events(&mut self) {
-        let pending_events: Vec<Event> = self
-            .events
-            .as_ref()
-            .map(|events| events.try_iter().collect())
-            .unwrap_or_default();
-        for event in pending_events {
+        // Drain a small, fixed budget per frame. A conversion can produce
+        // thousands of progress lines; draining an unbounded queue here was
+        // the native UI's main source of input lag.
+        for _ in 0..128 {
+            let event = match self
+                .events
+                .as_ref()
+                .and_then(|events| events.try_recv().ok())
+            {
+                Some(event) => event,
+                None => break,
+            };
             match event {
                 Event::Output(line) => {
                     self.update_progress(&line);
-                    self.logs.push(line);
-                    if self.logs.len() > 5000 {
-                        self.logs.drain(0..1000);
+                    self.logs.push_back(line);
+                    while self.logs.len() > 5000 {
+                        self.logs.pop_front();
                     }
                 }
                 Event::ConversionFinished(code) => {
+                    let was_aborted = self
+                        .abort_requested
+                        .as_ref()
+                        .map(|flag| flag.load(Ordering::Relaxed))
+                        .unwrap_or(false);
                     self.running = false;
                     self.child = None;
                     self.abort_requested = None;
                     self.progress = if code == 0 { 1.0 } else { 0.0 };
-                    self.status = if code == 0 {
+                    self.status = if was_aborted {
+                        "Conversion aborted".to_owned()
+                    } else if code == 0 {
                         "Conversion complete".to_owned()
                     } else {
                         "Conversion failed — review Console".to_owned()
@@ -377,6 +528,33 @@ impl JaneConverterApp {
                 Event::UpdateFinished => {
                     self.update_checking = false;
                     self.status = "Update check complete — review Console".to_owned();
+                }
+                Event::LibraryLoaded(generation, entries) => {
+                    if generation == self.library_scan_generation {
+                        self.library_entries = entries;
+                        self.library_scanning = false;
+                    }
+                }
+                Event::LibraryScanFailed(generation) => {
+                    if generation == self.library_scan_generation {
+                        self.library_scanning = false;
+                        self.status = "Could not read the converted library".to_owned();
+                    }
+                }
+                Event::PlaylistLoaded(generation, title, items) => {
+                    if generation == self.playlist_generation {
+                        self.playlist_title = title;
+                        self.playlist_selected = vec![true; items.len()];
+                        self.playlist_items = items;
+                        self.playlist_loading = false;
+                        self.status = "Choose the playlist items to convert".to_owned();
+                    }
+                }
+                Event::PlaylistLoadFailed(generation, message) => {
+                    if generation == self.playlist_generation {
+                        self.playlist_loading = false;
+                        self.status = message;
+                    }
                 }
             }
         }
@@ -439,6 +617,7 @@ impl JaneConverterApp {
         match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_text()) {
             Ok(text) => {
                 self.source = text.trim().to_owned();
+                self.selected_playlist_indexes = None;
                 self.status = "Source link pasted".to_owned();
             }
             Err(_) => self.status = "Could not read the clipboard".to_owned(),
@@ -451,8 +630,79 @@ impl JaneConverterApp {
             .pick_file()
         {
             self.source = path.display().to_string();
+            self.selected_playlist_indexes = None;
             self.status = "Local media file selected".to_owned();
         }
+    }
+
+    fn load_playlist_tracks(&mut self) {
+        if self.running || self.playlist_loading {
+            return;
+        }
+        if !is_supported_source_url(&self.source) {
+            self.status = "Paste a playlist URL first".to_owned();
+            return;
+        }
+        self.playlist_generation = self.playlist_generation.wrapping_add(1);
+        let generation = self.playlist_generation;
+        let python = find_python(&self.root);
+        let root = self.root.clone();
+        let mut args = vec![
+            self.root.join("run_converter.py").display().to_string(),
+            "--source".to_owned(),
+            self.source.trim().to_owned(),
+            "--list-playlist".to_owned(),
+            "--no-update".to_owned(),
+        ];
+        if let Some(browser) = &self.auth_browser {
+            args.extend(["--browser-session".to_owned(), browser.clone()]);
+        }
+        let (tx, rx) = mpsc::sync_channel(4);
+        self.events = Some(rx);
+        self.playlist_loading = true;
+        self.playlist_items.clear();
+        self.playlist_selected.clear();
+        self.selected_playlist_indexes = None;
+        self.status = "Loading playlist tracks...".to_owned();
+        thread::spawn(move || {
+            let mut command = Command::new(python);
+            command.args(args).current_dir(root);
+            #[cfg(target_os = "windows")]
+            command.creation_flags(0x08000000);
+            match command.output() {
+                Ok(output) if output.status.success() => {
+                    match parse_playlist_listing(&String::from_utf8_lossy(&output.stdout)) {
+                        Ok((title, items)) if !items.is_empty() => {
+                            let _ = tx.send(Event::PlaylistLoaded(generation, title, items));
+                        }
+                        Ok(_) => {
+                            let _ = tx.send(Event::PlaylistLoadFailed(
+                                generation,
+                                "The playlist did not contain any usable tracks".to_owned(),
+                            ));
+                        }
+                        Err(error) => {
+                            let _ = tx.send(Event::PlaylistLoadFailed(generation, error));
+                        }
+                    }
+                }
+                Ok(output) => {
+                    let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+                    let message = if detail.is_empty() {
+                        "Playlist loading failed — review Console".to_owned()
+                    } else {
+                        format!("Playlist loading failed: {detail}")
+                    };
+                    let _ = tx.send(Event::PlaylistLoadFailed(generation, message));
+                }
+                Err(error) => {
+                    let _ = tx.send(Event::PlaylistLoadFailed(
+                        generation,
+                        format!("Could not start playlist loader: {error}"),
+                    ));
+                }
+            }
+        });
     }
 
     fn browse_output(&mut self) {
@@ -498,6 +748,7 @@ impl JaneConverterApp {
             return;
         }
         self.sync_quality_for_format();
+        self.save_settings();
         let python = find_python(&self.root);
         let root = self.root.clone();
         let mut args = vec![
@@ -533,7 +784,14 @@ impl JaneConverterApp {
         if let Some(browser) = &self.auth_browser {
             args.extend(["--browser-session".to_owned(), browser.clone()]);
         }
-        let (tx, rx) = mpsc::channel();
+        if let Some(indexes) = &self.selected_playlist_indexes {
+            args.extend([
+                "--playlist".to_owned(),
+                "--playlist-indexes".to_owned(),
+                indexes.clone(),
+            ]);
+        }
+        let (tx, rx) = mpsc::sync_channel(2048);
         let child_slot = Arc::new(Mutex::new(None));
         let abort = Arc::new(AtomicBool::new(false));
         let child_slot_thread = Arc::clone(&child_slot);
@@ -564,12 +822,14 @@ impl JaneConverterApp {
                 spawn_reader(stderr, tx.clone());
             }
             *child_slot_thread.lock().unwrap() = Some(child);
+            let mut termination_requested = false;
             loop {
                 let finished = {
                     let mut guard = child_slot_thread.lock().unwrap();
                     if let Some(child) = guard.as_mut() {
-                        if abort_thread.load(Ordering::Relaxed) {
-                            let _ = child.kill();
+                        if abort_thread.load(Ordering::Relaxed) && !termination_requested {
+                            terminate_process_tree(child);
+                            termination_requested = true;
                         }
                         match child.try_wait() {
                             Ok(Some(status)) => Some(status.code().unwrap_or(1)),
@@ -588,7 +848,7 @@ impl JaneConverterApp {
                 thread::sleep(Duration::from_millis(80));
             }
         });
-        self.logs.push(format!(
+        self.logs.push_back(format!(
             "Starting native conversion UI -> {}",
             self.format.to_uppercase()
         ));
@@ -607,7 +867,7 @@ impl JaneConverterApp {
         if let Some(child) = &self.child {
             if let Ok(mut guard) = child.lock() {
                 if let Some(child) = guard.as_mut() {
-                    let _ = child.kill();
+                    terminate_process_tree(child);
                 }
             }
         }
@@ -620,7 +880,7 @@ impl JaneConverterApp {
         }
         let python = find_python(&self.root);
         let root = self.root.clone();
-        let (tx, rx) = mpsc::channel();
+        let (tx, rx) = mpsc::sync_channel(2048);
         self.events = Some(rx);
         self.update_checking = true;
         thread::spawn(move || {
@@ -671,24 +931,40 @@ impl JaneConverterApp {
     }
 
     fn refresh_library_view(&mut self) {
-        self.library_entries.clear();
-        collect_library_entries(&self.library_path, &mut self.library_entries);
-        self.library_entries.sort_by(|left, right| {
-            right.is_directory.cmp(&left.is_directory).then_with(|| {
-                left.path
-                    .file_name()
-                    .unwrap_or_default()
-                    .to_string_lossy()
-                    .to_ascii_lowercase()
-                    .cmp(
-                        &right
-                            .path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_ascii_lowercase(),
-                    )
-            })
+        self.library_scan_generation = self.library_scan_generation.wrapping_add(1);
+        let generation = self.library_scan_generation;
+        let path = self.library_path.clone();
+        let (tx, rx) = mpsc::sync_channel(2);
+        self.events = Some(rx);
+        self.library_scanning = true;
+        self.status = "Scanning converted library...".to_owned();
+        thread::spawn(move || {
+            if !path.exists() {
+                let _ = tx.send(Event::LibraryScanFailed(generation));
+                return;
+            }
+            let mut entries = Vec::new();
+            collect_library_entries(&path, &mut entries);
+            entries.sort_by(|left, right| {
+                right.is_directory.cmp(&left.is_directory).then_with(|| {
+                    left.path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .to_ascii_lowercase()
+                        .cmp(
+                            &right
+                                .path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_ascii_lowercase(),
+                        )
+                })
+            });
+            if tx.send(Event::LibraryLoaded(generation, entries)).is_err() {
+                return;
+            }
         });
     }
 
@@ -787,9 +1063,7 @@ impl JaneConverterApp {
                     self.browse_source();
                 }
                 if ui.button("📑 Playlist Tracks").clicked() {
-                    self.status =
-                        "Playlist conversion is handled by the backend when the link is a playlist"
-                            .to_owned();
+                    self.load_playlist_tracks();
                 }
             });
             ui.separator();
@@ -950,6 +1224,72 @@ impl JaneConverterApp {
         });
         ui.add(egui::ProgressBar::new(self.progress).show_percentage());
         ui.label(RichText::new(&self.status).color(MUTED));
+        if !self.playlist_items.is_empty() {
+            egui::Window::new("Playlist Tracks")
+                .collapsible(false)
+                .resizable(true)
+                .default_size([620.0, 460.0])
+                .show(ctx, |ui| {
+                    ui.label(RichText::new(&self.playlist_title).strong().color(BLUE));
+                    ui.horizontal(|ui| {
+                        if ui.button("Select all").clicked() {
+                            self.playlist_selected.fill(true);
+                        }
+                        if ui.button("Clear all").clicked() {
+                            self.playlist_selected.fill(false);
+                        }
+                        ui.label(format!("{} item(s)", self.playlist_items.len()));
+                    });
+                    ui.separator();
+                    egui::ScrollArea::vertical()
+                        .max_height(330.0)
+                        .show(ui, |ui| {
+                            for (selected, item) in self
+                                .playlist_selected
+                                .iter_mut()
+                                .zip(self.playlist_items.iter())
+                            {
+                                let suffix = if item.artist.is_empty() {
+                                    String::new()
+                                } else {
+                                    format!(" — {}", item.artist)
+                                };
+                                ui.checkbox(
+                                    selected,
+                                    format!(
+                                        "{}  {}{}  {}",
+                                        item.index, item.title, suffix, item.duration
+                                    ),
+                                );
+                            }
+                        });
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("Use selected tracks").clicked() {
+                            let indexes = self
+                                .playlist_selected
+                                .iter()
+                                .zip(self.playlist_items.iter())
+                                .filter_map(|(selected, item)| {
+                                    selected.then_some(item.index.to_string())
+                                })
+                                .collect::<Vec<_>>();
+                            if indexes.is_empty() {
+                                self.status = "Select at least one playlist track".to_owned();
+                            } else {
+                                self.selected_playlist_indexes = Some(indexes.join(","));
+                                self.playlist_items.clear();
+                                self.playlist_selected.clear();
+                                self.status = "Playlist selection saved".to_owned();
+                            }
+                        }
+                        if ui.button("Cancel").clicked() {
+                            self.playlist_items.clear();
+                            self.playlist_selected.clear();
+                        }
+                    });
+                });
+        }
     }
 
     fn render_library(&mut self, ui: &mut egui::Ui) {
@@ -976,9 +1316,22 @@ impl JaneConverterApp {
         ui.add_space(6.0);
         egui::ScrollArea::vertical().show(ui, |ui| {
             if self.library_entries.is_empty() {
-                ui.label(RichText::new("No converted media found in this folder.").color(MUTED));
+                ui.label(
+                    RichText::new(if self.library_scanning {
+                        "Scanning converted media..."
+                    } else {
+                        "No converted media found in this folder."
+                    })
+                    .color(MUTED),
+                );
             }
-            for entry in self.library_entries.clone() {
+            let visible_entries = self
+                .library_entries
+                .iter()
+                .take(MAX_LIBRARY_ROWS)
+                .cloned()
+                .collect::<Vec<_>>();
+            for entry in visible_entries {
                 if entry.is_directory {
                     ui.horizontal(|ui| {
                         let tag = if entry.is_playlist {
@@ -1063,6 +1416,15 @@ impl JaneConverterApp {
                 }
                 ui.separator();
             }
+            if self.library_entries.len() > MAX_LIBRARY_ROWS {
+                ui.label(
+                    RichText::new(format!(
+                        "Showing the first {MAX_LIBRARY_ROWS} items to keep the library responsive."
+                    ))
+                    .small()
+                    .color(MUTED),
+                );
+            }
         });
         if let Some(file) = self.pending_delete.clone() {
             egui::Window::new("Confirm deletion")
@@ -1080,10 +1442,15 @@ impl JaneConverterApp {
                             self.pending_delete = None;
                         }
                         if ui.button("Delete").clicked() {
-                            if file.is_dir() {
-                                let _ = fs::remove_dir_all(&file);
+                            let result = if file.is_dir() {
+                                fs::remove_dir_all(&file)
                             } else {
-                                let _ = fs::remove_file(&file);
+                                fs::remove_file(&file)
+                            };
+                            if let Err(error) = result {
+                                self.status = format!("Could not delete item: {error}");
+                            } else {
+                                self.status = "Item deleted".to_owned();
                             }
                             self.pending_delete = None;
                             self.refresh_library_view();
@@ -1105,7 +1472,7 @@ impl JaneConverterApp {
                     self.logs.clear();
                 }
                 if ui.button("Copy Logs").clicked() {
-                    ctx.copy_text(self.logs.join("\n"));
+                    ctx.copy_text(self.logs.iter().cloned().collect::<Vec<_>>().join("\n"));
                 }
             });
         });
@@ -1229,9 +1596,22 @@ impl eframe::App for JaneConverterApp {
                 });
             self.show_interface_settings = window_open;
         }
-        if self.running || self.update_checking || self.access_server.is_some() {
+        if self.running
+            || self.update_checking
+            || self.access_server.is_some()
+            || self.library_scanning
+            || self.playlist_loading
+        {
             ctx.request_repaint_after(Duration::from_millis(80));
         }
+    }
+
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.save_settings();
+        if self.running || self.child.is_some() {
+            self.abort();
+        }
+        self.access_server = None;
     }
 }
 
@@ -1490,10 +1870,28 @@ fn open_url(url: &str) {
         let _ = Command::new("xdg-open").arg(url).spawn();
     }
 }
-fn spawn_reader<R: Read + Send + 'static>(reader: R, tx: mpsc::Sender<Event>) {
+fn terminate_process_tree(child: &mut Child) {
+    #[cfg(target_os = "windows")]
+    {
+        // Python launches ffmpeg as a descendant. Killing only Python leaves
+        // that worker alive, so terminate the complete process tree on abort
+        // and on application shutdown.
+        let pid = child.id().to_string();
+        let _ = Command::new("taskkill")
+            .args(["/PID", &pid, "/T", "/F"])
+            .creation_flags(0x08000000)
+            .status();
+    }
+    let _ = child.kill();
+}
+
+fn spawn_reader<R: Read + Send + 'static>(reader: R, tx: EventSender) {
     thread::spawn(move || {
         for line in BufReader::new(reader).lines().map_while(Result::ok) {
-            let _ = tx.send(Event::Output(line));
+            // Ordinary progress output is lossy by design. The UI remains
+            // responsive under noisy ffmpeg output, while terminal events use
+            // the reliable sender in the process supervisor.
+            let _ = tx.try_send(Event::Output(line));
         }
     });
 }
@@ -1509,15 +1907,46 @@ fn find_python(root: &Path) -> String {
     "python.exe".to_owned()
 }
 
-fn frontend_preference_candidates(root: &Path) -> [PathBuf; 2] {
-    [
-        root.join("frontend.preference"),
-        std::env::var_os("LOCALAPPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| root.to_owned())
-            .join("JaneConverter")
-            .join("frontend.preference"),
-    ]
+fn read_native_settings(root: &Path) -> HashMap<String, String> {
+    let path = native_settings_path(root);
+    let mut settings = HashMap::new();
+    if let Ok(content) = fs::read_to_string(path) {
+        for line in content.lines() {
+            if let Some((key, value)) = line.split_once('=') {
+                settings.insert(key.trim().to_owned(), value.trim().to_owned());
+            }
+        }
+    }
+    settings
+}
+
+fn native_settings_path(root: &Path) -> PathBuf {
+    std::env::var_os("JANECONVERTER_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.to_owned())
+        .join("native.settings")
+}
+
+fn default_data_dir(root: &Path) -> PathBuf {
+    std::env::var_os("JANECONVERTER_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| root.to_owned())
+}
+
+fn frontend_preference_candidates(root: &Path) -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(data_dir) = std::env::var_os("JANECONVERTER_DATA_DIR") {
+        candidates.push(PathBuf::from(data_dir).join("frontend.preference"));
+    }
+    candidates.push(root.join("frontend.preference"));
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        candidates.push(
+            PathBuf::from(local_app_data)
+                .join("JaneConverter")
+                .join("frontend.preference"),
+        );
+    }
+    candidates
 }
 
 fn read_frontend_preference(root: &Path) -> String {
@@ -1585,7 +2014,7 @@ fn main() -> eframe::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{detect_browser, html_escape, is_supported_source_url};
+    use super::{detect_browser, html_escape, is_supported_source_url, parse_playlist_listing};
 
     #[test]
     fn detects_known_browser_brands_before_generic_chromium_markers() {
@@ -1617,5 +2046,14 @@ mod tests {
             html_escape("<script a=\"b\">&"),
             "&lt;script a=&quot;b&quot;&gt;&amp;"
         );
+    }
+
+    #[test]
+    fn playlist_listing_parser_preserves_unicode_and_indexes() {
+        let listing = "PLAYLIST\t編集用素材\nENTRY\t2\t日本語のタイトル\t作曲者\t03:12\thttps://example.test/track\n";
+        let (title, items) = parse_playlist_listing(listing).expect("listing should parse");
+        assert_eq!(title, "編集用素材");
+        assert_eq!(items[0].index, 2);
+        assert_eq!(items[0].title, "日本語のタイトル");
     }
 }

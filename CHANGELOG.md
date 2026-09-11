@@ -5,6 +5,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-11
+
+### Fixed
+- Bounded native output delivery and frame-by-frame event draining to prevent noisy yt-dlp/FFmpeg output from freezing the interface.
+- Moved native converted-library scans off the UI thread.
+- Abort and window-close now terminate the complete Python/FFmpeg process tree on Windows.
+- Added in-app playlist track selection to the Rust frontend.
+- Persisted native converter settings beside the application.
+- Prevented the writable-directory probe from touching a user-created `.write-test` file.
+- Added a restart handoff helper for staged updates and expanded uninstall cleanup for portable installs.
+
+### Changed
+- Updated the native launcher and CLI version to 1.1.0.
+- Updated release packaging and documentation for the inline live console, playlist selection, supported formats, and restart-safe updates.
+
 ### Added
 - Native Rust/egui desktop frontend with a smoothly collapsible workspace sidebar, bounded console rendering, non-blocking conversion controls, library actions, and the temporary account-access handoff.
 - Optional browser-session authentication for authorized account-only media. JaneConverter can use an existing Chrome, Edge, Firefox, Brave, or Vivaldi session through yt-dlp without requesting passwords or writing cookie files.

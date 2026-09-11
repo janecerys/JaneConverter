@@ -1,6 +1,6 @@
 # JaneConverter Consumer Release-Readiness Roadmap
 
-**Baseline:** v1.0.0 plus current working-tree changes  
+**Baseline:** v1.1.0 plus current working-tree changes
 **Created:** 2026-09-09  
 **Companion review:** [BACKEND_AUDIT.md](BACKEND_AUDIT.md)
 
@@ -14,7 +14,7 @@ Release-ready means a clean-machine user can install the application, convert co
 
 **Not ready for an official consumer release.**
 
-The implementation passes are now present in the working tree. They materially reduce the original lag risk, add the native Rust frontend, bound large playlist rendering, add restart-time update staging, provide diagnostics/uninstall tooling, harden account access, and produce a Windows ZIP/checksum artifact. Clean-machine installation, full GUI acceptance, long-running conversion/abort validation, signing, and final legal/dependency review still require release-candidate validation.
+The implementation passes are now present in the working tree. They materially reduce the original lag risk with bounded native event delivery and asynchronous library scans, add in-app playlist selection, terminate conversion process trees on abort/close, persist native settings, add restart-time update handoff, provide diagnostics/uninstall tooling, harden account access, and produce a Windows ZIP/checksum artifact. Clean-machine installation, full GUI acceptance, long-running conversion/abort validation, signing, and final legal/dependency review still require release-candidate validation.
 
 The conversion core is a strong beta foundation. The remaining work is release validation and trust hardening rather than another broad UI rewrite.
 

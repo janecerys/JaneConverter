@@ -19,14 +19,27 @@ LEGACY_APP_DATA_DIR = os.path.join(_local_app_data, "JaneConverter") if _local_a
 
 def _writable_directory(path: str) -> bool:
     """Return whether *path* can be created and written to."""
+    probe = None
     try:
         os.makedirs(path, exist_ok=True)
-        probe = os.path.join(path, ".write-test")
-        with open(probe, "w", encoding="utf-8"):
-            pass
+        # Use an exclusive, unique probe so a real user file named
+        # ``.write-test`` can never be overwritten or deleted by startup.
+        with tempfile.NamedTemporaryFile(
+            prefix=".write-test-",
+            suffix=".tmp",
+            dir=path,
+            delete=False,
+        ) as handle:
+            probe = handle.name
+            handle.write(b"JaneConverter write test\n")
         os.remove(probe)
         return True
     except OSError:
+        if probe:
+            try:
+                os.remove(probe)
+            except OSError:
+                pass
         return False
 
 

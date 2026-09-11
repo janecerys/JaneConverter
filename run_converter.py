@@ -657,6 +657,25 @@ CLI_VIDEO_QUALITIES = {"best", "high", "balanced", "small"}
 CLI_SAMPLE_RATES = {44100, 48000, 96000}
 CLI_RESOLUTIONS = {"original", "4k", "1440p", "1080p", "720p", "480p"}
 
+def parse_playlist_indexes(value: str, total: int, parser: argparse.ArgumentParser):
+    """Parse a 1-based, comma-separated playlist selection safely."""
+    indexes = []
+    for item in (value or "").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            index = int(item)
+        except ValueError:
+            parser.error("--playlist-indexes must contain comma-separated numbers.")
+        if index < 1 or index > total:
+            parser.error(f"Playlist item {index} is outside the available range 1-{total}.")
+        if index not in indexes:
+            indexes.append(index)
+    if not indexes:
+        parser.error("--playlist-indexes must select at least one playlist item.")
+    return indexes
+
 def validate_cli_args(args, parser: argparse.ArgumentParser):
     """Validates CLI argument combinations, exiting with a clear message on invalid input."""
     fmt = args.format.lower().strip(".")
@@ -708,6 +727,8 @@ def main():
     parser.add_argument("--no-gpu", action="store_true", help="Disable hardware GPU acceleration (use multi-core CPU libx264)")
     parser.add_argument("--keep-temp", action="store_true", help="Keep intermediate downloaded stream files in temp directory")
     parser.add_argument("--playlist", "-p", action="store_true", help="Force treat input source as playlist")
+    parser.add_argument("--list-playlist", action="store_true", help="List playlist entries for a graphical frontend and exit")
+    parser.add_argument("--playlist-indexes", help="Convert only selected 1-based playlist items, e.g. 1,3,5")
     parser.add_argument("--no-cover-art", action="store_true", help="Disable downloading and embedding cover art")
     parser.add_argument("--no-metadata", action="store_true", help="Disable exporting credits and metadata text files")
     parser.add_argument("--category", choices=("Music", "Video", "Miscellaneous"), default=None,
@@ -724,6 +745,9 @@ def main():
     args = parser.parse_args()
     args.format, args.bitrate = validate_cli_args(args, parser)
 
+    if args.list_playlist and not is_url(args.source):
+        parser.error("--list-playlist requires a URL.")
+
     if not args.no_update:
         engine_info = check_for_engine_updates()
         if engine_info.get("has_update"):
@@ -736,14 +760,34 @@ def main():
     save_meta = not args.no_metadata
     use_gpu = not args.no_gpu
 
+    if args.list_playlist:
+        args.browser_session = normalize_browser_session(args.browser_session)
+        pdata = fetch_playlist_entries(args.source, auth_browser=args.browser_session)
+        def clean_field(value):
+            return str(value or "").replace("\t", " ").replace("\r", " ").replace("\n", " ").strip()
+        print(f"PLAYLIST\t{clean_field(pdata.get('playlist_title'))}")
+        for entry in pdata.get("entries", []):
+            print("ENTRY\t{}\t{}\t{}\t{}\t{}".format(
+                entry.get("index", 0),
+                clean_field(entry.get("title")),
+                clean_field(entry.get("artist")),
+                entry.get("duration_str", ""),
+                clean_field(entry.get("url")),
+            ))
+        return
+
     if args.playlist or is_playlist_url(args.source):
         print("[*] Detected playlist source. Fetching items...")
         args.browser_session = normalize_browser_session(args.browser_session)
         pdata = fetch_playlist_entries(args.source, auth_browser=args.browser_session)
-        print(f"[*] Found {len(pdata['entries'])} tracks in '{pdata['playlist_title']}'. Converting all...")
+        selected_entries = pdata["entries"]
+        if args.playlist_indexes:
+            selected_indexes = parse_playlist_indexes(args.playlist_indexes, len(selected_entries), parser)
+            selected_entries = [entry for entry in selected_entries if entry.get("index") in selected_indexes]
+        print(f"[*] Found {len(pdata['entries'])} tracks in '{pdata['playlist_title']}'. Converting {len(selected_entries)}...")
         summary = process_playlist_conversion(
             playlist_title=pdata["playlist_title"],
-            selected_entries=pdata["entries"],
+            selected_entries=selected_entries,
             output_dir=args.output,
             target_format=args.format,
             bitrate=args.bitrate,

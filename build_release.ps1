@@ -20,7 +20,7 @@ New-Item -ItemType Directory -Path $staging -Force | Out-Null
 
 $files = @(
     "gui.py", "run_converter.py", "Program.cs", "setup.bat", "install.bat",
-    "install.ps1", "uninstall.ps1", "build_release.ps1", "requirements.txt", "README.md", "CHANGELOG.md", "LICENSE"
+    "install.ps1", "uninstall.ps1", "build_release.ps1", "update_helper.py", "requirements.txt", "README.md", "CHANGELOG.md", "LICENSE"
 )
 foreach ($file in $files) {
     Copy-Item -LiteralPath (Join-Path $scriptDir $file) -Destination (Join-Path $staging $file)
@@ -44,8 +44,13 @@ Get-ChildItem -LiteralPath $staging -Recurse -Force -File |
 $nativeBinary = Join-Path $scriptDir "native_ui\target\release\janeconverter-native.exe"
 $cargo = Get-Command cargo.exe -ErrorAction SilentlyContinue
 if ($cargo) {
+    # Keep Cargo's generated files out of the source checkout. This also
+    # allows release builds from protected or read-only source locations.
+    $cargoTarget = Join-Path $scriptDir "dist\cargo-target-$Version"
+    $env:CARGO_TARGET_DIR = $cargoTarget
     & $cargo.Source build --release --manifest-path (Join-Path $scriptDir "native_ui\Cargo.toml")
     if ($LASTEXITCODE -ne 0) { throw "Native Rust frontend build failed." }
+    $nativeBinary = Join-Path $cargoTarget "release\janeconverter-native.exe"
 } elseif (Test-Path -LiteralPath $nativeBinary) {
     $nativeBinaryInfo = Get-Item -LiteralPath $nativeBinary
     $nativeSourceFiles = @(
@@ -61,6 +66,9 @@ if ($cargo) {
 }
 if (Test-Path -LiteralPath $nativeBinary) {
     Copy-Item -LiteralPath $nativeBinary -Destination (Join-Path $staging "JaneConverterNative.exe")
+    if ($cargo -and (Test-Path -LiteralPath (Join-Path $scriptDir "dist\cargo-target-$Version"))) {
+        Remove-Item -LiteralPath (Join-Path $scriptDir "dist\cargo-target-$Version") -Recurse -Force
+    }
 } elseif (-not $AllowPythonFallback) {
     throw "The Rust frontend was not built. Install Rust or pass -AllowPythonFallback for a development-only package."
 }
@@ -75,7 +83,7 @@ if ($csc) {
     if ($LASTEXITCODE -ne 0) { throw "Native launcher compilation failed." }
 }
 
-$requiredFiles = @("JaneConverter.exe", "gui.py", "run_converter.py", "requirements.txt", "README.md", "LICENSE", "assets\icon.ico", "engine\version.py")
+$requiredFiles = @("JaneConverter.exe", "gui.py", "run_converter.py", "update_helper.py", "requirements.txt", "README.md", "LICENSE", "assets\icon.ico", "engine\version.py")
 if (-not $AllowPythonFallback) { $requiredFiles += "JaneConverterNative.exe" }
 foreach ($requiredFile in $requiredFiles) {
     if (-not (Test-Path -LiteralPath (Join-Path $staging $requiredFile) -PathType Leaf)) {

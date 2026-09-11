@@ -10,13 +10,13 @@ JaneConverter has a capable conversion core and a good first release foundation,
 
 ## Current implementation status — 2026-09-11
 
-The native Rust frontend, private Python environment, local-data default, bounded UI work, playlist organization, diagnostics, staged updates, and Windows ZIP/checksum workflow are now present in the working tree. The current engineering grade is **B- / 7.0** for a controlled beta. Official consumer release remains blocked by clean-machine installation and GUI acceptance testing, real long-running conversion/abort validation, signed artifacts, FFmpeg redistribution decisions, and final dependency/documentation review.
+The native Rust frontend, private Python environment, local-data default, bounded native event delivery, asynchronous library scanning, in-app playlist selection, process-tree shutdown, persisted native settings, restart-time update handoff, diagnostics, staged updates, and Windows ZIP/checksum workflow are now present in the working tree. The current engineering grade is **B / 7.4** for a controlled beta. Official consumer release remains blocked by clean-machine installation and GUI acceptance testing, real long-running conversion/abort validation, signed artifacts, FFmpeg redistribution decisions, and final dependency review.
 
 Issue narratives below retain historical evidence from the original audit. Findings that describe the old Tk-only interface, global dependency installation, or immediate process exit should be read as baseline findings and are not claims about the current native frontend.
 
 ## Remediation update
 
-The current working tree implements the first release-hardening pass from this audit: progress and UI callbacks are coalesced and bounded, console rendering is batched and capped, library discovery runs off the Tk thread, shutdown no longer uses a hard process exit, source/category output routing is centralized, metadata has collision-safe folders and manifests, default runtime data is user-writable, setup uses a private `.venv`, source hostname matching is strict, and update checks no longer install or patch automatically. The next pass adds bounded/paginated playlist rendering, validated restart-time update staging, diagnostics, an uninstall script, and a reproducible Windows ZIP/checksum workflow. The remaining release gates are clean-machine validation, Windows GUI smoke coverage, and optional code signing.
+The current working tree implements the release-hardening pass from this audit: Python and native progress delivery are bounded, console rendering is capped, library discovery runs off the UI thread, native shutdown terminates descendants, playlist selection is handled in-app, native settings persist, source/category output routing is centralized, metadata has collision-safe folders and manifests, default runtime data is user-writable, setup uses a private `.venv`, source hostname matching is strict, and update checks do not install or patch automatically. Staged packages now have a restart handoff that waits for the launcher to exit. The remaining release gates are clean-machine validation, Windows GUI smoke coverage, long-running abort/process cleanup tests, signed artifacts, and final dependency/legal review.
 
 The reported extreme lag has a credible, code-level explanation:
 
@@ -39,15 +39,15 @@ The highest-value fix is to coalesce progress updates and batch console output b
 | Area | Grade | Assessment |
 |---|---:|---|
 | Conversion engine design | B- / 7.0 | Clear extraction/conversion split, solid FFmpeg argument construction, useful fallback behavior. |
-| Performance | B- / 6.8 | Native UI work and bounded queues reduce the original lag risk; stress validation remains. |
+| Performance | B / 7.4 | Native event backpressure, frame budgets, and asynchronous library scans address the main lag paths; stress validation remains. |
 | Correctness | B / 7.2 | Core paths, routing, metadata isolation, and Unicode handling are substantially hardened. |
-| Reliability | B- / 6.7 | Abort, cleanup, diagnostics, and staged updates exist; long-run validation remains. |
+| Reliability | B / 7.3 | Abort/close terminate descendants, cleanup and staged restart handoff exist; long-run validation remains. |
 | Security / supply chain | C+ / 6.0 | Temporary local access is constrained, but dependencies and unsigned updates remain trust risks. |
 | Consumer friendliness | C+ / 6.2 | Portable defaults and a native launcher help; external prerequisites still add friction. |
 | Packaging / distribution | C+ / 6.0 | Reproducible ZIP/checksum workflow exists; signing and clean-machine proof remain. |
-| Tests / CI | B- / 7.0 | Python suite is strong; native tests and GUI acceptance coverage are still growing. |
-| Documentation accuracy | C+ / 6.0 | README is largely current; historical audit and release claims still need reconciliation. |
-| Overall release readiness | **C+ / 6.2** | Strong beta/release-candidate foundation, not an official consumer release yet. |
+| Tests / CI | B- / 7.1 | 96 offline Python tests and native unit/build checks pass; real GUI and clean-machine coverage remain. |
+| Documentation accuracy | B- / 7.0 | README and roadmap now describe the native console, playlist selection, and restart handoff; release validation notes remain. |
+| Overall release readiness | **B- / 7.1** | Strong controlled-beta/release-candidate foundation, not an official consumer release yet. |
 
 ## Strengths
 

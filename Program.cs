@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Windows.Forms;
@@ -16,6 +17,10 @@ namespace JaneConverterLauncher
                 string nativeUiPath = Path.Combine(baseDir, "JaneConverterNative.exe");
                 bool forceLegacy = HasArgument(args, "--legacy-python");
                 bool forceRust = HasArgument(args, "--rust");
+                if (!HasArgument(args, "--skip-pending-update"))
+                {
+                    TrySchedulePendingUpdate(baseDir);
+                }
                 string preference = ReadFrontendPreference(baseDir);
 
                 // Rust is the default. The preference and explicit command-line
@@ -118,13 +123,12 @@ namespace JaneConverterLauncher
 
         static string ReadFrontendPreference(string baseDir)
         {
+            string configured = Environment.GetEnvironmentVariable("JANECONVERTER_DATA_DIR");
             string[] candidates = new string[]
             {
+                string.IsNullOrWhiteSpace(configured) ? null : Path.Combine(configured, "frontend.preference"),
                 Path.Combine(baseDir, "frontend.preference"),
-                Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                    "JaneConverter",
-                    "frontend.preference")
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JaneConverter", "frontend.preference")
             };
             foreach (string candidate in candidates)
             {
@@ -147,6 +151,77 @@ namespace JaneConverterLauncher
                 }
             }
             return "rust";
+        }
+
+        static void TrySchedulePendingUpdate(string baseDir)
+        {
+            string configured = Environment.GetEnvironmentVariable("JANECONVERTER_DATA_DIR");
+            string[] manifests = new string[]
+            {
+                string.IsNullOrWhiteSpace(configured) ? null : Path.Combine(configured, "updates", "pending.json"),
+                Path.Combine(baseDir, "updates", "pending.json"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "JaneConverter", "updates", "pending.json")
+            };
+            bool pending = false;
+            foreach (string manifest in manifests)
+            {
+                if (!string.IsNullOrWhiteSpace(manifest) && File.Exists(manifest))
+                {
+                    pending = true;
+                    break;
+                }
+            }
+            if (!pending)
+            {
+                return;
+            }
+
+            string helper = Path.Combine(baseDir, "update_helper.py");
+            if (!File.Exists(helper))
+            {
+                return;
+            }
+            string python = FindPython(baseDir);
+            try
+            {
+                Process.Start(new ProcessStartInfo
+                {
+                    FileName = python,
+                    Arguments = Quote(helper) + " " + Quote(baseDir) + " " + Process.GetCurrentProcess().Id.ToString(),
+                    WorkingDirectory = baseDir,
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    WindowStyle = ProcessWindowStyle.Hidden
+                });
+                Environment.Exit(0);
+            }
+            catch (Win32Exception)
+            {
+                // Continue launching the existing app when the optional
+                // updater cannot start; the manifest remains available.
+            }
+        }
+
+        static string FindPython(string baseDir)
+        {
+            string[] candidates = new string[]
+            {
+                Path.Combine(baseDir, "venv", "Scripts", "python.exe"),
+                Path.Combine(baseDir, ".venv", "Scripts", "python.exe"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python", "Python312", "python.exe"),
+                Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python", "Python311", "python.exe"),
+                @"C:\Python314\python.exe", @"C:\Python312\python.exe", @"C:\Python311\python.exe", @"C:\Python310\python.exe"
+            };
+            foreach (string candidate in candidates)
+            {
+                if (File.Exists(candidate)) return candidate;
+            }
+            return "python.exe";
+        }
+
+        static string Quote(string value)
+        {
+            return "\"" + (value ?? string.Empty).Replace("\\\"", "\\\\\"") + "\"";
         }
     }
 }

@@ -19,9 +19,9 @@ JaneConverter downloads media from virtually any online source, matches high-res
 
 The standard way to use JaneConverter is its modern dark-themed desktop studio application. A complete command-line interface is also available for automated workflows and terminal users.
 
-JaneConverter runs from a private Python environment with a native launcher executable (`JaneConverter.exe`) and an automated 1-click Windows setup script. Update checks are read-only and never patch the running installation silently.
+JaneConverter runs from a private Python environment with a native launcher executable (`JaneConverter.exe`) and an automated 1-click Windows setup script. Update checks are read-only; a verified staged package is applied by a short-lived restart helper before the next launch.
 
-The Windows launcher prefers the native Rust desktop frontend for a responsive interface. The original Python interface remains available as a recovery fallback when the native executable is not present.
+The Windows launcher prefers the native Rust desktop frontend for a responsive interface. The original Python interface remains available as a recovery fallback when the native executable is not present or when you select it in Interface settings.
 
 ### Interface preference
 
@@ -136,8 +136,9 @@ When pasting a playlist or album URL (YouTube playlist, Spotify album or playlis
 - Click **Folder** to open the specific output location.
 - Click **Delete** to remove files you no longer need.
 
-### 4. Console Tab
+### 4. Live Console
 
+- The native interface keeps a fixed-height live console below the converter so progress is visible without a separate tab.
 - Displays real-time streaming output from the extraction and transcode engine.
 - Displays automatic update checks for the underlying extractor engine.
 - Displays live CPU, RAM, and GPU telemetry in the top header.
@@ -152,7 +153,7 @@ After confirmation, JaneConverter passes that browser's existing session directl
 
 ## Updates, releases, and uninstalling
 
-JaneConverter checks for updates without modifying the running installation. Published ZIP packages include a SHA-256 checksum and can be staged for application on the next restart. The application never replaces its own files while a conversion is running.
+JaneConverter checks for updates without modifying the running installation. Published ZIP packages include a SHA-256 checksum and can be staged for application on the next restart. A short-lived helper waits for the launcher to exit before applying staged files, so the application never replaces files that it still has open.
 
 To remove JaneConverter's private environment and user data, close the app and run `uninstall.ps1`. Exported media is included in the removal, so copy anything you want to keep first.
 
@@ -209,7 +210,7 @@ python run_converter.py --source "https://open.spotify.com/album/ALBUM_ID" --for
 | Argument | Description | Default |
 |---|---|---|
 | `--source URL_OR_PATH` | URL (YouTube, Spotify, etc.) or local file path | Required |
-| `--format FMT` | Target format (`mp3`, `wav`, `flac`, `aac`, `ogg`, `mp4`, `mkv`, `webm`, `gif`) | `mp3` |
+| `--format FMT` | Target format (`mp3`, `wav`, `flac`, `aac`, `m4a`, `ogg`, `mp4`, `mkv`, `webm`, `mov`, `gif`) | `mp3` |
 | `--bitrate RATE` | Audio bitrate (`320k`, `256k`, `192k`, `128k`) | `320k` |
 | `--sample-rate HZ` | Audio sample rate (`44100`, `48000`, `96000`) | `48000` |
 | `--normalize` | Apply EBU R128 loudness normalization (-14 LUFS) | Disabled |
@@ -218,7 +219,7 @@ python run_converter.py --source "https://open.spotify.com/album/ALBUM_ID" --for
 | `--no-cover-art` | Skip cover art extraction and embedding | Disabled |
 | `--no-metadata` | Skip writing credits and metadata `.txt` files | Disabled |
 | `--category` | Library category (`Music`, `Video`, or `Miscellaneous`) | Source-based |
-| `--browser-session` | Existing browser session (`none`, `chrome`, `edge`, `firefox`, `brave`, `vivaldi`) | `none` |
+| `--browser-session` | Existing browser session (`none`, `chrome`, `edge`, `firefox`, `brave`, `vivaldi`, `opera`, `chromium`, `safari`) | `none` |
 | `--output PATH` | Directory to save exported files | JaneConverter `converted/` |
 | `--no-update` | Skip real-time extractor engine update check | Disabled |
 | `--version` | Print the application version and exit | - |
@@ -273,7 +274,7 @@ python -m pip install -r requirements-dev.txt
 python -m pytest -v tests/
 ```
 
-The offline suite runs in seconds (FFmpeg is required for the end-to-end transcode test). Eight additional live-network tests are opt-in: `python -m pytest -m online -v`. Continuous integration runs both suites on Windows and Ubuntu via GitHub Actions on every push.
+The offline suite runs in seconds (FFmpeg is required for the end-to-end transcode test). Eight additional live-network tests are opt-in: `python -m pytest -m online -v`. Continuous integration runs the hermetic suite on Windows and Ubuntu; the live-network suite is available through a deliberate workflow dispatch.
 
 ## Versioning
 

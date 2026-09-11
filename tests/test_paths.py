@@ -3,7 +3,7 @@
 import json
 import os
 
-from engine.paths import APP_DATA_DIR, BASE_DIR, DEFAULT_CONVERTED_DIR, migrate_legacy_app_data
+from engine.paths import APP_DATA_DIR, BASE_DIR, DEFAULT_CONVERTED_DIR, _writable_directory, migrate_legacy_app_data
 
 
 def test_portable_default_converted_folder_is_next_to_application():
@@ -45,3 +45,10 @@ def test_migrate_legacy_app_data_merges_without_overwriting(tmp_path):
 
 def test_migrate_legacy_app_data_is_idempotent_when_source_is_missing(tmp_path):
     assert migrate_legacy_app_data(str(tmp_path / "missing"), str(tmp_path / "current")) is False
+
+
+def test_writable_probe_never_overwrites_a_user_named_write_test(tmp_path):
+    probe = tmp_path / ".write-test"
+    probe.write_text("keep me", encoding="utf-8")
+    assert _writable_directory(str(tmp_path)) is True
+    assert probe.read_text(encoding="utf-8") == "keep me"

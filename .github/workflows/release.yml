@@ -20,6 +20,8 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable-x86_64-pc-windows-msvc
+      - name: Install Python dependencies for package smoke tests
+        run: python -m pip install -r requirements-dev.txt
       - name: Build portable source package
         shell: pwsh
         run: .\build_release.ps1 -Version "${{ github.ref_name }}".TrimStart('v')
@@ -31,8 +33,8 @@ jobs:
           Add-Type -AssemblyName System.IO.Compression.FileSystem
           $zip = [IO.Compression.ZipFile]::OpenRead($archive.FullName)
           try {
-            $names = @($zip.Entries | ForEach-Object FullName)
-            foreach ($required in @("JaneConverter.exe", "JaneConverterNative.exe", "README.md", "LICENSE", "assets/icon.ico", "engine/version.py")) {
+            $names = @($zip.Entries | ForEach-Object { $_.FullName -replace '\\', '/' })
+            foreach ($required in @("JaneConverter.exe", "JaneConverterNative.exe", "README.md", "LICENSE", "update_helper.py", "assets/icon.ico", "engine/version.py")) {
               if ($required -notin $names) { throw "Release ZIP is missing $required" }
             }
             if ($names | Where-Object { $_ -match "(^|/)(__pycache__|\.pytest_cache|temp|converted)(/|$)|\.(pyc|pyo|log)$" }) {
@@ -41,6 +43,13 @@ jobs:
           } finally {
             $zip.Dispose()
           }
+      - name: Smoke-test packaged Python entry points
+        shell: pwsh
+        run: |
+          $package = Get-ChildItem dist -Directory -Filter "JaneConverter-*" | Select-Object -First 1
+          python -m py_compile "$package\run_converter.py" "$package\gui.py" "$package\update_helper.py"
+          $version = python "$package\run_converter.py" --version
+          if (-not $version -or $version -notmatch "JaneConverter") { throw "Packaged CLI version check failed." }
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:

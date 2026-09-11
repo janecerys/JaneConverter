@@ -39,15 +39,14 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Lint with pyflakes
-        run: python -m pyflakes engine/ run_converter.py gui.py
+        run: python -m pyflakes engine/ run_converter.py gui.py update_helper.py
 
       - name: Run hermetic test suite
         run: python -m pytest tests/ -v
 
       - name: Run online tests (opt-in)
-        if: runner.os == 'Windows'
+        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch'
         run: python -m pytest tests/ -m online -v
-        continue-on-error: true
 
   native:
     name: Native frontend (Windows)
