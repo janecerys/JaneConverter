@@ -14,9 +14,9 @@ Release-ready means a clean-machine user can install the application, convert co
 
 **Not ready for an official consumer release.**
 
-The first implementation pass is now present in the working tree. It materially reduces the original lag risk and hardens output, shutdown, setup, update-check, and test behavior, but it does not by itself satisfy the clean-machine packaging and release-candidate gates below.
+The implementation passes are now present in the working tree. They materially reduce the original lag risk, add the native Rust frontend, bound large playlist rendering, add restart-time update staging, provide diagnostics/uninstall tooling, harden account access, and produce a Windows ZIP/checksum artifact. Clean-machine installation, full GUI acceptance, long-running conversion/abort validation, signing, and final legal/dependency review still require release-candidate validation.
 
-The conversion core is a strong beta foundation. The immediate release blocker is UI responsiveness: high-frequency progress and console events can flood the Tk event loop, while library discovery and large playlist widget creation also run on the UI thread. Packaging, update safety, correctness, documentation, and release automation must follow.
+The conversion core is a strong beta foundation. The remaining work is release validation and trust hardening rather than another broad UI rewrite.
 
 ## Priorities
 
@@ -101,12 +101,14 @@ Do not use `print()` as the worker-to-Tk transport.
 - Show a refreshing state and supersede stale refresh jobs.
 - Avoid repeated full-tree walks and repeated path-containment scans.
 
-### 1.6 Virtualize large playlist lists — P1
+### 1.6 Bound large playlist lists — P1
 
-- Use a fixed pool of visible rows or pagination instead of one Tk widget tree per entry.
+- Use a bounded first page and explicit pagination instead of one Tk widget tree per entry.
 - Debounce search by approximately 150–250 ms.
 - Store selection in data, not thousands of Tk variables.
 - Add a clear maximum or paging behavior for unsupported playlist sizes.
+
+The current implementation renders 80 rows initially, keeps selection state separately, debounces filtering, and lets users load additional pages on demand. A fixed-row virtualized pool remains a future optimization if playlist sizes make pagination insufficient.
 
 ## Phase 2 — Job lifecycle, output correctness, and recovery
 
@@ -183,14 +185,17 @@ The explicit category option must not accidentally flatten Spotify, YouTube, and
 Use writable paths such as:
 
 ```text
-%LOCALAPPDATA%\JaneConverter\
+JaneConverter\
 ├── config.json
 ├── logs\
 ├── temp\
 └── converted\
 ```
 
-Keep application code read-only if installed under a protected directory. Let users choose another export folder.
+If the application is placed in a protected directory, fall back to a
+writable per-user directory. Let users choose another export folder at any
+time, and migrate the previous `%LOCALAPPDATA%\JaneConverter` store without
+overwriting conflicts.
 
 ### 3.3 Harden setup — P1
 

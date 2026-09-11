@@ -7,12 +7,14 @@ __pycache__/
 
 # Build artifacts
 JaneConverter.exe
+JaneConverterNative.exe
 ffmpeg.exe
 build/
 dist/
 .vs/
 .vscode/
 .idea/
+native_ui/target/
 
 # Virtual environments
 venv/
@@ -25,3 +27,5 @@ Desktop.ini
 .zcode/
 .janecoverter-data/
 logs/
+config.json
+updates/

@@ -32,9 +32,10 @@ from engine.converter import (
     SUPPORTED_VIDEO_FORMATS,
     get_best_hardware_encoder
 )
-from engine.updater import update_engine, check_for_engine_updates
+from engine.updater import check_for_engine_updates
 from engine.version import __version__
 from engine.paths import DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR
+from engine.auth import normalize_browser_session
 
 MIN_FREE_DISK_BYTES = 256 * 1024 * 1024  # keep a reasonable minimum without rejecting small conversions
 
@@ -199,7 +200,8 @@ def process_conversion(
     check_updates: bool = False,
     abort_event: Optional[Any] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
-    content_category: Optional[str] = None
+    content_category: Optional[str] = None,
+    auth_browser: Optional[str] = None
 ) -> str:
     """
     Orchestrates downloading/extracting stream, embedding cover art, exporting credits,
@@ -209,7 +211,12 @@ def process_conversion(
         raise KeyboardInterrupt("Conversion aborted by user.")
 
     if check_updates:
-        update_engine(status_callback=lambda m: print(f"[AutoUpdate] {m}"))
+        engine_info = check_for_engine_updates()
+        if engine_info.get("has_update"):
+            print(
+                f"[Update] Extractor engine update available: "
+                f"v{engine_info.get('current_version')} -> v{engine_info.get('latest_version')}."
+            )
 
     if not output_dir:
         output_dir = DEFAULT_CONVERTED_DIR
@@ -263,7 +270,8 @@ def process_conversion(
             output_dir=work_dir,
             audio_only=is_audio_target,
             abort_event=abort_event,
-            progress_callback=report
+            progress_callback=report,
+            auth_browser=auth_browser
         )
 
         input_media = stream_info["media_path"]
@@ -383,7 +391,8 @@ def process_playlist_conversion(
     source_type: Optional[str] = None,
     abort_event: Optional[Any] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
-    content_category: Optional[str] = None
+    content_category: Optional[str] = None,
+    auth_browser: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Batch-downloads and transcodes selected playlist items into a dedicated playlist folder.
@@ -393,7 +402,12 @@ def process_playlist_conversion(
         raise KeyboardInterrupt("Playlist conversion aborted by user.")
 
     if check_updates:
-        update_engine(status_callback=lambda m: print(f"[AutoUpdate] {m}"))
+        engine_info = check_for_engine_updates()
+        if engine_info.get("has_update"):
+            print(
+                f"[Update] Extractor engine update available: "
+                f"v{engine_info.get('current_version')} -> v{engine_info.get('latest_version')}."
+            )
 
     if not output_dir:
         output_dir = DEFAULT_CONVERTED_DIR
@@ -492,7 +506,8 @@ def process_playlist_conversion(
                 fallback_title=raw_title,
                 fallback_artist=artist,
                 abort_event=abort_event,
-                progress_callback=item_progress_hook
+                progress_callback=item_progress_hook,
+                auth_browser=auth_browser
             )
 
             input_media = stream_info["media_path"]
@@ -637,6 +652,8 @@ def process_playlist_conversion(
 CLI_FORMATS = sorted(SUPPORTED_AUDIO_FORMATS | SUPPORTED_VIDEO_FORMATS)
 CLI_BITRATES = {"320k", "256k", "192k", "128k"}
 CLI_BIT_DEPTHS = {"16-bit", "24-bit", "32-bit", "32-bit float"}
+CLI_OGG_QUALITIES = {"q10", "q8", "q6", "q4"}
+CLI_VIDEO_QUALITIES = {"best", "high", "balanced", "small"}
 CLI_SAMPLE_RATES = {44100, 48000, 96000}
 CLI_RESOLUTIONS = {"original", "4k", "1440p", "1080p", "720p", "480p"}
 
@@ -647,9 +664,23 @@ def validate_cli_args(args, parser: argparse.ArgumentParser):
         parser.error(f"Unsupported format '{args.format}'. Choose from: {', '.join(CLI_FORMATS)}")
 
     bitrate = args.bitrate.lower().strip()
-    if fmt in ("wav", "flac"):
+    if fmt in SUPPORTED_VIDEO_FORMATS:
+        if bitrate == "320k":
+            # Preserve the audio-oriented CLI default while making a bare
+            # ``--format mp4`` invocation choose a sensible video preset.
+            bitrate = "balanced"
+        if bitrate not in CLI_VIDEO_QUALITIES:
+            parser.error(
+                f"Invalid video quality '{args.bitrate}'. Choose from: {', '.join(sorted(CLI_VIDEO_QUALITIES))}"
+            )
+    elif fmt in ("wav", "flac"):
         if bitrate not in CLI_BIT_DEPTHS:
             parser.error(f"Invalid bit depth '{args.bitrate}' for {fmt}. Choose from: {', '.join(sorted(CLI_BIT_DEPTHS))}")
+    elif fmt == "ogg":
+        if bitrate not in CLI_OGG_QUALITIES and bitrate not in CLI_BITRATES:
+            parser.error(
+                f"Invalid quality '{args.bitrate}' for ogg. Choose from: {', '.join(sorted(CLI_OGG_QUALITIES))}"
+            )
     else:
         if bitrate not in CLI_BITRATES:
             parser.error(f"Invalid bitrate '{args.bitrate}'. Choose from: {', '.join(sorted(CLI_BITRATES))}")
@@ -670,7 +701,7 @@ def main():
     parser.add_argument("--source", "-s", required=True, help="Media URL (YouTube, Spotify, SoundCloud, TikTok, Twitter, etc.) or local file path")
     parser.add_argument("--format", "-f", default="mp3", help=f"Target output format ({', '.join(CLI_FORMATS)})")
     parser.add_argument("--output", "-o", default=DEFAULT_CONVERTED_DIR, help="Destination directory for converted files")
-    parser.add_argument("--bitrate", "-b", default="320k", help="Audio bitrate (320k, 256k, 192k, 128k) or bit depth (16-bit, 24-bit, 32-bit)")
+    parser.add_argument("--bitrate", "-b", default="320k", help="Audio bitrate, lossless bit depth, OGG quality, or video quality (best, high, balanced, small)")
     parser.add_argument("--sample-rate", "-r", type=int, default=48000, help="Audio sample rate in Hz (44100, 48000, 96000)")
     parser.add_argument("--normalize", "-n", action="store_true", help="Apply EBU R128 loudness normalization")
     parser.add_argument("--resolution", default="original", help="Video resolution (original, 4k, 1440p, 1080p, 720p, 480p)")
@@ -681,7 +712,13 @@ def main():
     parser.add_argument("--no-metadata", action="store_true", help="Disable exporting credits and metadata text files")
     parser.add_argument("--category", choices=("Music", "Video", "Miscellaneous"), default=None,
                         help="Library category. Miscellaneous stores media under Audio or Videos.")
-    parser.add_argument("--no-update", action="store_true", help="Skip the yt-dlp extractor engine update check on startup")
+    parser.add_argument(
+        "--browser-session",
+        choices=("none", "chrome", "edge", "firefox", "brave", "vivaldi", "opera", "chromium", "safari"),
+        default="none",
+        help="Use an existing logged-in browser session for authorized content; no password or cookie file is stored.",
+    )
+    parser.add_argument("--no-update", action="store_true", help="Skip the read-only yt-dlp update availability check on startup")
     parser.add_argument("--version", action="version", version=f"JaneConverter {__version__}")
 
     args = parser.parse_args()
@@ -701,7 +738,8 @@ def main():
 
     if args.playlist or is_playlist_url(args.source):
         print("[*] Detected playlist source. Fetching items...")
-        pdata = fetch_playlist_entries(args.source)
+        args.browser_session = normalize_browser_session(args.browser_session)
+        pdata = fetch_playlist_entries(args.source, auth_browser=args.browser_session)
         print(f"[*] Found {len(pdata['entries'])} tracks in '{pdata['playlist_title']}'. Converting all...")
         summary = process_playlist_conversion(
             playlist_title=pdata["playlist_title"],
@@ -717,13 +755,15 @@ def main():
             save_cover_art=save_cover,
             save_metadata=save_meta,
             keep_temp=args.keep_temp,
-            content_category=args.category
+            content_category=args.category,
+            auth_browser=args.browser_session
         )
         failed = summary.get("failed_count", 0)
         if failed:
             print(f"[!] {failed} track(s) failed to convert.")
             sys.exit(1)
     else:
+        args.browser_session = normalize_browser_session(args.browser_session)
         process_conversion(
             source=args.source,
             output_dir=args.output,
@@ -737,7 +777,8 @@ def main():
             save_cover_art=save_cover,
             save_metadata=save_meta,
             keep_temp=args.keep_temp,
-            content_category=args.category
+            content_category=args.category,
+            auth_browser=args.browser_session
         )
 
 if __name__ == "__main__":

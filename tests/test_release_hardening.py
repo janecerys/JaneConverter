@@ -4,7 +4,7 @@ import os
 
 from engine.events import BoundedLogQueue, CoalescingCallbackQueue
 from engine.extractor import identify_source_type, is_playlist_url
-from engine.updater import check_and_apply_all_updates
+from engine.updater import check_and_apply_all_updates, update_engine
 from run_converter import media_library_folder, _metadata_folder
 
 
@@ -60,3 +60,17 @@ def test_updates_are_read_only_by_default(monkeypatch):
     assert result["already_up_to_date"] is True
     assert result["repo_updated"] is False
     assert result["engine_updated"] is False
+
+
+def test_engine_install_requires_explicit_permission(monkeypatch):
+    def fail_if_called(*_args, **_kwargs):
+        raise AssertionError("pip must not run during a read-only update check")
+
+    monkeypatch.setattr("engine.updater.subprocess.run", fail_if_called)
+    result = update_engine(info={
+        "has_update": True,
+        "online": True,
+        "current_version": "2026.1",
+        "latest_version": "2026.2",
+    })
+    assert result is False

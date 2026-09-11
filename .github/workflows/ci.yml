@@ -48,3 +48,17 @@ jobs:
         if: runner.os == 'Windows'
         run: python -m pytest tests/ -m online -v
         continue-on-error: true
+
+  native:
+    name: Native frontend (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable-x86_64-pc-windows-msvc
+      - name: Run Rust tests
+        run: cargo test --manifest-path native_ui/Cargo.toml
+      - name: Build Rust release frontend
+        run: cargo build --release --manifest-path native_ui/Cargo.toml

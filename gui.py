@@ -12,6 +12,7 @@ import threading
 import platform
 import subprocess
 import json
+import webbrowser
 from typing import Callable, Optional, Dict, Any
 
 import customtkinter as ctk
@@ -45,7 +46,7 @@ ICON_PNG = os.path.join(ASSETS_DIR, "icon.png")
 for d in (DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR, ASSETS_DIR):
     os.makedirs(d, exist_ok=True)
 
-from engine.extractor import identify_source_type, is_playlist_url, fetch_playlist_entries
+from engine.extractor import identify_source_type, is_playlist_url, is_url, fetch_playlist_entries
 from engine.version import __version__
 from engine.converter import (
     SUPPORTED_AUDIO_FORMATS,
@@ -60,6 +61,12 @@ from engine.updater import (
 )
 from engine.events import CoalescingCallbackQueue, BoundedLogQueue
 from engine.paths import DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR, CONFIG_PATH
+from engine.auth import (
+    BrowserDetection,
+)
+from engine.account_access import AccountAccessServer
+from engine.diagnostics import format_diagnostics
+from engine.staged_update import apply_pending_update
 from run_converter import process_conversion, process_playlist_conversion
 
 THEME = {
@@ -178,9 +185,12 @@ class PlaylistSelectionWindow(ctk.CTkToplevel):
         self.on_confirm = on_confirm
         self.entries = playlist_data.get("entries", [])
         self.playlist_title = playlist_data.get("playlist_title", "Playlist")
-        self.check_vars = {}
+        self.check_vars = {id(entry): ctk.BooleanVar(value=True) for entry in self.entries}
         self.row_widgets = []
         self._filter_after_id = None
+        self._filtered_entries = list(self.entries)
+        self._rendered_count = 0
+        self._page_size = 80
 
         self.title(f"Select Tracks: {self.playlist_title}")
         self.geometry("820x660")
@@ -313,6 +323,18 @@ class PlaylistSelectionWindow(ctk.CTkToplevel):
         )
         self.counter_badge.pack(side="right", padx=6)
 
+        self.load_more_btn = ctk.CTkButton(
+            tb_inner,
+            text="Load more",
+            width=100,
+            height=28,
+            fg_color=THEME["input_bg"],
+            hover_color=THEME["card_border_glow"],
+            font=ctk.CTkFont(size=11),
+            command=self._load_more_rows
+        )
+        self.load_more_btn.pack(side="right", padx=6)
+
         # Scrollable Track List
         self.scroll_frame = ctk.CTkScrollableFrame(
             self,
@@ -323,8 +345,7 @@ class PlaylistSelectionWindow(ctk.CTkToplevel):
         )
         self.scroll_frame.pack(fill="both", expand=True, padx=14, pady=(0, 8))
 
-        # Build rows progressively so very large playlists don't freeze the window
-        self._pending_entries = list(self.entries)
+        # Render only a bounded page initially; the user can load more on demand.
         self._build_rows_progressively()
 
         # Bottom Action Bar
@@ -361,19 +382,25 @@ class PlaylistSelectionWindow(ctk.CTkToplevel):
         )
         self.confirm_btn.pack(side="right", fill="x", expand=True, padx=(12, 0))
 
-    def _build_rows_progressively(self, batch_size: int = 30):
-        batch = self._pending_entries[:batch_size]
-        del self._pending_entries[:batch_size]
+    def _build_rows_progressively(self, batch_size: int = 80):
+        self._page_size = max(1, batch_size)
+        self._load_more_rows()
+
+    def _load_more_rows(self):
+        batch = self._filtered_entries[self._rendered_count:self._rendered_count + self._page_size]
         for entry in batch:
             self._add_track_row(entry)
+        self._rendered_count += len(batch)
         self._update_counter()
-        if self._pending_entries:
-            self.after(10, self._build_rows_progressively)
+        remaining = len(self._filtered_entries) - self._rendered_count
+        self.load_more_btn.configure(
+            text=f"Load more ({remaining})" if remaining else "All tracks loaded",
+            state="normal" if remaining else "disabled"
+        )
 
     def _add_track_row(self, entry):
         idx = entry.get("index", 1)
-        var = ctk.BooleanVar(value=True)
-        self.check_vars[id(entry)] = var
+        var = self.check_vars.setdefault(id(entry), ctk.BooleanVar(value=True))
 
         row = ctk.CTkFrame(self.scroll_frame, fg_color=THEME["card_inner"], corner_radius=6, height=38)
         row.pack(fill="x", padx=2, pady=2)
@@ -446,13 +473,15 @@ class PlaylistSelectionWindow(ctk.CTkToplevel):
     def _apply_filter(self):
         self._filter_after_id = None
         q = self.search_entry.get().strip().lower()
-        for row, entry, _ in self.row_widgets:
-            t = entry.get("title", "").lower()
-            a = entry.get("artist", "").lower()
-            if not q or q in t or q in a:
-                row.pack(fill="x", padx=2, pady=2)
-            else:
-                row.pack_forget()
+        self._filtered_entries = [
+            entry for entry in self.entries
+            if not q or q in entry.get("title", "").lower() or q in entry.get("artist", "").lower()
+        ]
+        for row, _, _ in self.row_widgets:
+            row.destroy()
+        self.row_widgets.clear()
+        self._rendered_count = 0
+        self._load_more_rows()
 
     def _select_all(self):
         for var in self.check_vars.values():
@@ -483,7 +512,7 @@ class PlaylistSelectionWindow(ctk.CTkToplevel):
             confirm_btn.configure(state="normal", fg_color=THEME["magenta"])
 
     def _on_confirm_click(self):
-        selected = [entry for _, entry, var in self.row_widgets if var.get()]
+        selected = [entry for entry in self.entries if self.check_vars[id(entry)].get()]
         if not selected:
             return
         self.destroy()
@@ -531,6 +560,10 @@ class JaneConverterApp(ctk.CTk):
         self.last_converted_file = None
         self.sidebar_collapsed = False
         self.sidebar_animation_id = None
+        self.account_access_server = None
+        self.account_access_link = None
+        self.account_access_source = None
+        self.account_access_browser = None
 
         # Clean up stale temp directories from previous sessions
         self._cleanup_stale_temp()
@@ -632,6 +665,7 @@ class JaneConverterApp(ctk.CTk):
     def _finalize_close(self):
         self._closing = True
         self.shutdown_event.set()
+        self._clear_account_access(silent=True)
         self._save_user_settings()
         if sys.stdout is not self._original_stdout:
             sys.stdout = self._original_stdout
@@ -1052,6 +1086,69 @@ class JaneConverterApp(ctk.CTk):
             command=self._fetch_and_open_playlist_selector
         )
         self.playlist_btn.pack(side="left")
+
+        auth_row = ctk.CTkFrame(src_card, fg_color="transparent")
+        auth_row.pack(fill="x", padx=12, pady=(0, 4))
+        ctk.CTkLabel(
+            auth_row,
+            text="Account access (optional)",
+            font=ctk.CTkFont(size=11, weight="bold"),
+            text_color=THEME["text_muted"],
+        ).pack(side="left")
+        self.account_access_status_label = ctk.CTkLabel(
+            auth_row,
+            text="Public only",
+            font=ctk.CTkFont(size=10),
+            text_color=THEME["cyan"],
+        )
+        self.account_access_status_label.pack(side="right")
+
+        ctk.CTkLabel(
+            src_card,
+            text="Create a temporary link and open it in the browser whose session you want to use. JaneConverter never asks for or stores your password or cookies.",
+            font=ctk.CTkFont(size=10),
+            text_color=THEME["text_dark"],
+            anchor="w",
+            justify="left",
+        ).pack(fill="x", padx=12, pady=(0, 5))
+
+        access_row = ctk.CTkFrame(src_card, fg_color="transparent")
+        access_row.pack(fill="x", padx=12, pady=(0, 10))
+        self.account_access_link_label = ctk.CTkLabel(
+            access_row,
+            text="No active access link",
+            font=ctk.CTkFont(size=10),
+            text_color=THEME["text_dark"],
+            anchor="w",
+            cursor="hand2",
+        )
+        self.account_access_link_label.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.account_access_link_label.bind("<Button-1>", lambda _event: self._open_account_access_link())
+        self.account_access_btn = ctk.CTkButton(
+            access_row,
+            text="🔐 Create Access Link",
+            width=170,
+            height=30,
+            fg_color=THEME["cyan_subtle"],
+            hover_color=THEME["cyan_hover"],
+            text_color=THEME["text_primary"],
+            font=ctk.CTkFont(size=11, weight="bold"),
+            command=self._create_account_access_link,
+        )
+        self.account_access_btn.pack(side="left", padx=(0, 5))
+        self.account_access_copy_btn = ctk.CTkButton(
+            access_row,
+            text="Copy",
+            width=55,
+            height=30,
+            fg_color=THEME["card_inner"],
+            hover_color=THEME["card_border_glow"],
+            text_color=THEME["text_muted"],
+            font=ctk.CTkFont(size=11),
+            command=self._copy_account_access_link,
+            state="disabled",
+        )
+        self.account_access_copy_btn.pack(side="left")
 
         # 3.2 Conversion Settings Card
         settings_card = ctk.CTkFrame(
@@ -1654,6 +1751,18 @@ class JaneConverterApp(ctk.CTk):
         )
         copy_btn.pack(side="right", padx=(6, 0))
 
+        diagnostic_btn = ctk.CTkButton(
+            c_top,
+            text="🩺 Diagnostics",
+            width=105,
+            height=28,
+            fg_color=THEME["card_inner"],
+            hover_color=THEME["card_border_glow"],
+            font=ctk.CTkFont(size=11),
+            command=self._copy_diagnostics
+        )
+        diagnostic_btn.pack(side="right", padx=(6, 0))
+
         clear_btn = ctk.CTkButton(
             c_top,
             text="🧹 Clear",
@@ -1702,10 +1811,113 @@ class JaneConverterApp(ctk.CTk):
             self.clipboard_clear()
             self.clipboard_append(txt)
 
+    def _copy_diagnostics(self):
+        self.clipboard_clear()
+        self.clipboard_append(format_diagnostics())
+        self.status_label.configure(text="Diagnostics copied to the clipboard.")
+
     def _clear_logs(self):
         self.log_queue.clear()
         self.log_box.delete("1.0", "end")
         self._log_char_count = 0
+
+    def _active_auth_browser(self) -> Optional[str]:
+        """Return the in-memory browser session approved for this app session."""
+        return self.account_access_browser
+
+    def _create_account_access_link(self):
+        if self.is_converting:
+            return
+
+        source = self.src_entry.get().strip()
+        if not is_url(source):
+            messagebox.showwarning(
+                "Online Link Required",
+                "Account access links are only available for an online media URL.\n\n"
+                "Paste the source link first, then try again.",
+            )
+            return
+
+        self._clear_account_access(silent=True)
+        try:
+            access_server = AccountAccessServer(
+                source_url=source,
+                on_ready=lambda detection: self._post_ui(
+                    lambda server=access_server, browser=detection: self._on_account_access_ready(server, browser),
+                    priority=True,
+                ),
+            )
+            link = access_server.start()
+            self.account_access_server = access_server
+            self.account_access_link = link
+            self.account_access_source = source
+            self.account_access_browser = None
+            self.clipboard_clear()
+            self.clipboard_append(link)
+            self.account_access_link_label.configure(text=link, text_color=THEME["cyan"])
+            self.account_access_status_label.configure(text="Waiting for browser confirmation", text_color=THEME["yellow"])
+            self.account_access_btn.configure(text="🔐 Reset Access Link", command=self._clear_account_access)
+            self.account_access_copy_btn.configure(state="normal")
+            webbrowser.open(link)
+            self.status_label.configure(text="Temporary access link copied and opened. You can paste it into any browser.")
+        except Exception as exc:
+            self._clear_account_access(silent=True)
+            messagebox.showerror("Account Access Unavailable", f"Could not create the temporary access link.\n\n{exc}")
+
+    def _copy_account_access_link(self):
+        link = self.account_access_link
+        if link:
+            self.clipboard_clear()
+            self.clipboard_append(link)
+            self.status_label.configure(text="Temporary access link copied to the clipboard.")
+
+    def _open_account_access_link(self):
+        if self.account_access_link:
+            webbrowser.open(self.account_access_link)
+
+    def _on_account_access_ready(self, access_server, detection: BrowserDetection):
+        if self._closing:
+            return
+        if access_server is not self.account_access_server:
+            # Ignore a delayed callback from a link that was reset.
+            return
+
+        browser = detection.session_browser
+        self.account_access_browser = browser
+        self.account_access_server = None
+        self.account_access_link = None
+        self.account_access_link_label.configure(text="Access confirmed for this session", text_color=THEME["success"])
+        self.account_access_copy_btn.configure(state="disabled")
+        self.account_access_btn.configure(text="🔒 Clear Account Access", command=self._clear_account_access)
+        if browser:
+            self.account_access_status_label.configure(
+                text=f"Connected ({detection.label}) — current session only",
+                text_color=THEME["success"],
+            )
+            self.status_label.configure(text=f"Account access confirmed through {detection.label}.")
+        else:
+            self.account_access_status_label.configure(
+                text=f"Detected {detection.label}; session unavailable",
+                text_color=THEME["yellow"],
+            )
+            self.status_label.configure(
+                text=f"{detection.label} was detected, but yt-dlp cannot read its protected browser session automatically.")
+
+    def _clear_account_access(self, silent: bool = False):
+        access_server = self.account_access_server
+        self.account_access_server = None
+        self.account_access_link = None
+        self.account_access_source = None
+        self.account_access_browser = None
+        if access_server:
+            access_server.stop()
+        if silent or not hasattr(self, "account_access_btn"):
+            return
+        self.account_access_link_label.configure(text="No active access link", text_color=THEME["text_dark"])
+        self.account_access_status_label.configure(text="Public only", text_color=THEME["cyan"])
+        self.account_access_btn.configure(text="🔐 Create Access Link", command=self._create_account_access_link)
+        self.account_access_copy_btn.configure(state="disabled")
+        self.status_label.configure(text="Account access cleared. Public-only extraction is active.")
 
     def _load_user_settings(self):
         """Load harmless convenience settings without making startup depend on them."""
@@ -1745,7 +1957,10 @@ class JaneConverterApp(ctk.CTk):
     def _save_user_settings(self, settings: Optional[Dict[str, Any]] = None):
         try:
             os.makedirs(os.path.dirname(CONFIG_PATH), exist_ok=True)
-            settings = settings or {}
+            settings = dict(settings or {})
+            # Browser access is deliberately session-only and must never be
+            # restored automatically from the portable settings file.
+            settings.pop("auth_browser", None)
             with open(CONFIG_PATH, "w", encoding="utf-8") as settings_file:
                 json.dump({
                     "destination": self.dest_entry.get().strip(),
@@ -1828,6 +2043,10 @@ class JaneConverterApp(ctk.CTk):
     # -------------------------------------------------------------
     def _on_source_text_changed(self, event=None):
         txt = self.src_entry.get().strip()
+        if self.account_access_source and txt != self.account_access_source:
+            # A link is bound to the source it was created for. Do not reuse
+            # an approved browser session for a different source accidentally.
+            self._clear_account_access()
         stype = identify_source_type(txt)
         is_playlist = is_playlist_url(txt)
 
@@ -1989,7 +2208,8 @@ class JaneConverterApp(ctk.CTk):
             try:
                 pdata = fetch_playlist_entries(
                     url=source,
-                    progress_callback=self._post_progress
+                    progress_callback=self._post_progress,
+                    auth_browser=self._active_auth_browser()
                 )
                 self._post_ui(lambda: self._on_playlist_fetched(pdata), priority=True)
             except Exception as e:
@@ -2092,6 +2312,7 @@ class JaneConverterApp(ctk.CTk):
             "save_metadata": save_metadata,
             "resolution": resolution,
             "content_category": self.category_menu.get(),
+            "auth_browser": self._active_auth_browser(),
         }
         self._save_user_settings(settings)
         return settings
@@ -2153,6 +2374,7 @@ class JaneConverterApp(ctk.CTk):
                 save_cover_art=settings["save_cover_art"],
                 save_metadata=settings["save_metadata"],
                 content_category=settings["content_category"],
+                auth_browser=settings["auth_browser"],
                 abort_event=self.abort_requested,
                 progress_callback=self._post_progress
             )
@@ -2252,6 +2474,7 @@ class JaneConverterApp(ctk.CTk):
                 save_cover_art=settings["save_cover_art"],
                 save_metadata=settings["save_metadata"],
                 content_category=settings["content_category"],
+                auth_browser=settings["auth_browser"],
                 abort_event=self.abort_requested,
                 progress_callback=self._post_progress
             )
@@ -2346,6 +2569,9 @@ class JaneConverterApp(ctk.CTk):
             messagebox.showinfo("Aborted", "Conversion was aborted by user.")
 
 def main():
+    if apply_pending_update(BASE_DIR):
+        os.execv(sys.executable, [sys.executable, __file__, *sys.argv[1:]])
+        return
     app = JaneConverterApp()
     app.mainloop()
 

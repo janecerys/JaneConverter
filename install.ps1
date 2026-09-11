@@ -67,8 +67,10 @@ Write-Host "[2/6] Checking FFmpeg engine..." -ForegroundColor Yellow
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     Write-Host "FFmpeg not found. Installing Gyan.FFmpeg via winget..." -ForegroundColor Cyan
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        & winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements
+        Invoke-Native { winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements } "FFmpeg installation"
         Refresh-EnvPath
+    } else {
+        Write-Host "ERROR: winget is unavailable, so FFmpeg could not be installed automatically." -ForegroundColor Red
     }
 }
 if (Get-Command ffmpeg -ErrorAction SilentlyContinue) {
@@ -89,6 +91,9 @@ if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
     Write-Host "Node.js not found. Installing OpenJS.NodeJS.LTS via winget..." -ForegroundColor Cyan
     if (Get-Command winget -ErrorAction SilentlyContinue) {
         & winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements
+        if ($LASTEXITCODE -ne 0) {
+            Write-Host "NOTICE: Node.js installation was not completed. You can continue without it, but some YouTube sources may fail." -ForegroundColor DarkGray
+        }
         Refresh-EnvPath
     }
 }
@@ -114,6 +119,7 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 Write-Host "-> All core packages verified successfully." -ForegroundColor Green
+Invoke-Native { & $venvPython -m pip check } "Private environment dependency check"
 
 # 6. Build Executable Launcher & Desktop Shortcut
 Write-Host "[6/6] Building native launcher and desktop shortcut..." -ForegroundColor Yellow

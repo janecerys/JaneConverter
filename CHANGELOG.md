@@ -3,6 +3,22 @@
 All notable changes to JaneConverter are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+- Native Rust/egui desktop frontend with a smoothly collapsible workspace sidebar, bounded console rendering, non-blocking conversion controls, library actions, and the temporary account-access handoff.
+- Optional browser-session authentication for authorized account-only media. JaneConverter can use an existing Chrome, Edge, Firefox, Brave, or Vivaldi session through yt-dlp without requesting passwords or writing cookie files.
+- Clear authentication failure guidance and CLI support via `--browser-session`.
+- Temporary localhost account-access handoff in the GUI. Users can create a one-time link, sign in through the host's default browser, and enable the existing browser session for the current app session without storing credentials or cookies.
+- Native Rust account-access URL validation and browser-session test coverage.
+- Rust frontend unit tests for browser detection, HTML escaping, and account-access URL safety.
+- Release-package validation that excludes Python bytecode, logs, caches, and runtime data.
+- CI coverage for the Rust frontend and Windows release archive contents.
+
+### Changed
+- Extractor update checks are read-only by default; installation now requires explicit permission and remains within the tested dependency range.
+- Staged update archives reject traversal, drive-qualified paths, alternate data streams, encrypted entries, excessive file counts, and oversized uncompressed payloads.
+
 ## [1.0.0] - 2026-09-07
 
 ### Fixed

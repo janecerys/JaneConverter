@@ -12,6 +12,7 @@ from typing import Optional, Dict, Any, Callable
 import json
 import requests
 import yt_dlp
+from engine.auth import normalize_browser_session, yt_dlp_cookie_option
 
 def is_url(path_or_url: str) -> bool:
     """Checks if input string is a valid HTTP/HTTPS URL."""
@@ -276,13 +277,15 @@ def fetch_media_stream(
     fallback_title: Optional[str] = None,
     fallback_artist: Optional[str] = None,
     abort_event: Optional[Any] = None,
-    progress_callback: Optional[Callable[[float, str], None]] = None
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+    auth_browser: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Fetches the media stream from a URL (or validates local file) into output_dir.
     Returns metadata dict with local path, title, artist, and media type.
     """
     os.makedirs(output_dir, exist_ok=True)
+    auth_browser = normalize_browser_session(auth_browser)
 
     last_report_time = [0.0]
 
@@ -389,6 +392,9 @@ def fetch_media_stream(
         "remote_components": ["ejs:github"],
         "progress_hooks": [progress_hook]
     }
+    cookie_option = yt_dlp_cookie_option(auth_browser)
+    if cookie_option:
+        ydl_opts["cookiesfrombrowser"] = cookie_option
 
     try:
         info = None
@@ -466,11 +472,19 @@ def fetch_media_stream(
                 "is_local": False
             }
     except Exception as e:
+        if auth_browser:
+            raise RuntimeError(
+                f"Authenticated stream extraction failed using your {auth_browser.title()} browser session. "
+                "The session may be expired, locked, or unable to access this content. "
+                "JaneConverter does not save your cookies. Try opening the link in that browser first, "
+                "then retry, or switch Account access back to Public only."
+            ) from e
         raise RuntimeError(f"Stream extraction failed: {str(e)}") from e
 
 def fetch_playlist_entries(
     url: str,
-    progress_callback: Optional[Callable[[float, str], None]] = None
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+    auth_browser: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Extracts metadata for all tracks or videos in a playlist without downloading media stream files.
@@ -482,6 +496,7 @@ def fetch_playlist_entries(
 
     source_type = identify_source_type(url)
     clean_url = url.strip()
+    auth_browser = normalize_browser_session(auth_browser)
 
     # 1. Spotify Playlist or Album via Embed Endpoint
     if source_type == "spotify":
@@ -567,6 +582,9 @@ def fetch_playlist_entries(
         "js_runtimes": {"node": {"path": None}},
         "remote_components": ["ejs:github"]
     }
+    cookie_option = yt_dlp_cookie_option(auth_browser)
+    if cookie_option:
+        ydl_opts["cookiesfrombrowser"] = cookie_option
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -623,4 +641,11 @@ def fetch_playlist_entries(
                 "entries": entries
             }
     except Exception as e:
+        if auth_browser:
+            raise RuntimeError(
+                f"Authenticated playlist extraction failed using your {auth_browser.title()} browser session. "
+                "The session may be expired, locked, or unable to access this playlist. "
+                "JaneConverter does not save your cookies. Try opening the playlist in that browser first, "
+                "then retry, or switch Account access back to Public only."
+            ) from e
         raise RuntimeError(f"Playlist extraction failed: {str(e)}") from e

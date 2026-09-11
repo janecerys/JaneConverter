@@ -257,7 +257,8 @@ def check_for_engine_updates(timeout_seconds: float = 3.0) -> Dict[str, Any]:
     }
 
 def update_engine(status_callback: Optional[Callable[[str], None]] = None,
-                  info: Optional[Dict[str, Any]] = None) -> bool:
+                  info: Optional[Dict[str, Any]] = None,
+                  allow_install: bool = False) -> bool:
     """
     Upgrades yt-dlp to the latest release via pip in the background, pinned to the
     exact version reported by PyPI. Pass a pre-fetched result from
@@ -268,6 +269,10 @@ def update_engine(status_callback: Optional[Callable[[str], None]] = None,
         if status_callback:
             status_callback(msg)
         print(f"[AutoUpdate] {msg}")
+
+    if not allow_install:
+        log("Extractor engine installation is disabled for read-only update checks.")
+        return False
 
     if info is None:
         log("Checking for real-time extractor engine updates...")
@@ -282,6 +287,14 @@ def update_engine(status_callback: Optional[Callable[[str], None]] = None,
         return False
 
     target_version = info["latest_version"]
+    try:
+        target_major = int(str(target_version).split(".", 1)[0])
+    except (TypeError, ValueError):
+        log(f"Extractor engine upgrade skipped: unsupported version '{target_version}'.")
+        return False
+    if target_major >= 2027:
+        log(f"Extractor engine upgrade skipped: v{target_version} is outside the tested dependency range.")
+        return False
     log(f"New engine release detected: v{target_version}. Upgrading now...")
 
     no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -323,7 +336,7 @@ def check_and_apply_all_updates(status_callback: Optional[Callable[[str], None]]
         engine_info = check_for_engine_updates()
         if engine_info.get("has_update") and auto_apply:
             log(f"Updating extractor engine from v{engine_info['current_version']} to v{engine_info['latest_version']}...")
-            if update_engine(status_callback=status_callback, info=engine_info):
+            if update_engine(status_callback=status_callback, info=engine_info, allow_install=True):
                 engine_updated = True
         elif engine_info.get("has_update"):
             log(f"Extractor engine update available: v{engine_info['current_version']} -> v{engine_info['latest_version']}.")

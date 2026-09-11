@@ -1,6 +1,6 @@
 # JaneConverter Backend & Release Audit
 
-**Audit date:** 2026-09-09  
+**Audit date:** 2026-09-11
 **Repository:** JaneConverter  
 **Review scope:** GUI/backend boundary, extraction, conversion, updates, filesystem behavior, packaging, tests, documentation, and consumer readiness.
 
@@ -8,9 +8,15 @@
 
 JaneConverter has a capable conversion core and a good first release foundation, but it is **not release-ready for broad consumer distribution yet**. It is suitable for an alpha/beta audience that can install Python, FFmpeg, and Node.js and tolerate occasional platform breakage.
 
+## Current implementation status — 2026-09-11
+
+The native Rust frontend, private Python environment, local-data default, bounded UI work, playlist organization, diagnostics, staged updates, and Windows ZIP/checksum workflow are now present in the working tree. The current engineering grade is **B- / 7.0** for a controlled beta. Official consumer release remains blocked by clean-machine installation and GUI acceptance testing, real long-running conversion/abort validation, signed artifacts, FFmpeg redistribution decisions, and final dependency/documentation review.
+
+Issue narratives below retain historical evidence from the original audit. Findings that describe the old Tk-only interface, global dependency installation, or immediate process exit should be read as baseline findings and are not claims about the current native frontend.
+
 ## Remediation update
 
-The current working tree implements the first release-hardening pass from this audit: progress and UI callbacks are coalesced and bounded, console rendering is batched and capped, library discovery runs off the Tk thread, shutdown no longer uses a hard process exit, source/category output routing is centralized, metadata has collision-safe folders and manifests, default runtime data is user-writable, setup uses a private `.venv`, source hostname matching is strict, and update checks no longer install or patch automatically. The remaining release gates are primarily clean-machine artifact validation, a true virtualized playlist control, staged/signed release updates, and Windows GUI smoke coverage.
+The current working tree implements the first release-hardening pass from this audit: progress and UI callbacks are coalesced and bounded, console rendering is batched and capped, library discovery runs off the Tk thread, shutdown no longer uses a hard process exit, source/category output routing is centralized, metadata has collision-safe folders and manifests, default runtime data is user-writable, setup uses a private `.venv`, source hostname matching is strict, and update checks no longer install or patch automatically. The next pass adds bounded/paginated playlist rendering, validated restart-time update staging, diagnostics, an uninstall script, and a reproducible Windows ZIP/checksum workflow. The remaining release gates are clean-machine validation, Windows GUI smoke coverage, and optional code signing.
 
 The reported extreme lag has a credible, code-level explanation:
 
@@ -33,15 +39,15 @@ The highest-value fix is to coalesce progress updates and batch console output b
 | Area | Grade | Assessment |
 |---|---:|---|
 | Conversion engine design | B- / 7.0 | Clear extraction/conversion split, solid FFmpeg argument construction, useful fallback behavior. |
-| Performance | D+ / 4.0 | The UI has unbounded progress/log backpressure and synchronous library scans. |
-| Correctness | B- / 6.5 | Core paths are thoughtfully handled, but output categorization and metadata collisions remain. |
-| Reliability | C+ / 5.5 | Abort and partial cleanup are present; shutdown, retries, and error reporting are incomplete. |
-| Security / supply chain | C / 5.0 | Subprocess arguments are mostly safe, but self-updating code/dependencies is high-risk. |
-| Consumer friendliness | C- / 4.5 | Setup is convenient when it works, but global installs, external prerequisites, and unclear errors create friction. |
-| Packaging / distribution | D+ / 4.0 | Portable source setup exists; there is no robust release artifact or isolated runtime. |
-| Tests / CI | B- / 6.5 | Good hermetic coverage and CI intent, but the UI and updater failure paths are under-tested. |
-| Documentation accuracy | C / 5.0 | README is detailed but has several stale claims and option-name mismatches. |
-| Overall release readiness | **C- / 5.0** | Promising beta, not a polished consumer release. |
+| Performance | B- / 6.8 | Native UI work and bounded queues reduce the original lag risk; stress validation remains. |
+| Correctness | B / 7.2 | Core paths, routing, metadata isolation, and Unicode handling are substantially hardened. |
+| Reliability | B- / 6.7 | Abort, cleanup, diagnostics, and staged updates exist; long-run validation remains. |
+| Security / supply chain | C+ / 6.0 | Temporary local access is constrained, but dependencies and unsigned updates remain trust risks. |
+| Consumer friendliness | C+ / 6.2 | Portable defaults and a native launcher help; external prerequisites still add friction. |
+| Packaging / distribution | C+ / 6.0 | Reproducible ZIP/checksum workflow exists; signing and clean-machine proof remain. |
+| Tests / CI | B- / 7.0 | Python suite is strong; native tests and GUI acceptance coverage are still growing. |
+| Documentation accuracy | C+ / 6.0 | README is largely current; historical audit and release claims still need reconciliation. |
+| Overall release readiness | **C+ / 6.2** | Strong beta/release-candidate foundation, not an official consumer release yet. |
 
 ## Strengths
 
@@ -147,7 +153,7 @@ Risks include partial updates, environment permission failures, dependency incom
 
 `install.ps1` installs Python packages globally, while `Program.cs` only checks a few hard-coded Python locations before falling back to `pythonw.exe` from PATH. A protected install directory or another Python installation can cause permission conflicts or import mismatches.
 
-Create and use a local `.venv`, install pinned dependencies there, and make the launcher resolve that interpreter. Keep application data in a writable user directory such as `%LOCALAPPDATA%` rather than beside the source/launcher.
+Create and use a local `.venv`, install pinned dependencies there, and make the launcher resolve that interpreter. The portable default now keeps application data beside JaneConverter to avoid unnecessary C: drive usage, with a writable per-user fallback for protected installations. Existing AppData data is merged without overwriting conflicts.
 
 ## Medium-priority findings
 

@@ -1,0 +1,10 @@
+[package]
+name = "janeconverter-native"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+eframe = "0.29"
+rand = "0.8"
+arboard = "3.6"
+rfd = "0.15"

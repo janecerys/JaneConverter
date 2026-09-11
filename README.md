@@ -21,6 +21,8 @@ The standard way to use JaneConverter is its modern dark-themed desktop studio a
 
 JaneConverter runs from a private Python environment with a native launcher executable (`JaneConverter.exe`) and an automated 1-click Windows setup script. Update checks are read-only and never patch the running installation silently.
 
+The Windows launcher prefers the native Rust desktop frontend for a responsive interface. The original Python interface remains available as a recovery fallback when the native executable is not present.
+
 ## What it does
 
 For each media link or local file, JaneConverter:
@@ -106,8 +108,9 @@ Launch JaneConverter from your Desktop shortcut or run `JaneConverter.exe`.
    - **EBU R128 Normalization**: Enable to automatically normalize tracks to -14 LUFS streaming broadcast loudness.
    - **Hardware Acceleration**: Automatically detects your host GPU and displays the active encoder (e.g. NVIDIA NVENC, AMD AMF, Intel Quick Sync, Apple VideoToolbox).
    - **Cover Art & Metadata**: Toggles for embedding cover artwork and exporting formatted production notes.
-3. **Destination Folder**: Choose where converted files are saved (defaults to JaneConverter's writable user data folder).
-4. **Convert & Abort**:
+3. **Destination Folder**: Choose where converted files are saved (defaults to the `converted` folder beside JaneConverter).
+4. **Account Access (optional)**: Click **Create Access Link** when you are authorized to view account-only media. Open the temporary link in the browser whose session you want to use, sign in normally if needed, and confirm access. JaneConverter detects the browser that opened the link and reads that browser session for the current app session. It never asks for your password or writes a cookie file.
+5. **Convert & Abort**:
    - Click **CONVERT MEDIA** to begin processing.
    - Click **Abort** at any time to immediately kill the FFmpeg process, stop downloads, and remove partial files.
    - Click **Open Folder** to reveal the export folder and select the most recently exported file in Windows Explorer.
@@ -135,13 +138,26 @@ When pasting a playlist or album URL (YouTube playlist, Spotify album or playlis
 - Displays automatic update checks for the underlying extractor engine.
 - Displays live CPU, RAM, and GPU telemetry in the top header.
 - Includes **Copy Logs** and **Clear** tools.
+- Includes **Diagnostics** to copy a safe version and dependency summary for support.
+
+### Authorized browser sessions
+
+Some services require an active account session for private playlists, age-restricted media, or other content the signed-in user is allowed to view. In the Converter tab, click **Create Access Link**. JaneConverter starts a temporary localhost page, copies the link, and opens it in the host's default browser. You may paste that link into any other browser, open the source link there, sign in normally if needed, then click **I'm signed in — confirm access**.
+
+After confirmation, JaneConverter passes that browser's existing session directly to yt-dlp for the current app session. The localhost server and access link expire when confirmed or when JaneConverter closes. JaneConverter does not request your password, export a cookies file, or upload session data. Browser sessions do not bypass privacy settings, permissions, DRM, or expired content; if the account cannot access the media, JaneConverter will stop and explain the failure. The account-access link cannot make unsupported browsers or services work automatically.
+
+## Updates, releases, and uninstalling
+
+JaneConverter checks for updates without modifying the running installation. Published ZIP packages include a SHA-256 checksum and can be staged for application on the next restart. The application never replaces its own files while a conversion is running.
+
+To remove JaneConverter's private environment and user data, close the app and run `uninstall.ps1`. Exported media is included in the removal, so copy anything you want to keep first.
 
 ## Playlist Folder Organization
 
 When exporting playlists or albums, JaneConverter keeps media players and file explorers clean and uncluttered:
 
 ```text
-%LOCALAPPDATA%\JaneConverter\converted\Music\<Source>\<Playlist_Name>\
+JaneConverter\converted\Music\<Source>\<Playlist_Name>\
 ├── 1. First Track.mp3
 ├── 2. Second Track.mp3
 ├── 3. Third Track.mp3
@@ -198,7 +214,8 @@ python run_converter.py --source "https://open.spotify.com/album/ALBUM_ID" --for
 | `--no-cover-art` | Skip cover art extraction and embedding | Disabled |
 | `--no-metadata` | Skip writing credits and metadata `.txt` files | Disabled |
 | `--category` | Library category (`Music`, `Video`, or `Miscellaneous`) | Source-based |
-| `--output PATH` | Directory to save exported files | User data `converted/` |
+| `--browser-session` | Existing browser session (`none`, `chrome`, `edge`, `firefox`, `brave`, `vivaldi`) | `none` |
+| `--output PATH` | Directory to save exported files | JaneConverter `converted/` |
 | `--no-update` | Skip real-time extractor engine update check | Disabled |
 | `--version` | Print the application version and exit | - |
 
@@ -221,7 +238,7 @@ python run_converter.py --help
 - **Local files stay local**: Local conversion does not upload media. Startup update checks are network requests and can be disabled with `--no-update`.
 - **Zero API keys required**: Spotify metadata extraction uses public catalog endpoints and OpenGraph information. No Spotify account, developer keys, or logins are needed.
 - **Direct stream retrieval**: Media streams are fetched directly from host servers without passing through third-party proxy services.
-- **Update checks are read-only**: On launch, JaneConverter may check PyPI and the application repository for available updates. It does not install packages, pull Git changes, or replace the launcher automatically.
+- **Update checks are read-only**: On launch, JaneConverter may check PyPI and the application repository for available updates. It does not install packages, pull Git changes, or replace the launcher automatically. Extractor upgrades are kept within the tested dependency range and should be delivered through a verified release process.
 
 ## Troubleshooting
 
@@ -252,7 +269,7 @@ python -m pip install -r requirements-dev.txt
 python -m pytest -v tests/
 ```
 
-The 58 hermetic tests run offline in seconds (FFmpeg required for the end-to-end transcode test). Eight additional live-network tests are opt-in: `python -m pytest -m online -v`. Continuous integration runs both suites on Windows and Ubuntu via GitHub Actions on every push.
+The offline suite runs in seconds (FFmpeg is required for the end-to-end transcode test). Eight additional live-network tests are opt-in: `python -m pytest -m online -v`. Continuous integration runs both suites on Windows and Ubuntu via GitHub Actions on every push.
 
 ## Versioning
 

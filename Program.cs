@@ -13,6 +13,23 @@ namespace JaneConverterLauncher
             try
             {
                 string baseDir = AppDomain.CurrentDomain.BaseDirectory;
+                string nativeUiPath = Path.Combine(baseDir, "JaneConverterNative.exe");
+
+                // Prefer the native Rust frontend. Keep the Python GUI as a
+                // recovery fallback for source checkouts and older packages.
+                if (File.Exists(nativeUiPath))
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = nativeUiPath,
+                        WorkingDirectory = baseDir,
+                        UseShellExecute = true,
+                        CreateNoWindow = true,
+                        WindowStyle = ProcessWindowStyle.Hidden
+                    });
+                    return;
+                }
+
                 string scriptPath = Path.Combine(baseDir, "gui.py");
 
                 if (!File.Exists(scriptPath))

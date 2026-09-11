@@ -15,6 +15,12 @@ from typing import Optional, Dict, Any, Callable
 
 SUPPORTED_AUDIO_FORMATS = {"mp3", "wav", "flac", "aac", "m4a", "ogg"}
 SUPPORTED_VIDEO_FORMATS = {"mp4", "mkv", "webm", "mov", "gif"}
+VIDEO_QUALITY_SETTINGS = {
+    "best": {"crf": 18, "audio_bitrate": "192k", "gif_fps": 30},
+    "high": {"crf": 20, "audio_bitrate": "160k", "gif_fps": 24},
+    "balanced": {"crf": 23, "audio_bitrate": "128k", "gif_fps": 15},
+    "small": {"crf": 28, "audio_bitrate": "96k", "gif_fps": 10},
+}
 
 # Industry standard EBU R128 loudness normalization targets
 LOUDNORM_FILTER = "loudnorm=I=-14:TP=-1.5:LRA=11"
@@ -394,15 +400,21 @@ def build_ffmpeg_args(
             if can_embed_art:
                 cmd.extend(["-c:v", "copy", "-disposition:v", "attached_pic"])
         elif target_format == "ogg":
-            cmd.extend(["-c:a", "libvorbis", "-q:a", "7"])
+            ogg_quality = {"q10": "10", "q8": "8", "q6": "6", "q4": "4"}.get(
+                (bitrate or "").lower(), "7"
+            )
+            cmd.extend(["-c:a", "libvorbis", "-q:a", ogg_quality])
 
     # 2. Video Conversion
     elif target_format in SUPPORTED_VIDEO_FORMATS:
+        video_quality = VIDEO_QUALITY_SETTINGS.get(
+            (bitrate or "").lower(), VIDEO_QUALITY_SETTINGS["balanced"]
+        )
         if target_format == "gif":
             cmd.append("-an")
             cmd.extend(["-loop", "0"])
 
-            gif_fps = fps or 15
+            gif_fps = fps or video_quality["gif_fps"]
             scale_filter = ""
             res_lower = (resolution or "").lower()
             if "1080" in res_lower:
@@ -443,20 +455,29 @@ def build_ffmpeg_args(
                 cmd.extend(["-af", ",".join(audio_filters)])
 
             if target_format == "webm":
-                cmd.extend(["-c:v", "libvpx-vp9", "-crf", "30", "-b:v", "0", "-c:a", "libopus", "-b:a", "160k"])
+                cmd.extend([
+                    "-c:v", "libvpx-vp9", "-crf", str(video_quality["crf"]),
+                    "-b:v", "0", "-c:a", "libopus", "-b:a", video_quality["audio_bitrate"]
+                ])
             else:
                 if enc_spec is not None:
                     if enc_spec["encoder"] == "h264_vaapi":
                         # Software decode: upload frames to the VAAPI render device before encoding
                         video_filters.append("format=nv12")
                         video_filters.append("hwupload")
-                    cmd.extend(enc_spec["args"])
+                    encoder_args = list(enc_spec["args"])
+                    if enc_spec["encoder"] == "h264_nvenc" and "-cq" in encoder_args:
+                        encoder_args[encoder_args.index("-cq") + 1] = str(video_quality["crf"])
+                    cmd.extend(encoder_args)
                 else:
-                    cmd.extend(["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p"])
+                    cmd.extend([
+                        "-c:v", "libx264", "-preset", "veryfast",
+                        "-crf", str(video_quality["crf"]), "-pix_fmt", "yuv420p"
+                    ])
 
                 cmd.extend([
                     "-c:a", "aac",
-                    "-b:a", "192k"
+                    "-b:a", video_quality["audio_bitrate"]
                 ])
 
             if video_filters:
