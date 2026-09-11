@@ -14,6 +14,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Rust frontend unit tests for browser detection, HTML escaping, and account-access URL safety.
 - Release-package validation that excludes Python bytecode, logs, caches, and runtime data.
 - CI coverage for the Rust frontend and Windows release archive contents.
+- Reversible interface preference with direct Rust and legacy Python launcher shortcuts.
 
 ### Changed
 - Extractor update checks are read-only by default; installation now requires explicit permission and remains within the tested dependency range.

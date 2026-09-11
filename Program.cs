@@ -8,16 +8,20 @@ namespace JaneConverterLauncher
     static class Program
     {
         [STAThread]
-        static void Main()
+        static void Main(string[] args)
         {
             try
             {
                 string baseDir = AppDomain.CurrentDomain.BaseDirectory;
                 string nativeUiPath = Path.Combine(baseDir, "JaneConverterNative.exe");
+                bool forceLegacy = HasArgument(args, "--legacy-python");
+                bool forceRust = HasArgument(args, "--rust");
+                string preference = ReadFrontendPreference(baseDir);
 
-                // Prefer the native Rust frontend. Keep the Python GUI as a
-                // recovery fallback for source checkouts and older packages.
-                if (File.Exists(nativeUiPath))
+                // Rust is the default. The preference and explicit command-line
+                // switches keep the original Python interface available as a
+                // reversible recovery path.
+                if (!forceLegacy && (forceRust || !string.Equals(preference, "python", StringComparison.OrdinalIgnoreCase)) && File.Exists(nativeUiPath))
                 {
                     Process.Start(new ProcessStartInfo
                     {
@@ -98,6 +102,51 @@ namespace JaneConverterLauncher
                     MessageBoxIcon.Error
                 );
             }
+        }
+
+        static bool HasArgument(string[] args, string expected)
+        {
+            foreach (string arg in args ?? new string[0])
+            {
+                if (string.Equals(arg, expected, StringComparison.OrdinalIgnoreCase))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        static string ReadFrontendPreference(string baseDir)
+        {
+            string[] candidates = new string[]
+            {
+                Path.Combine(baseDir, "frontend.preference"),
+                Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                    "JaneConverter",
+                    "frontend.preference")
+            };
+            foreach (string candidate in candidates)
+            {
+                try
+                {
+                    if (!File.Exists(candidate))
+                    {
+                        continue;
+                    }
+                    string value = File.ReadAllText(candidate).Trim();
+                    if (string.Equals(value, "python", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(value, "rust", StringComparison.OrdinalIgnoreCase))
+                    {
+                        return value;
+                    }
+                }
+                catch (IOException)
+                {
+                    // A locked preference must never prevent the application from launching.
+                }
+            }
+            return "rust";
         }
     }
 }

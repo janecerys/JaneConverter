@@ -160,6 +160,23 @@ try {
     $sc.Description = "JaneConverter - Universal Media Studio"
     $sc.Save()
     Write-Host "-> Created Desktop shortcut: JaneConverter.lnk" -ForegroundColor Green
+
+    if ($buildSuccess -and (Test-Path "$scriptDir\JaneConverter.exe")) {
+        foreach ($variant in @(
+            @{ Name = "JaneConverter Legacy.lnk"; Arguments = "--legacy-python"; Description = "JaneConverter - Original Python interface" },
+            @{ Name = "JaneConverter Rust.lnk"; Arguments = "--rust"; Description = "JaneConverter - Native Rust interface" }
+        )) {
+            $variantShortcut = Join-Path $desktopPath $variant.Name
+            $variantSc = $wsh.CreateShortcut($variantShortcut)
+            $variantSc.TargetPath = "$scriptDir\JaneConverter.exe"
+            $variantSc.Arguments = $variant.Arguments
+            $variantSc.WorkingDirectory = $scriptDir
+            $variantSc.IconLocation = "$scriptDir\assets\icon.ico"
+            $variantSc.Description = $variant.Description
+            $variantSc.Save()
+        }
+        Write-Host "-> Created Rust and Legacy Python interface shortcuts." -ForegroundColor Green
+    }
 } catch {
     Write-Host "Notice: Could not write desktop shortcut: $_" -ForegroundColor DarkGray
 }

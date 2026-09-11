@@ -60,7 +60,7 @@ from engine.updater import (
     check_and_apply_all_updates
 )
 from engine.events import CoalescingCallbackQueue, BoundedLogQueue
-from engine.paths import DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR, CONFIG_PATH
+from engine.paths import DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR, CONFIG_PATH, FRONTEND_PREFERENCE_PATH
 from engine.auth import (
     BrowserDetection,
 )
@@ -923,6 +923,21 @@ class JaneConverterApp(ctk.CTk):
 
         ctk.CTkFrame(self.sidebar, height=1, fg_color=THEME["card_border"]).pack(fill="x", padx=14, pady=(14, 10))
 
+        self.interface_btn = ctk.CTkButton(
+            self.sidebar,
+            text="⚙ Use Rust UI Next Launch",
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            fg_color=THEME["card_inner"],
+            hover_color=THEME["card_border_glow"],
+            border_width=1,
+            border_color=THEME["card_border"],
+            text_color=THEME["text_primary"],
+            height=30,
+            corner_radius=8,
+            command=self._use_rust_interface_next_launch,
+        )
+        self.interface_btn.pack(side="bottom", fill="x", padx=12, pady=(0, 8))
+
         self.update_btn = ctk.CTkButton(
             self.sidebar,
             text="🔄 Check for Updates",
@@ -996,6 +1011,10 @@ class JaneConverterApp(ctk.CTk):
             self.update_btn.configure(text="⏳")
         elif not compact and self.update_btn.cget("state") != "disabled":
             self.update_btn.configure(text="🔄 Check for Updates")
+        self.interface_btn.configure(
+            text="⚙" if compact else "⚙ Use Rust UI Next Launch",
+            width=32 if compact else 0,
+        )
 
     # -------------------------------------------------------------
     # 3. TAB 1: STUDIO / CONVERTER
@@ -1976,6 +1995,22 @@ class JaneConverterApp(ctk.CTk):
                 }, settings_file, indent=2)
         except OSError:
             pass
+
+    def _use_rust_interface_next_launch(self):
+        try:
+            os.makedirs(os.path.dirname(FRONTEND_PREFERENCE_PATH), exist_ok=True)
+            with open(FRONTEND_PREFERENCE_PATH, "w", encoding="utf-8") as preference_file:
+                preference_file.write("rust\n")
+            self.status_label.configure(text="Rust interface selected for the next launch.")
+            messagebox.showinfo(
+                "Interface Preference",
+                "The Rust interface will open next time JaneConverter starts.",
+            )
+        except OSError as exc:
+            messagebox.showerror(
+                "Interface Preference",
+                f"Could not save the interface preference.\n\n{exc}",
+            )
 
     # -------------------------------------------------------------
     # 6. HARDWARE TELEMETRY LOOP

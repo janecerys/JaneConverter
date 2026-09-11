@@ -23,6 +23,10 @@ JaneConverter runs from a private Python environment with a native launcher exec
 
 The Windows launcher prefers the native Rust desktop frontend for a responsive interface. The original Python interface remains available as a recovery fallback when the native executable is not present.
 
+### Interface preference
+
+JaneConverter opens the Rust interface by default. From the Rust header, open **Interface** and choose **Use legacy Python interface** if you need the original CustomTkinter layout; restart JaneConverter to apply the choice. The legacy Python interface includes a **Use Rust UI Next Launch** button so the preference can be changed back. The installer also creates direct **JaneConverter Legacy** and **JaneConverter Rust** shortcuts. Both interfaces use the same conversion backend.
+
 ## What it does
 
 For each media link or local file, JaneConverter:

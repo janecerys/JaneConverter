@@ -3,7 +3,7 @@
 use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
 use rand::{distributions::Alphanumeric, Rng};
 use std::fs;
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -301,11 +301,14 @@ struct JaneConverterApp {
     pending_delete: Option<PathBuf>,
     logo_texture: Option<egui::TextureHandle>,
     theme_initialized: bool,
+    frontend_preference: String,
+    show_interface_settings: bool,
 }
 
 impl JaneConverterApp {
     fn new(root: PathBuf) -> Self {
         let (access_tx, access_events) = mpsc::channel();
+        let frontend_preference = read_frontend_preference(&root);
         Self {
             output_dir: root.join("converted").display().to_string(),
             root: root.clone(),
@@ -340,6 +343,8 @@ impl JaneConverterApp {
             pending_delete: None,
             logo_texture: None,
             theme_initialized: false,
+            frontend_preference,
+            show_interface_settings: false,
         }
     }
 
@@ -639,6 +644,25 @@ impl JaneConverterApp {
             }
             let _ = tx.send(Event::UpdateFinished);
         });
+    }
+
+    fn set_frontend_preference(&mut self, preference: &str) {
+        match write_frontend_preference(&self.root, preference) {
+            Ok(_) => {
+                self.frontend_preference = preference.to_owned();
+                self.status = format!(
+                    "{} interface selected for the next launch",
+                    if preference == "python" {
+                        "Legacy Python"
+                    } else {
+                        "Rust"
+                    }
+                );
+            }
+            Err(error) => {
+                self.status = format!("Could not save interface preference: {error}");
+            }
+        }
     }
 
     fn refresh_library(&mut self) {
@@ -1138,6 +1162,11 @@ impl eframe::App for JaneConverterApp {
                     }
                     ui.heading(RichText::new("JaneConverter").color(TEXT));
                     ui.label(RichText::new("Universal Media Studio").color(MAGENTA));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button("⚙ Interface").clicked() {
+                            self.show_interface_settings = true;
+                        }
+                    });
                 });
             });
         if self.page == Page::Converter {
@@ -1165,6 +1194,41 @@ impl eframe::App for JaneConverterApp {
                         Page::Library => self.render_library(ui),
                     });
             });
+        if self.show_interface_settings {
+            let mut window_open = self.show_interface_settings;
+            egui::Window::new("Interface preference")
+                .open(&mut window_open)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.label("Choose which interface opens from JaneConverter.exe next time.");
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new(format!(
+                            "Current preference: {}",
+                            if self.frontend_preference == "python" {
+                                "Legacy Python"
+                            } else {
+                                "Rust"
+                            }
+                        ))
+                        .color(BLUE),
+                    );
+                    ui.add_space(8.0);
+                    if ui.button("Use Rust interface").clicked() {
+                        self.set_frontend_preference("rust");
+                    }
+                    if ui.button("Use legacy Python interface").clicked() {
+                        self.set_frontend_preference("python");
+                    }
+                    ui.add_space(6.0);
+                    ui.label(
+                        RichText::new("Restart JaneConverter to apply the preference.")
+                            .small()
+                            .color(MUTED),
+                    );
+                });
+            self.show_interface_settings = window_open;
+        }
         if self.running || self.update_checking || self.access_server.is_some() {
             ctx.request_repaint_after(Duration::from_millis(80));
         }
@@ -1444,6 +1508,52 @@ fn find_python(root: &Path) -> String {
     }
     "python.exe".to_owned()
 }
+
+fn frontend_preference_candidates(root: &Path) -> [PathBuf; 2] {
+    [
+        root.join("frontend.preference"),
+        std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| root.to_owned())
+            .join("JaneConverter")
+            .join("frontend.preference"),
+    ]
+}
+
+fn read_frontend_preference(root: &Path) -> String {
+    for candidate in frontend_preference_candidates(root) {
+        if let Ok(value) = fs::read_to_string(candidate) {
+            let value = value.trim().to_ascii_lowercase();
+            if value == "python" || value == "rust" {
+                return value;
+            }
+        }
+    }
+    "rust".to_owned()
+}
+
+fn write_frontend_preference(root: &Path, preference: &str) -> io::Result<PathBuf> {
+    let mut last_error = None;
+    for candidate in frontend_preference_candidates(root) {
+        if let Some(parent) = candidate.parent() {
+            if let Err(error) = fs::create_dir_all(parent) {
+                last_error = Some(error);
+                continue;
+            }
+        }
+        match fs::write(&candidate, format!("{preference}\n")) {
+            Ok(()) => return Ok(candidate),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "no writable interface-preference location was available",
+        )
+    }))
+}
+
 fn app_root() -> PathBuf {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
     if let Some(parent) = exe.parent() {
