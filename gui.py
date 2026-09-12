@@ -1690,7 +1690,7 @@ class JaneConverterApp(ctk.CTk):
         self._open_explorer_location(file_path, select_file=True)
 
     def _open_explorer_location(self, target_path: str, select_file: bool = False):
-        """Open a file or folder in Windows Explorer without losing the target path."""
+        """Open a file or folder in the host's file manager."""
         if not target_path:
             return
         target_path = os.path.normpath(os.path.abspath(target_path))
@@ -1700,22 +1700,37 @@ class JaneConverterApp(ctk.CTk):
 
         try:
             if os.path.isdir(target_path) or not select_file:
-                os.startfile(target_path)
+                if os.name == "nt":
+                    os.startfile(target_path)
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", target_path], close_fds=True)
+                else:
+                    subprocess.Popen(["xdg-open", target_path], close_fds=True)
                 return
 
-            explorer_exe = os.path.join(
-                os.environ.get("WINDIR", r"C:\\Windows"), "explorer.exe"
-            )
-            # Explorer's /select syntax must keep the path in the same command
-            # argument, especially when the export path contains spaces.
-            subprocess.Popen(
-                f'"{explorer_exe}" /select,"{target_path}"',
-                close_fds=True
-            )
+            if os.name == "nt":
+                explorer_exe = os.path.join(
+                    os.environ.get("WINDIR", r"C:\\Windows"), "explorer.exe"
+                )
+                # Explorer's /select syntax must keep the path in the same
+                # command argument, especially when it contains spaces.
+                subprocess.Popen(
+                    f'"{explorer_exe}" /select,"{target_path}"',
+                    close_fds=True
+                )
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", "-R", target_path], close_fds=True)
+            else:
+                subprocess.Popen(["xdg-open", os.path.dirname(target_path)], close_fds=True)
         except Exception:
             try:
                 fallback = os.path.dirname(target_path) if os.path.isfile(target_path) else target_path
-                os.startfile(fallback)
+                if os.name == "nt":
+                    os.startfile(fallback)
+                elif sys.platform == "darwin":
+                    subprocess.Popen(["open", fallback], close_fds=True)
+                else:
+                    subprocess.Popen(["xdg-open", fallback], close_fds=True)
             except Exception as e:
                 self.status_label.configure(text=f"Could not open file location: {e}")
 

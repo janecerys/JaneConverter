@@ -1860,6 +1860,15 @@ fn open_in_explorer(path: &Path) {
         let argument = explorer_selection_argument(&target);
         let _ = Command::new(explorer).raw_arg(argument).spawn();
     }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = Command::new("open").arg("-R").arg(path).spawn();
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let folder = path.parent().unwrap_or(path);
+        let _ = Command::new("xdg-open").arg(folder).spawn();
+    }
 }
 
 fn explorer_selection_argument(path: &Path) -> String {
@@ -1870,6 +1879,14 @@ fn open_folder_in_explorer(path: &Path) {
     {
         let _ = Command::new("explorer.exe").arg(path).spawn();
     }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = Command::new("open").arg(path).spawn();
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        let _ = Command::new("xdg-open").arg(path).spawn();
+    }
 }
 fn open_url(url: &str) {
     #[cfg(target_os = "windows")]
@@ -1878,7 +1895,11 @@ fn open_url(url: &str) {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = Command::new("xdg-open").arg(url).spawn();
+        #[cfg(target_os = "macos")]
+        let opener = "open";
+        #[cfg(all(unix, not(target_os = "macos")))]
+        let opener = "xdg-open";
+        let _ = Command::new(opener).arg(url).spawn();
     }
 }
 fn terminate_process_tree(child: &mut Child) {
@@ -1907,6 +1928,7 @@ fn spawn_reader<R: Read + Send + 'static>(reader: R, tx: EventSender) {
     });
 }
 fn find_python(root: &Path) -> String {
+    #[cfg(target_os = "windows")]
     for candidate in [
         root.join(".venv/Scripts/python.exe"),
         root.join("venv/Scripts/python.exe"),
@@ -1915,7 +1937,23 @@ fn find_python(root: &Path) -> String {
             return candidate.display().to_string();
         }
     }
-    "python.exe".to_owned()
+    #[cfg(not(target_os = "windows"))]
+    for candidate in [
+        root.join(".venv/bin/python3"),
+        root.join("venv/bin/python3"),
+    ] {
+        if candidate.exists() {
+            return candidate.display().to_string();
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        "python.exe".to_owned()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        "python3".to_owned()
+    }
 }
 
 fn read_native_settings(root: &Path) -> HashMap<String, String> {

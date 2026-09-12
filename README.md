@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011-blue?style=flat-square" alt="Platform" />
+  <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20macOS%20%7C%20Linux-blue?style=flat-square" alt="Platform" />
   <img src="https://img.shields.io/badge/Python-3.10%2B-blueviolet?style=flat-square" alt="Python" />
   <img src="https://img.shields.io/badge/Acceleration-Universal%20GPU%20(NVENC%20%2F%20AMF%20%2F%20QSV)-success?style=flat-square" alt="Hardware Acceleration" />
   <img src="https://img.shields.io/badge/Audio-24--bit%20WAV%20%7C%20FLAC%20%7C%20320k%20MP3-orange?style=flat-square" alt="Audio" />
@@ -19,9 +19,9 @@ JaneConverter downloads media from virtually any online source, matches high-res
 
 The standard way to use JaneConverter is its modern dark-themed desktop studio application. A complete command-line interface is also available for automated workflows and terminal users.
 
-JaneConverter runs from a private Python environment with a native launcher executable (`JaneConverter.exe`) and an automated 1-click Windows setup script. Update checks are read-only; a verified staged package is applied by a short-lived restart helper before the next launch.
+JaneConverter runs from a private Python environment with an optional native launcher and automated setup scripts for Windows, macOS, and Linux. Update checks are read-only; a verified staged package is applied by a short-lived restart helper before the next launch.
 
-The Windows launcher prefers the native Rust desktop frontend for a responsive interface. The original Python interface remains available as a recovery fallback when the native executable is not present or when you select it in Interface settings.
+On Windows, the launcher prefers the native Rust desktop frontend for a responsive interface. On macOS and Linux, use `run_converter.sh`; it prefers a locally built Rust frontend and falls back to the original Python interface. The original Python interface remains available as a recovery fallback on every supported platform.
 
 ### Interface preference
 
@@ -41,11 +41,13 @@ For each media link or local file, JaneConverter:
 
 ## Before you install
 
+Windows is the officially packaged and validated release platform. macOS and Linux are experimental/community validation targets until clean-machine testing and signed distribution packages are available.
+
 You need:
 
-- A 64-bit computer running **Windows 10** or **Windows 11**.
-- **Python 3.10 or newer** (automatically verified and installed by `setup.bat`).
-- **FFmpeg** with `ffprobe` (automatically verified and installed by `setup.bat`).
+- A 64-bit computer running **Windows 10/11**, **macOS 12 or newer**, or a modern 64-bit Linux distribution.
+- **Python 3.10 or newer**. Windows setup can install it; macOS/Linux setup expects `python3` to already be installed.
+- **FFmpeg** with `ffprobe`. Windows setup can install it; macOS/Linux setup expects it to already be installed.
 - Available disk space for downloaded media and high-resolution audio exports.
 
 Hardware acceleration:
@@ -117,7 +119,19 @@ Launch JaneConverter from your Desktop shortcut or run `JaneConverter.exe`.
 5. **Convert & Abort**:
    - Click **CONVERT MEDIA** to begin processing.
    - Click **Abort** at any time to immediately kill the FFmpeg process, stop downloads, and remove partial files.
-   - Click **Open Folder** to reveal the export folder and select the most recently exported file in Windows Explorer.
+   - Click **Open Folder** to reveal the export folder and select the most recently exported file in Windows Explorer, Finder, or the system file manager.
+
+### macOS and Linux (experimental)
+
+Install Python 3.10+, FFmpeg with `ffprobe`, and optionally Rust/Cargo for the native frontend. From the JaneConverter folder, run:
+
+```bash
+chmod +x install.sh run_converter.sh uninstall.sh
+./install.sh
+./run_converter.sh
+```
+
+The Unix launcher uses the native Rust frontend when it is available and otherwise starts the legacy Python interface. Finder or the default Linux file manager is used for **Open Folder** actions. Hardware acceleration depends on the FFmpeg build and graphics drivers available on the host.
 
 ### 2. Playlist Track Selector
 
@@ -155,7 +169,7 @@ After confirmation, JaneConverter passes that browser's existing session directl
 
 JaneConverter checks for updates without modifying the running installation. Published ZIP packages include a SHA-256 checksum and can be staged for application on the next restart. A short-lived helper waits for the launcher to exit before applying staged files, so the application never replaces files that it still has open.
 
-To remove JaneConverter's private environment and user data, close the app and run `uninstall.ps1`. Exported media is included in the removal, so copy anything you want to keep first.
+To remove JaneConverter's private environment and user data, close the app and run `uninstall.ps1` on Windows or `./uninstall.sh` on macOS/Linux. Exported media is included in the removal, so copy anything you want to keep first.
 
 ## Playlist Folder Organization
 
@@ -249,13 +263,11 @@ python run_converter.py --help
 
 ### FFmpeg was not found
 
-If FFmpeg is not detected in your system PATH, you can either:
-1. Run `winget install Gyan.FFmpeg` in PowerShell, then restart your terminal.
-2. Or download a static build of `ffmpeg.exe` from [ffmpeg.org](https://ffmpeg.org/) and place `ffmpeg.exe` directly inside the `JaneConverter` folder. JaneConverter will discover it automatically.
+If FFmpeg is not detected in your system PATH, install it with your operating system's package manager, then restart your terminal. On Windows, use `winget install Gyan.FFmpeg`; on macOS, use `brew install ffmpeg`; on Debian/Ubuntu, use `sudo apt install ffmpeg`. JaneConverter also discovers a local Windows `ffmpeg.exe` build placed beside the application.
 
 ### Python runtime was not found
 
-Run `.\setup.bat` in the JaneConverter folder. It will detect your missing runtime and install Python automatically via Winget. Alternatively, install Python 3.10+ from [python.org](https://www.python.org/downloads/) and make sure to check **Add Python to PATH** during installation.
+Run `.\setup.bat` in the JaneConverter folder on Windows, or `./install.sh` on macOS/Linux. Alternatively, install Python 3.10+ from [python.org](https://www.python.org/downloads/) or your operating system package manager.
 
 ### Stream extraction fails or YouTube throttles
 
@@ -274,7 +286,7 @@ python -m pip install -r requirements-dev.txt
 python -m pytest -v tests/
 ```
 
-The offline suite runs in seconds (FFmpeg is required for the end-to-end transcode test). Eight additional live-network tests are opt-in: `python -m pytest -m online -v`. Continuous integration runs the hermetic suite on Windows and Ubuntu; the live-network suite is available through a deliberate workflow dispatch.
+The offline suite runs in seconds (FFmpeg is required for the end-to-end transcode test). Eight additional live-network tests are opt-in: `python -m pytest -m online -v`. Continuous integration runs the hermetic suite on Windows, Ubuntu, and macOS; the live-network suite is available through a deliberate workflow dispatch.
 
 ## Versioning
 

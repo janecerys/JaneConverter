@@ -21,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Updated release packaging and documentation for the inline live console, playlist selection, supported formats, and restart-safe updates.
 
 ### Added
+- Experimental macOS/Linux launch scripts, file-manager integration, and CI coverage.
 - Native Rust/egui desktop frontend with a smoothly collapsible workspace sidebar, bounded console rendering, non-blocking conversion controls, library actions, and the temporary account-access handoff.
 - Optional browser-session authentication for authorized account-only media. JaneConverter can use an existing Chrome, Edge, Firefox, Brave, or Vivaldi session through yt-dlp without requesting passwords or writing cookie files.
 - Clear authentication failure guidance and CLI support via `--browser-session`.
