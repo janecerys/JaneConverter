@@ -1849,10 +1849,21 @@ fn collect_library_entries(root: &Path, output: &mut Vec<LibraryEntry>) {
 fn open_in_explorer(path: &Path) {
     #[cfg(target_os = "windows")]
     {
-        let _ = Command::new("explorer.exe")
-            .arg(format!("/select,{}", path.display()))
-            .spawn();
+        let target = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let explorer = std::env::var_os("WINDIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(r"C:\Windows"))
+            .join("explorer.exe");
+        // Explorer expects /select,"full path" as one raw command-line
+        // argument. Passing an unquoted path makes it truncate at spaces and
+        // can fall back to the user's Documents folder.
+        let argument = explorer_selection_argument(&target);
+        let _ = Command::new(explorer).raw_arg(argument).spawn();
     }
+}
+
+fn explorer_selection_argument(path: &Path) -> String {
+    format!("/select,\"{}\"", path.display())
 }
 fn open_folder_in_explorer(path: &Path) {
     #[cfg(target_os = "windows")]
@@ -2014,7 +2025,10 @@ fn main() -> eframe::Result {
 
 #[cfg(test)]
 mod tests {
-    use super::{detect_browser, html_escape, is_supported_source_url, parse_playlist_listing};
+    use super::{
+        detect_browser, explorer_selection_argument, html_escape, is_supported_source_url,
+        parse_playlist_listing,
+    };
 
     #[test]
     fn detects_known_browser_brands_before_generic_chromium_markers() {
@@ -2055,5 +2069,15 @@ mod tests {
         assert_eq!(title, "編集用素材");
         assert_eq!(items[0].index, 2);
         assert_eq!(items[0].title, "日本語のタイトル");
+    }
+
+    #[test]
+    fn explorer_selection_keeps_paths_with_spaces_together() {
+        assert_eq!(
+            explorer_selection_argument(std::path::Path::new(
+                r"D:\Documents\GitHub Repo\JaneConverter\converted\file.mp4",
+            )),
+            r#"/select,"D:\Documents\GitHub Repo\JaneConverter\converted\file.mp4""#
+        );
     }
 }
