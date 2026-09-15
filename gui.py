@@ -1169,6 +1169,18 @@ class JaneConverterApp(ctk.CTk):
         )
         self.account_access_copy_btn.pack(side="left")
 
+        self.source_notes_btn = ctk.CTkButton(
+            src_card,
+            text="ⓘ Source Notes & Common Failures",
+            height=28,
+            fg_color="transparent",
+            hover_color=THEME["card_border_glow"],
+            text_color=THEME["text_muted"],
+            font=ctk.CTkFont(size=11, weight="bold"),
+            command=self._show_source_notes,
+        )
+        self.source_notes_btn.pack(fill="x", padx=12, pady=(0, 10))
+
         # 3.2 Conversion Settings Card
         settings_card = ctk.CTkFrame(
             tab,
@@ -1758,6 +1770,28 @@ class JaneConverterApp(ctk.CTk):
     # -------------------------------------------------------------
     # 5. TAB 3: CONSOLE
     # -------------------------------------------------------------
+    def _show_source_notes(self):
+        notes = """Apple Music
+• Public song links and public album links are recognized through Apple's catalog.
+• Album links must be public and have no ?i= track selector when loading album tracks.
+• Apple provides metadata, artwork, and previews; it does not provide a normal downloadable subscription stream. JaneConverter searches supported public sources for a matching full stream.
+• Region restrictions, removed tracks, private links, music videos, or alternate versions may prevent a match. A direct song link with ?i= is best.
+
+Spotify
+• Spotify links provide metadata only. JaneConverter searches supported public sources for the matching stream.
+• Private, region-locked, deleted, or incorrectly identified tracks can fail.
+
+YouTube, SoundCloud, TikTok, X/Twitter, and other sites
+• The URL must be public and currently available.
+• Age gates, login walls, regional blocks, deleted posts, rate limits, bot checks, and site changes can prevent extraction.
+• Try opening the link in a browser first. Use Account Access only when the source genuinely requires a browser session.
+
+Local files and conversion
+• The file must be readable, and FFmpeg plus ffprobe must be installed and available.
+• Check the selected output folder permissions and available disk space.
+• If a source is recognized but no stream is found, read the Console details and retry with the direct page URL."""
+        messagebox.showinfo("Source Notes & Common Failures", notes)
+
     def _build_console_tab(self):
         tab = self.tab_console
         tab.grid_columnconfigure(0, weight=1)
@@ -2111,6 +2145,7 @@ class JaneConverterApp(ctk.CTk):
         else:
             type_labels = {
                 "spotify": "Spotify Track (Auto Search)",
+                "apple_music": "Apple Music Track (Catalog + Auto Search)",
                 "youtube": "YouTube Video / Stream",
                 "soundcloud": "SoundCloud Audio",
                 "tiktok": "TikTok Short Video",
@@ -2594,6 +2629,14 @@ class JaneConverterApp(ctk.CTk):
             return "There is not enough free space for this conversion. Free some space and try again.\n\nDetails: " + text
         if "timeout" in lowered or "timed out" in lowered:
             return "The source took too long to respond. Check your connection and try again.\n\nDetails: " + text
+        if "apple music" in lowered and ("no matching" in lowered or "public track" in lowered):
+            return "Apple Music was recognized, but JaneConverter could not find a matching downloadable stream. Check the direct song link, region, and alternate versions.\n\nDetails: " + text
+        if "apple music" in lowered and ("must point" in lowered or "album links" in lowered):
+            return "Use a public Apple Music song link, preferably one containing ?i=TRACK_ID, or a public album link without a track selector.\n\nDetails: " + text
+        if "no matching streams" in lowered or "no matching stream" in lowered:
+            return "The source was recognized, but no usable public stream was returned. The media may be private, region-locked, deleted, login-only, rate-limited, or changed by the provider.\n\nDetails: " + text
+        if "unsupported url" in lowered or "unsupported source" in lowered:
+            return "JaneConverter does not recognize this link format. Try the direct page URL from the source site.\n\nDetails: " + text
         if "private" in lowered or "region-locked" in lowered or "removed" in lowered:
             return "This source is unavailable, private, region-locked, or removed. Try a publicly accessible link.\n\nDetails: " + text
         return "An error occurred during conversion. Check the Console tab for more details.\n\nDetails: " + text

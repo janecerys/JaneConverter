@@ -13,7 +13,10 @@ import pytest
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import engine.extractor as extractor
-from engine.extractor import sanitize_filename, resolve_spotify_metadata, fetch_playlist_entries
+from engine.extractor import (
+    sanitize_filename, resolve_spotify_metadata, resolve_apple_music_metadata,
+    fetch_playlist_entries, identify_source_type, is_playlist_url, fetch_media_stream
+)
 from engine.converter import build_ffmpeg_args, VAAPI_ENCODER_ARGS
 from engine.version import __version__
 from run_converter import validate_cli_args, ensure_free_disk_space
@@ -87,6 +90,77 @@ def test_fetch_playlist_entries_spotify_playlist(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Apple Music catalog resolution (network mocked)
+# ---------------------------------------------------------------------------
+
+def test_identify_apple_music_links_and_album_shape():
+    track = "https://music.apple.com/us/album/example/1616728060?i=1616728075"
+    album = "https://music.apple.com/us/album/example/1616728060"
+    assert identify_source_type(track) == "apple_music"
+    assert not is_playlist_url(track)
+    assert is_playlist_url(album)
+
+
+def test_resolve_apple_music_metadata_catalog_lookup(monkeypatch):
+    calls = []
+    result = {
+        "wrapperType": "track",
+        "kind": "song",
+        "trackId": 1616728075,
+        "trackName": "Power Of A Woman",
+        "artistName": "Ella Mai",
+        "collectionName": "Heart On My Sleeve",
+        "releaseDate": "2022-05-06T00:00:00Z",
+        "trackTimeMillis": 213885,
+        "artworkUrl100": "https://is3-ssl.mzstatic.com/image/thumb/example/100x100bb.jpg",
+        "trackViewUrl": "https://music.apple.com/us/album/example/1616728060?i=1616728075",
+        "previewUrl": "https://audio-ssl.itunes.apple.com/example.m4a",
+    }
+
+    def fake_get(url, **kwargs):
+        calls.append((url, kwargs))
+        return FakeResponse(200, json_data={"resultCount": 1, "results": [result]})
+
+    monkeypatch.setattr(extractor.requests, "get", fake_get)
+    data = resolve_apple_music_metadata(
+        "https://music.apple.com/us/album/example/1616728060?i=1616728075"
+    )
+
+    assert data["title"] == "Power Of A Woman"
+    assert data["artist"] == "Ella Mai"
+    assert data["album"] == "Heart On My Sleeve"
+    assert data["year"] == "2022"
+    assert data["duration"] == 213
+    assert data["thumbnail_url"].endswith("1000x1000bb.jpg")
+    assert calls[0][0] == "https://itunes.apple.com/lookup"
+    assert calls[0][1]["params"]["id"] == "1616728075"
+
+
+def test_fetch_media_stream_rejects_preexisting_stale_stream(tmp_path, monkeypatch):
+    stale = tmp_path / "old_audio.mp3"
+    stale.write_bytes(b"old")
+    os.utime(stale, (1, 1))
+
+    class FakeYoutubeDL:
+        def __init__(self, options):
+            self.options = options
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+        def extract_info(self, _query, download=True):
+            return {"title": "Old Audio", "id": "old", "ext": "mp3"}
+
+        def prepare_filename(self, _info):
+            return str(stale)
+
+    monkeypatch.setattr(extractor.yt_dlp, "YoutubeDL", FakeYoutubeDL)
+    with pytest.raises(RuntimeError, match="stale"):
+        fetch_media_stream("https://example.com/old", str(tmp_path), audio_only=True)
 # Filename sanitization hardening
 # ---------------------------------------------------------------------------
 

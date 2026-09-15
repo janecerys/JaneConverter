@@ -54,6 +54,7 @@ def media_library_folder(
         return os.path.join(output_dir, "Miscellaneous", misc_kind)
     source_labels = {
         "spotify": "Spotify",
+        "apple_music": "Apple Music",
         "youtube": "YouTube",
         "soundcloud": "SoundCloud",
         "tiktok": "TikTok",

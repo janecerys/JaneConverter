@@ -1050,11 +1050,25 @@ impl JaneConverterApp {
                 });
             });
             ui.add_space(8.0);
-            ui.add(
-                egui::TextEdit::singleline(&mut self.source)
-                    .hint_text("Paste any media link or local path...")
-                    .desired_width(f32::INFINITY),
-            );
+            let source_changed = ui
+                .add(
+                    egui::TextEdit::singleline(&mut self.source)
+                        .hint_text("Paste any media link or local path...")
+                        .desired_width(f32::INFINITY),
+                )
+                .changed();
+            if source_changed {
+                // Match the Python UI: changing the source invalidates any
+                // playlist selection and browser access tied to the old link.
+                self.selected_playlist_indexes = None;
+                self.playlist_items.clear();
+                self.playlist_selected.clear();
+                self.auth_browser = None;
+                self.auth_label = None;
+                self.access_server = None;
+                self.access_link = None;
+                self.access_generation = self.access_generation.wrapping_add(1);
+            }
             ui.horizontal(|ui| {
                 if ui.button("📋 Paste").clicked() {
                     self.paste_clipboard();
@@ -1107,6 +1121,17 @@ impl JaneConverterApp {
                 }
             });
         });
+        ui.add_space(10.0);
+        egui::CollapsingHeader::new("ⓘ Source notes & common failures")
+            .default_open(false)
+            .show(ui, |ui| {
+                ui.add(
+                    egui::Label::new(RichText::new(
+                        "Apple Music: public song and album links are recognized through Apple's catalog. Apple provides metadata and artwork, not a normal downloadable subscription stream, so JaneConverter searches supported public sources for a matching full stream. Region restrictions, removed/private tracks, music videos, and alternate versions may prevent a match. Use a direct song link containing ?i=TRACK_ID.\n\nSpotify: Spotify supplies metadata only; JaneConverter searches supported public sources for the matching stream. Private, region-locked, deleted, or incorrectly identified tracks can fail.\n\nOther sites: YouTube, SoundCloud, TikTok, X/Twitter, and similar providers can fail because of login walls, age gates, regional blocks, deleted posts, rate limits, bot checks, or provider changes.\n\nLocal files: the file must be readable, FFmpeg and ffprobe must be available, and the output folder must have permission and free space. Read Console for the provider's exact error."
+                    ).color(MUTED))
+                    .wrap(),
+                );
+            });
         ui.add_space(10.0);
         card(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
@@ -1733,6 +1758,8 @@ fn source_label(source: &str) -> &'static str {
         "YouTube Video / Stream"
     } else if source.contains("soundcloud") {
         "SoundCloud Audio"
+    } else if source.contains("music.apple.com") {
+        "Apple Music Track"
     } else {
         "Online Media"
     }

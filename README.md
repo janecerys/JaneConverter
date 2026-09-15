@@ -27,12 +27,30 @@ On Windows, the launcher prefers the native Rust desktop frontend for a responsi
 
 JaneConverter opens the Rust interface by default. From the Rust header, open **Interface** and choose **Use legacy Python interface** if you need the original CustomTkinter layout; restart JaneConverter to apply the choice. The legacy Python interface includes a **Use Rust UI Next Launch** button so the preference can be changed back. The installer also creates direct **JaneConverter Legacy** and **JaneConverter Rust** shortcuts. Both interfaces use the same conversion backend.
 
+## Source troubleshooting FAQ
+
+### Why can Apple Music fail even when the link is recognized?
+
+Apple Music links are resolved through Apple's public catalog for metadata, artwork, track IDs, and public album listings. Apple's official APIs do not expose subscription audio as a normal downloadable stream. JaneConverter therefore searches existing supported public sources for a matching full stream. Conversion can still fail when the track is region-restricted, removed, private, a music video, an alternate version, or unavailable from the matched source. Use a direct public song URL containing `?i=TRACK_ID` when possible.
+
+### Why can Spotify fail?
+
+Spotify links provide metadata for identification; JaneConverter does not download protected Spotify audio directly. Private, deleted, region-limited, or ambiguous tracks may not produce a matching public stream. Check the title and artist in the Console output and try the direct track URL.
+
+### Why can YouTube, SoundCloud, TikTok, X/Twitter, or another site fail?
+
+The provider may require login, enforce an age or regional restriction, return a bot check, rate-limit requests, delete the media, or change its page/API format. Open the link in a normal browser first, use Account Access only when needed, and retry with the direct page URL rather than a shortened or embedded link.
+
+### Why can a local file or otherwise valid source fail?
+
+The file may be unreadable, the output folder may not be writable, disk space may be low, or FFmpeg/ffprobe may be missing. The Console contains the detailed reason. A recognized source and an available downloadable stream are separate checks.
+
 ## What it does
 
 For each media link or local file, JaneConverter:
 
-1. **Analyzes the source**: Identifies whether the input is a single video, audio stream, public Spotify link, playlist, or local disk file.
-2. **Extracts public metadata**: For Spotify tracks or albums, resolves the official title, artist, album, release year, and high-resolution cover art without requiring user logins or API keys.
+1. **Analyzes the source**: Identifies whether the input is a single video, audio stream, public Spotify or Apple Music link, playlist, or local disk file.
+2. **Extracts public metadata**: For Spotify tracks or albums and public Apple Music song or album links, resolves the title, artist, album, release year, and high-resolution cover art without requiring user logins or API keys.
 3. **Retrieves the stream**: Automatically queries the highest-fidelity audio or video stream from YouTube, SoundCloud, TikTok, Twitter/X, Reddit, Vimeo, Facebook, Twitch, or supported adult streaming platforms.
 4. **Normalizes loudness**: Optionally applies industry-standard EBU R128 loudness normalization (-14 LUFS integrated, -1.5 dB true peak) to match commercial streaming broadcast loudness without clipping.
 5. **Embeds artwork and tags**: Attaches front cover art directly into ID3v2.3 (MP3), FLAC, and M4A containers, and exports formatted production credits files (`_credits.txt`).

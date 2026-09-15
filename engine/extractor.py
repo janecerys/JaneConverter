@@ -57,6 +57,8 @@ def identify_source_type(url_or_path: str) -> str:
 
     if matches("spotify.com"):
         return "spotify"
+    if matches("music.apple.com"):
+        return "apple_music"
     if matches("youtube.com", "youtu.be"):
         return "youtube"
     if matches("soundcloud.com"):
@@ -86,6 +88,11 @@ def is_playlist_url(url_or_path: str) -> bool:
     query_lower = parsed.query.lower()
     if source_type == "spotify" and ("/playlist/" in path_lower or "/album/" in path_lower):
         return True
+    if source_type == "apple_music":
+        if "/playlist/" in path_lower:
+            return True
+        if "/album/" in path_lower and "i=" not in query_lower:
+            return True
     if source_type == "youtube" and "list=" in query_lower:
         return True
     if source_type == "soundcloud" and "/sets/" in path_lower:
@@ -175,6 +182,147 @@ def build_search_candidates(artist: str, title: str) -> list:
             result.append(c)
     return result
 
+def _apple_music_url_parts(apple_url: str) -> Dict[str, str]:
+    """Extract the storefront, resource kind, and IDs from an Apple Music URL."""
+    parsed = urllib.parse.urlparse(apple_url.strip())
+    path_parts = [part for part in parsed.path.split("/") if part]
+    storefront = path_parts[0].lower() if path_parts else "us"
+    kind = ""
+    resource_id = ""
+    for index, part in enumerate(path_parts[1:], 1):
+        if part.lower() in {"song", "album", "playlist", "artist", "music-video", "station"}:
+            kind = part.lower()
+            if index + 2 < len(path_parts):
+                resource_id = path_parts[index + 2]
+            elif index + 1 < len(path_parts):
+                resource_id = path_parts[index + 1]
+            break
+    track_id = (urllib.parse.parse_qs(parsed.query).get("i") or [""])[0]
+    return {
+        "storefront": storefront if re.fullmatch(r"[a-z]{2}", storefront) else "us",
+        "kind": kind,
+        "resource_id": resource_id,
+        "track_id": track_id,
+    }
+
+def _apple_artwork_url(url: str, size: int = 1000) -> str:
+    """Request a larger rendition of an iTunes/Apple Music artwork URL."""
+    if not url:
+        return ""
+    return re.sub(r"/\d+x\d+(?:bb)?\.(?:jpg|png)$", f"/{size}x{size}bb.jpg", url)
+
+def _apple_music_result_metadata(result: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize one iTunes Search API result into JaneConverter metadata."""
+    title = result.get("trackName") or result.get("collectionName") or "Unknown Track"
+    artist = result.get("artistName") or "Unknown Artist"
+    album = result.get("collectionName") or ""
+    release_date = str(result.get("releaseDate") or "")
+    artwork = _apple_artwork_url(result.get("artworkUrl100") or "")
+    candidates = build_search_candidates(artist, title)
+    return {
+        "title": title,
+        "artist": artist,
+        "album": album,
+        "year": release_date[:4] if len(release_date) >= 4 else "",
+        "search_query": candidates[0] if candidates else title,
+        "search_candidates": candidates,
+        "thumbnail": artwork,
+        "thumbnail_url": artwork,
+        "description": "",
+        "track_id": str(result.get("trackId") or ""),
+        "source_url": result.get("trackViewUrl") or result.get("collectionViewUrl") or "",
+        "preview_url": result.get("previewUrl") or "",
+        "duration": int(result.get("trackTimeMillis") or 0) // 1000,
+    }
+
+def resolve_apple_music_metadata(apple_url: str) -> Dict[str, Any]:
+    """Resolve a public Apple Music song link through Apple's catalog lookup.
+
+    The catalog supplies metadata, artwork, IDs, and a short preview. It does
+    not expose subscription audio as a normal downloadable stream, so the
+    returned title and artist locate an available full stream through
+    JaneConverter's existing supported-source search path.
+    """
+    parts = _apple_music_url_parts(apple_url)
+    storefront = parts["storefront"]
+    lookup_id = parts["track_id"] or parts["resource_id"]
+    if not lookup_id or parts["kind"] not in {"song", "album"}:
+        raise RuntimeError(
+            "Apple Music link must point to a public song or an album track (with ?i=track-id)."
+        )
+
+    response = requests.get(
+        "https://itunes.apple.com/lookup",
+        params={"id": lookup_id, "entity": "song", "country": storefront, "limit": 200},
+        headers={"User-Agent": "JaneConverter/1.1 (+local media utility)"},
+        timeout=12,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"Apple catalog lookup returned HTTP status {response.status_code}")
+    results = response.json().get("results") or []
+    if parts["track_id"]:
+        results = [item for item in results if str(item.get("trackId")) == parts["track_id"]]
+    else:
+        results = [item for item in results if item.get("kind") == "song"]
+    if not results:
+        raise RuntimeError("Apple Music catalog did not return a public track for this link.")
+    return _apple_music_result_metadata(results[0])
+
+def fetch_apple_music_playlist_entries(apple_url: str, progress_callback: Optional[Callable[[float, str], None]] = None) -> Dict[str, Any]:
+    """Fetch public Apple Music album tracks through Apple's catalog lookup."""
+    parts = _apple_music_url_parts(apple_url)
+    if parts["kind"] != "album" or parts["track_id"]:
+        raise RuntimeError(
+            "Apple Music playlist loading currently supports public album links without a track selector."
+        )
+    if not parts["resource_id"]:
+        raise RuntimeError("Could not find an Apple Music album ID in this link.")
+    if progress_callback:
+        progress_callback(0.2, "Loading Apple Music album catalog...")
+    response = requests.get(
+        "https://itunes.apple.com/lookup",
+        params={
+            "id": parts["resource_id"],
+            "entity": "song",
+            "country": parts["storefront"],
+            "limit": 200,
+        },
+        headers={"User-Agent": "JaneConverter/1.1 (+local media utility)"},
+        timeout=12,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"Apple catalog lookup returned HTTP status {response.status_code}")
+    results = response.json().get("results") or []
+    album = next((item for item in results if item.get("wrapperType") == "collection"), {})
+    songs = [item for item in results if item.get("kind") == "song"]
+    if not album or not songs:
+        raise RuntimeError("Apple Music catalog did not return any public tracks for this album.")
+    parsed = urllib.parse.urlparse(apple_url)
+    entries = []
+    for index, result in enumerate(songs, 1):
+        meta = _apple_music_result_metadata(result)
+        track_id = str(result.get("trackId") or "")
+        track_query = urllib.parse.urlencode({"i": track_id})
+        track_url = urllib.parse.urlunparse(parsed._replace(query=track_query))
+        entries.append({
+            "index": index,
+            "title": meta["title"],
+            "artist": meta["artist"],
+            "duration": result.get("trackTimeMillis", 0),
+            "duration_str": format_duration(meta.get("duration", 0)),
+            "url": track_url,
+            "thumbnail": meta.get("thumbnail_url", ""),
+            "description": "",
+        })
+    if progress_callback:
+        progress_callback(1.0, f"Loaded {len(entries)} Apple Music album tracks.")
+    return {
+        "playlist_title": album.get("collectionName") or "Apple Music Album",
+        "entries": entries,
+        "total_count": len(entries),
+        "thumbnail_url": _apple_artwork_url(album.get("artworkUrl100") or ""),
+        "source_type": "apple_music",
+    }
 def resolve_spotify_metadata(spotify_url: str) -> Dict[str, str]:
     """
     Extracts public track title, artist, album, year, and thumbnail from Spotify via public oEmbed and OpenGraph.
@@ -284,6 +432,7 @@ def fetch_media_stream(
     Fetches the media stream from a URL (or validates local file) into output_dir.
     Returns metadata dict with local path, title, artist, and media type.
     """
+    job_started_ns = time.time_ns()
     os.makedirs(output_dir, exist_ok=True)
     auth_browser = normalize_browser_session(auth_browser)
 
@@ -323,6 +472,7 @@ def fetch_media_stream(
 
     # 2. Spotify Track or Search Queries
     spotify_meta = None
+    apple_meta = None
     target_url = source
     candidates = []
     if source_type == "spotify":
@@ -356,6 +506,14 @@ def fetch_media_stream(
             report(0.12, f"Resolved Spotify track: {spotify_meta['artist']} - {spotify_meta['title']}")
             candidates = spotify_meta.get("search_candidates") or build_search_candidates(spotify_meta["artist"], spotify_meta["title"])
             target_url = candidates[0] if candidates else spotify_meta.get("search_query", "")
+    elif source_type == "apple_music":
+        report(0.05, "Resolving Apple Music catalog metadata...")
+        apple_meta = resolve_apple_music_metadata(source)
+        report(0.12, f"Resolved Apple Music track: {apple_meta['artist']} - {apple_meta['title']}")
+        candidates = apple_meta.get("search_candidates") or build_search_candidates(
+            apple_meta["artist"], apple_meta["title"]
+        )
+        target_url = candidates[0] if candidates else apple_meta.get("search_query", "")
     elif target_url.startswith("ytsearch") or target_url.startswith("scsearch"):
         candidates = [target_url]
     else:
@@ -437,19 +595,28 @@ def fetch_media_stream(
 
             if not os.path.exists(downloaded_file):
                 raise FileNotFoundError(f"Downloaded stream file not found at: {downloaded_file}")
+            try:
+                file_mtime_ns = os.stat(downloaded_file).st_mtime_ns
+            except OSError as exc:
+                raise FileNotFoundError(f"Downloaded stream file is unavailable: {downloaded_file}") from exc
+            if file_mtime_ns < job_started_ns:
+                raise FileNotFoundError(
+                    f"Refusing to reuse a stale downloaded stream: {downloaded_file}"
+                )
 
-            extracted_title = spotify_meta["title"] if spotify_meta else info.get("title", "Media Track")
-            extracted_artist = spotify_meta["artist"] if spotify_meta else info.get("uploader", "Unknown Artist")
-            extracted_album = spotify_meta["album"] if spotify_meta else ""
+            catalog_meta = spotify_meta or apple_meta
+            extracted_title = catalog_meta["title"] if catalog_meta else info.get("title", "Media Track")
+            extracted_artist = catalog_meta["artist"] if catalog_meta else info.get("uploader", "Unknown Artist")
+            extracted_album = catalog_meta["album"] if catalog_meta else ""
             upload_date = str(info.get("upload_date") or "")
-            extracted_year = (spotify_meta.get("year", "") if spotify_meta else "") or (upload_date[:4] if upload_date else "")
-            description = info.get("description", "") or (spotify_meta.get("description", "") if spotify_meta else "")
+            extracted_year = (catalog_meta.get("year", "") if catalog_meta else "") or (upload_date[:4] if upload_date else "")
+            description = info.get("description", "") or (catalog_meta.get("description", "") if catalog_meta else "")
             tags = info.get("tags", []) or []
             categories = info.get("categories", []) or []
             webpage_url = info.get("webpage_url") or source
 
             # Thumbnail download and conversion to JPEG
-            thumb_url = (spotify_meta.get("thumbnail") if spotify_meta and spotify_meta.get("thumbnail") else None) or info.get("thumbnail")
+            thumb_url = (catalog_meta.get("thumbnail") if catalog_meta and catalog_meta.get("thumbnail") else None) or info.get("thumbnail")
             thumbnail_local_path = None
             if thumb_url:
                 local_thumb_file = os.path.join(output_dir, "cover.jpg")
@@ -497,6 +664,9 @@ def fetch_playlist_entries(
     source_type = identify_source_type(url)
     clean_url = url.strip()
     auth_browser = normalize_browser_session(auth_browser)
+
+    if source_type == "apple_music":
+        return fetch_apple_music_playlist_entries(clean_url, progress_callback=progress_callback)
 
     # 1. Spotify Playlist or Album via Embed Endpoint
     if source_type == "spotify":
