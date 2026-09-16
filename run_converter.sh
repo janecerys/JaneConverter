@@ -4,7 +4,16 @@ set -euo pipefail
 SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-if [[ -x "$SCRIPT_DIR/JaneConverterNative" ]]; then
+PREFERENCE_FILE="$SCRIPT_DIR/frontend.preference"
+if [[ -n "${JANECONVERTER_DATA_DIR:-}" ]] && [[ -f "${JANECONVERTER_DATA_DIR}/frontend.preference" ]]; then
+    PREFERENCE_FILE="${JANECONVERTER_DATA_DIR}/frontend.preference"
+fi
+FRONTEND_PREFERENCE=""
+if [[ -f "$PREFERENCE_FILE" ]]; then
+    FRONTEND_PREFERENCE="$(tr -d '[:space:]' < "$PREFERENCE_FILE" | tr '[:upper:]' '[:lower:]')"
+fi
+
+if [[ "$FRONTEND_PREFERENCE" != "python" ]] && [[ -x "$SCRIPT_DIR/JaneConverterNative" ]]; then
     exec "$SCRIPT_DIR/JaneConverterNative" "$@"
 fi
 

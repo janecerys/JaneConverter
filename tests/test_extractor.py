@@ -8,7 +8,7 @@ import os
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from engine.extractor import is_url, identify_source_type, sanitize_filename, resolve_spotify_metadata, build_search_candidates
+from engine.extractor import is_url, identify_source_type, sanitize_filename, resolve_spotify_metadata, resolve_apple_music_metadata, build_search_candidates
 
 def test_is_url():
     assert is_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ") is True
@@ -50,6 +50,16 @@ def test_resolve_spotify_metadata_online():
     assert "artist" in data
     assert "search_query" in data
     assert len(data["search_query"]) > 0
+
+@pytest.mark.online
+def test_resolve_apple_music_metadata_online():
+    # Public Apple Music catalog entry. This verifies the real lookup path only
+    # when the opt-in online suite is requested.
+    url = "https://music.apple.com/us/album/heart-on-my-sleeve/1616728060?i=1616728075"
+    data = resolve_apple_music_metadata(url)
+    assert data["title"]
+    assert data["artist"]
+    assert data["search_candidates"]
 
 def test_build_search_candidates():
     candidates = build_search_candidates("project:aspyr, kvnokishi", "permafall?")

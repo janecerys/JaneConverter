@@ -124,6 +124,46 @@ Invoke-Native { & $venvPython -m pip check } "Private environment dependency che
 # 6. Build Executable Launcher & Desktop Shortcut
 Write-Host "[6/6] Building native launcher and desktop shortcut..." -ForegroundColor Yellow
 
+# Build the optional Rust frontend when Cargo is available. If the toolchain is
+# absent or unavailable, keep the Python UI as the reliable fallback. Never
+# leave an older native executable in place after its source has changed.
+$nativeBinaryPath = Join-Path $scriptDir "JaneConverterNative.exe"
+$cargo = Get-Command cargo.exe -ErrorAction SilentlyContinue
+if ($cargo) {
+    Write-Host "-> Rust/Cargo detected. Building the native frontend..." -ForegroundColor Cyan
+    & $cargo.Source build --release --manifest-path (Join-Path $scriptDir "native_ui\Cargo.toml")
+    if ($LASTEXITCODE -eq 0) {
+        $builtNativePath = Join-Path $scriptDir "native_ui\target\release\janeconverter-native.exe"
+        if (Test-Path -LiteralPath $builtNativePath) {
+            Copy-Item -LiteralPath $builtNativePath -Destination $nativeBinaryPath -Force
+            Write-Host "-> Built JaneConverterNative.exe." -ForegroundColor Green
+        } else {
+            Write-Host "NOTICE: Rust build completed without producing the native executable. Python UI remains available." -ForegroundColor DarkGray
+        }
+    } else {
+        if (Test-Path -LiteralPath $nativeBinaryPath) {
+            Move-Item -LiteralPath $nativeBinaryPath -Destination ($nativeBinaryPath + ".stale") -Force
+            Write-Host "NOTICE: Rust frontend build failed; moved the old native frontend aside. Python UI remains available." -ForegroundColor DarkGray
+        } else {
+            Write-Host "NOTICE: Rust frontend build failed. Python UI remains available." -ForegroundColor DarkGray
+        }
+    }
+} elseif (Test-Path -LiteralPath $nativeBinaryPath) {
+    $nativeSourceFiles = @(
+        (Get-ChildItem -LiteralPath (Join-Path $scriptDir "native_ui\src") -Recurse -File | Where-Object { $_.Extension -eq ".rs" }),
+        (Get-Item -LiteralPath (Join-Path $scriptDir "native_ui\Cargo.toml")),
+        (Get-Item -LiteralPath (Join-Path $scriptDir "native_ui\Cargo.lock"))
+    )
+    $latestNativeSource = $nativeSourceFiles | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    $nativeBinary = Get-Item -LiteralPath $nativeBinaryPath
+    if ($latestNativeSource -and $latestNativeSource.LastWriteTimeUtc -gt $nativeBinary.LastWriteTimeUtc) {
+        Move-Item -LiteralPath $nativeBinaryPath -Destination ($nativeBinaryPath + ".stale") -Force
+        Write-Host "NOTICE: Moved the older Rust frontend aside; the current Python UI will be used until Rust is installed." -ForegroundColor DarkGray
+    }
+} else {
+    Write-Host "NOTICE: Rust/Cargo not found. The legacy Python interface remains available." -ForegroundColor DarkGray
+}
+
 $cscPath = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 if (-not (Test-Path $cscPath)) {
     $cscPath = "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe"

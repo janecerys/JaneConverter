@@ -1,6 +1,6 @@
 """
 Main Pipeline Runner and CLI Driver for JaneConverter
-Orchestrates stream fetching, Spotify resolution, and FFmpeg transcode.
+Orchestrates stream fetching, Spotify/Apple Music catalog resolution, and FFmpeg transcode.
 """
 
 import os
@@ -374,6 +374,23 @@ def process_conversion(
             except Exception:
                 pass
 
+def _retry_operation(operation: Callable[[], Any], label: str, max_retries: int) -> Any:
+    """Retry one playlist operation with bounded exponential backoff."""
+    last_error = None
+    for attempt in range(max_retries + 1):
+        try:
+            return operation()
+        except KeyboardInterrupt:
+            raise
+        except Exception as exc:
+            last_error = exc
+            if attempt >= max_retries:
+                break
+            delay = min(2 ** attempt, 4)
+            print(f"[!] {label} failed: {exc}. Retrying in {delay}s...")
+            time.sleep(delay)
+    raise last_error
+
 def process_playlist_conversion(
     playlist_title: str,
     selected_entries: list,
@@ -393,7 +410,8 @@ def process_playlist_conversion(
     abort_event: Optional[Any] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
     content_category: Optional[str] = None,
-    auth_browser: Optional[str] = None
+    auth_browser: Optional[str] = None,
+    max_retries: int = 2
 ) -> Dict[str, Any]:
     """
     Batch-downloads and transcodes selected playlist items into a dedicated playlist folder.
@@ -415,6 +433,10 @@ def process_playlist_conversion(
     ensure_free_disk_space(output_dir)
 
     active_gpu = use_gpu if use_gpu is not None else use_nvenc
+    try:
+        max_retries = max(0, min(5, int(max_retries)))
+    except (TypeError, ValueError):
+        max_retries = 2
 
     source_type = source_type or playlist_source_type(selected_entries)
     organized_output_dir = media_library_folder(output_dir, target_format, source_type, content_category)
@@ -495,21 +517,31 @@ def process_playlist_conversion(
 
         report_overall(base_pct, f"[{i+1}/{total_items}] Fetching #{idx}: {clean_title}...")
 
-        track_job_id = uuid.uuid4().hex[:8]
-        track_work_dir = os.path.join(DEFAULT_TEMP_DIR, f"track_{track_job_id}")
-        os.makedirs(track_work_dir, exist_ok=True)
+        track_work_dir = None
+
+        def fetch_attempt():
+            nonlocal track_work_dir
+            track_job_id = uuid.uuid4().hex[:8]
+            track_work_dir = os.path.join(DEFAULT_TEMP_DIR, f"track_{track_job_id}")
+            os.makedirs(track_work_dir, exist_ok=True)
+            try:
+                return fetch_media_stream(
+                    source=item_url,
+                    output_dir=track_work_dir,
+                    audio_only=is_audio_target,
+                    fallback_title=raw_title,
+                    fallback_artist=artist,
+                    abort_event=abort_event,
+                    progress_callback=item_progress_hook,
+                    auth_browser=auth_browser
+                )
+            except Exception:
+                if not keep_temp and track_work_dir and os.path.exists(track_work_dir):
+                    shutil.rmtree(track_work_dir, ignore_errors=True)
+                raise
 
         try:
-            stream_info = fetch_media_stream(
-                source=item_url,
-                output_dir=track_work_dir,
-                audio_only=is_audio_target,
-                fallback_title=raw_title,
-                fallback_artist=artist,
-                abort_event=abort_event,
-                progress_callback=item_progress_hook,
-                auth_browser=auth_browser
-            )
+            stream_info = _retry_operation(fetch_attempt, f"Track #{idx} download", max_retries)
 
             input_media = stream_info["media_path"]
             track_artist = artist or stream_info.get("artist", "")
@@ -528,8 +560,9 @@ def process_playlist_conversion(
                     except Exception:
                         pass
 
-            # Save per-track credits / description into metadata folder if available
-            if save_metadata and stream_info.get("description"):
+            # Save per-track credits even when the provider has no description;
+            # the file still records title, artist, source, and duration.
+            if save_metadata:
                 track_credits = os.path.join(metadata_dir, f"{ordered_filename}_credits.txt")
                 try:
                     write_credits_file(track_credits, stream_info)
@@ -547,21 +580,25 @@ def process_playlist_conversion(
             if stream_info.get("description"):
                 metadata["comment"] = stream_info["description"][:1000]
 
-            result_path = convert_media(
-                input_path=input_media,
-                output_dir=playlist_dir,
-                output_filename=ordered_filename,
-                target_format=target_format,
-                bitrate=bitrate,
-                sample_rate=sample_rate,
-                normalize_audio=normalize_audio,
-                resolution=resolution,
-                use_nvenc=active_gpu,
-                use_gpu=active_gpu,
-                metadata=metadata,
-                cover_path=track_cover if save_cover_art else None,
-                abort_event=abort_event,
-                progress_callback=item_progress_hook
+            result_path = _retry_operation(
+                lambda: convert_media(
+                    input_path=input_media,
+                    output_dir=playlist_dir,
+                    output_filename=ordered_filename,
+                    target_format=target_format,
+                    bitrate=bitrate,
+                    sample_rate=sample_rate,
+                    normalize_audio=normalize_audio,
+                    resolution=resolution,
+                    use_nvenc=active_gpu,
+                    use_gpu=active_gpu,
+                    metadata=metadata,
+                    cover_path=track_cover if save_cover_art else None,
+                    abort_event=abort_event,
+                    progress_callback=item_progress_hook
+                ),
+                f"Track #{idx} conversion",
+                max_retries
             )
 
             converted_files.append(result_path)
@@ -573,7 +610,12 @@ def process_playlist_conversion(
         except Exception as e:
             if abort_event and abort_event.is_set():
                 raise KeyboardInterrupt("Playlist conversion aborted by user.")
-            failed_files.append({"index": idx, "title": raw_title, "error": str(e)})
+            failed_files.append({
+                "index": idx,
+                "title": raw_title,
+                "error": str(e),
+                "attempts": max_retries + 1,
+            })
             consecutive_failures += 1
             print(f"[!] Error converting track #{idx} '{raw_title}': {e}")
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
@@ -585,7 +627,7 @@ def process_playlist_conversion(
                 )
                 break
         finally:
-            if not keep_temp and os.path.exists(track_work_dir):
+            if not keep_temp and track_work_dir and os.path.exists(track_work_dir):
                 try:
                     shutil.rmtree(track_work_dir, ignore_errors=True)
                 except Exception:
@@ -718,7 +760,7 @@ def validate_cli_args(args, parser: argparse.ArgumentParser):
 
 def main():
     parser = argparse.ArgumentParser(description="JaneConverter: Universal Media Downloader & Converter")
-    parser.add_argument("--source", "-s", required=True, help="Media URL (YouTube, Spotify, SoundCloud, TikTok, Twitter, etc.) or local file path")
+    parser.add_argument("--source", "-s", required=True, help="Media URL (YouTube, Spotify, Apple Music, SoundCloud, TikTok, Twitter, etc.) or local file path")
     parser.add_argument("--format", "-f", default="mp3", help=f"Target output format ({', '.join(CLI_FORMATS)})")
     parser.add_argument("--output", "-o", default=DEFAULT_CONVERTED_DIR, help="Destination directory for converted files")
     parser.add_argument("--bitrate", "-b", default="320k", help="Audio bitrate, lossless bit depth, OGG quality, or video quality (best, high, balanced, small)")
@@ -730,6 +772,12 @@ def main():
     parser.add_argument("--playlist", "-p", action="store_true", help="Force treat input source as playlist")
     parser.add_argument("--list-playlist", action="store_true", help="List playlist entries for a graphical frontend and exit")
     parser.add_argument("--playlist-indexes", help="Convert only selected 1-based playlist items, e.g. 1,3,5")
+    parser.add_argument(
+        "--retries",
+        type=int,
+        default=2,
+        help="Retry each failed playlist item this many times (0-5; default: 2).",
+    )
     parser.add_argument("--no-cover-art", action="store_true", help="Disable downloading and embedding cover art")
     parser.add_argument("--no-metadata", action="store_true", help="Disable exporting credits and metadata text files")
     parser.add_argument("--category", choices=("Music", "Video", "Miscellaneous"), default=None,
@@ -801,7 +849,8 @@ def main():
             save_metadata=save_meta,
             keep_temp=args.keep_temp,
             content_category=args.category,
-            auth_browser=args.browser_session
+            auth_browser=args.browser_session,
+            max_retries=args.retries
         )
         failed = summary.get("failed_count", 0)
         if failed:

@@ -157,5 +157,6 @@ def test_process_playlist_conversion_local_files():
         meta_folder = os.path.join(expected_folder, "metadata")
         assert os.path.exists(meta_folder)
         assert os.path.exists(os.path.join(meta_folder, "playlist_credits.txt"))
+        assert os.path.exists(os.path.join(meta_folder, "1. First Song_credits.txt"))
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)

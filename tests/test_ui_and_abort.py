@@ -8,6 +8,7 @@ import threading
 import pytest
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import run_converter
 
 from run_converter import process_conversion, process_playlist_conversion
 from engine.converter import convert_media
@@ -37,6 +38,21 @@ def test_process_playlist_conversion_aborts_immediately():
             check_updates=False
         )
     assert "aborted" in str(excinfo.value).lower()
+
+def test_playlist_retry_operation_retries_with_bounded_attempts(monkeypatch):
+    attempts = []
+
+    def flaky_operation():
+        attempts.append(len(attempts) + 1)
+        if len(attempts) < 3:
+            raise RuntimeError("temporary provider failure")
+        return "ok"
+
+    monkeypatch.setattr(run_converter.time, "sleep", lambda _seconds: None)
+    result = run_converter._retry_operation(flaky_operation, "Test track", max_retries=2)
+
+    assert result == "ok"
+    assert attempts == [1, 2, 3]
 
 def test_convert_media_aborts_immediately(tmp_path):
     abort_event = threading.Event()
@@ -93,3 +109,13 @@ def test_gui_elements_and_wording():
     assert "has_gpu" in hw_info
     assert "encoder_name" in hw_info
     assert "short_gpu" in hw_info
+
+def test_unix_launcher_honors_python_preference_and_stages_stale_native_binary():
+    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    with open(os.path.join(root, "run_converter.sh"), encoding="utf-8") as launcher_file:
+        launcher = launcher_file.read()
+    with open(os.path.join(root, "install.sh"), encoding="utf-8") as installer_file:
+        installer = installer_file.read()
+    assert "FRONTEND_PREFERENCE" in launcher
+    assert 'FRONTEND_PREFERENCE\" != \"python\"' in launcher
+    assert "JaneConverterNative.stale" in installer

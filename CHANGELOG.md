@@ -5,6 +5,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+- Added Apple Music catalog resolution for public song and album links, album track listing, matching-source search, and source troubleshooting guidance.
+- Added stale-download protection and Unix frontend preference handling so older native binaries are not silently reused after installation.
+
+### Fixed
+- Preserved per-track playlist credits files even when a provider has no description.
+- Added bounded retries for transient playlist downloads and FFmpeg conversions, with fresh temporary directories for each download attempt.
+- Added a Python 3.10+ guard to the macOS/Linux installer and clearer Apple Music no-match errors.
+- Windows setup now builds the Rust frontend when Cargo is available and moves stale native binaries aside when it is not.
+
 ## [1.1.0] - 2026-09-11
 
 ### Fixed

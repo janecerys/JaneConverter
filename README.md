@@ -91,7 +91,7 @@ What `setup.bat` does automatically:
 2. Verifies **FFmpeg** (installs it via winget if missing).
 3. Verifies **Node.js** for YouTube bot challenge handling.
 4. Creates a private `.venv` and installs all required Python dependencies from `requirements.txt` without changing the user's global Python environment.
-5. Compiles the native `JaneConverter.exe` executable with embedded app icon.
+5. Compiles the Windows launcher with the embedded app icon and builds `JaneConverterNative.exe` when Rust/Cargo is available; otherwise it keeps the Python UI as the fallback.
 6. Creates a **JaneConverter** shortcut directly on your Windows Desktop.
 7. Launches the studio window immediately.
 
@@ -149,11 +149,11 @@ chmod +x install.sh run_converter.sh uninstall.sh
 ./run_converter.sh
 ```
 
-The Unix launcher uses the native Rust frontend when it is available and otherwise starts the legacy Python interface. Finder or the default Linux file manager is used for **Open Folder** actions. Hardware acceleration depends on the FFmpeg build and graphics drivers available on the host.
+The Unix launcher uses the selected frontend preference when available and otherwise starts the legacy Python interface. If an older native binary is found during installation without Cargo available, the installer moves it aside instead of launching it against newer source code. Finder or the default Linux file manager is used for **Open Folder** actions. Hardware acceleration depends on the FFmpeg build and graphics drivers available on the host.
 
 ### 2. Playlist Track Selector
 
-When pasting a playlist or album URL (YouTube playlist, Spotify album or playlist, SoundCloud set):
+When pasting a playlist or album URL (YouTube playlist, Spotify album or playlist, Apple Music album, or SoundCloud set):
 
 1. JaneConverter detects the playlist and offers to open the **Playlist Tracks** catalog window.
 2. Inspect the playlist title, total track count, and duration.
@@ -224,6 +224,15 @@ You can also run conversions directly from PowerShell or Command Prompt:
 \.venv\Scripts\python.exe run_converter.py --source "https://www.youtube.com/watch?v=VIDEO_ID" --format mp3 --bitrate 320k --normalize
 ```
 
+### Apple Music Song or Album
+
+```powershell
+python run_converter.py --source "https://music.apple.com/us/album/ALBUM_SLUG/ALBUM_ID?i=TRACK_ID" --format flac
+python run_converter.py --source "https://music.apple.com/us/album/ALBUM_SLUG/ALBUM_ID" --list-playlist
+```
+
+Apple Music uses catalog metadata and matching public-source search; it does not directly download subscription audio.
+
 ### Spotify Track or Album
 
 ```powershell
@@ -252,6 +261,7 @@ python run_converter.py --source "https://open.spotify.com/album/ALBUM_ID" --for
 | `--no-metadata` | Skip writing credits and metadata `.txt` files | Disabled |
 | `--category` | Library category (`Music`, `Video`, or `Miscellaneous`) | Source-based |
 | `--browser-session` | Existing browser session (`none`, `chrome`, `edge`, `firefox`, `brave`, `vivaldi`, `opera`, `chromium`, `safari`) | `none` |
+| `--retries` | Retry each failed playlist item (`0`-`5`) | `2` |
 | `--output PATH` | Directory to save exported files | JaneConverter `converted/` |
 | `--no-update` | Skip real-time extractor engine update check | Disabled |
 | `--version` | Print the application version and exit | - |
@@ -304,7 +314,7 @@ python -m pip install -r requirements-dev.txt
 python -m pytest -v tests/
 ```
 
-The offline suite runs in seconds (FFmpeg is required for the end-to-end transcode test). Eight additional live-network tests are opt-in: `python -m pytest -m online -v`. Continuous integration runs the hermetic suite on Windows, Ubuntu, and macOS; the live-network suite is available through a deliberate workflow dispatch.
+The offline suite runs in seconds (FFmpeg is required for the end-to-end transcode test). Playlist items are retried twice by default when a provider or FFmpeg operation has a temporary failure; use `--retries 0` to disable this. Nine additional live-network tests are opt-in: `python -m pytest -m online -v`. Continuous integration runs the hermetic suite on Windows, Ubuntu, and macOS; the live-network suite is available through a deliberate workflow dispatch.
 
 ## Versioning
 

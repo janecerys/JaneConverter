@@ -1,7 +1,7 @@
 """
 Universal Stream Extractor Module for JaneConverter
 Fetches media from across the internet (YouTube, SoundCloud, TikTok, Twitter/X,
-Facebook, Reddit, Vimeo, Twitch, adult sites, and Spotify metadata matching) or local files.
+Facebook, Reddit, Vimeo, Twitch, adult sites, Spotify metadata matching, and Apple Music catalog matching) or local files.
 """
 
 import os
@@ -432,8 +432,16 @@ def fetch_media_stream(
     Fetches the media stream from a URL (or validates local file) into output_dir.
     Returns metadata dict with local path, title, artist, and media type.
     """
-    job_started_ns = time.time_ns()
     os.makedirs(output_dir, exist_ok=True)
+    preexisting_stream_files = {}
+    try:
+        for entry_name in os.listdir(output_dir):
+            entry_path = os.path.join(output_dir, entry_name)
+            if os.path.isfile(entry_path):
+                entry_stat = os.stat(entry_path)
+                preexisting_stream_files[os.path.abspath(entry_path)] = (entry_stat.st_size, entry_stat.st_mtime_ns)
+    except OSError:
+        preexisting_stream_files = {}
     auth_browser = normalize_browser_session(auth_browser)
 
     last_report_time = [0.0]
@@ -579,7 +587,13 @@ def fetch_media_stream(
                     continue
 
             if not info:
-                msg = f"No matching streams returned from search (tried {len(candidates)} query strategies)."
+                if source_type == "apple_music":
+                    msg = (
+                        "Apple Music was recognized, but no matching downloadable public stream was found. "
+                        "Try a direct song link with ?i=TRACK_ID, check the region, or try another public version."
+                    )
+                else:
+                    msg = f"No matching streams returned from search (tried {len(candidates)} query strategies)."
                 if last_error:
                     msg += f" Last error: {last_error}"
                 raise ValueError(msg)
@@ -596,10 +610,11 @@ def fetch_media_stream(
             if not os.path.exists(downloaded_file):
                 raise FileNotFoundError(f"Downloaded stream file not found at: {downloaded_file}")
             try:
-                file_mtime_ns = os.stat(downloaded_file).st_mtime_ns
+                downloaded_stat = os.stat(downloaded_file)
             except OSError as exc:
                 raise FileNotFoundError(f"Downloaded stream file is unavailable: {downloaded_file}") from exc
-            if file_mtime_ns < job_started_ns:
+            previous_stat = preexisting_stream_files.get(os.path.abspath(downloaded_file))
+            if previous_stat and (downloaded_stat.st_size, downloaded_stat.st_mtime_ns) == previous_stat:
                 raise FileNotFoundError(
                     f"Refusing to reuse a stale downloaded stream: {downloaded_file}"
                 )
