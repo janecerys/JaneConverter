@@ -9,8 +9,9 @@ echo.
 
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0install.ps1"
 
-if %ERRORLEVEL% NEQ 0 (
-    echo.
-    echo Setup encountered an error.
-    pause
-)
+if not errorlevel 1 exit /b 0
+set "SETUP_EXIT=%ERRORLEVEL%"
+echo.
+echo Setup encountered an error. The window will close automatically in 10 seconds.
+timeout /t 10 /nobreak >nul
+exit /b %SETUP_EXIT%

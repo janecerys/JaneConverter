@@ -63,7 +63,7 @@ $pythonRuntime = Get-UsablePythonRuntime
 if (-not $pythonRuntime) {
     Write-Host "Python was not found. Attempting automatic installation via winget..." -ForegroundColor Cyan
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Invoke-Native { winget install Python.Python.3.12 --accept-package-agreements --accept-source-agreements } "Python installation"
+        Invoke-Native { winget install --id Python.Python.3.12 --exact --source winget --silent --disable-interactivity --accept-package-agreements --accept-source-agreements } "Python installation"
         Refresh-EnvPath
         $pythonRuntime = Get-UsablePythonRuntime
     } else {
@@ -98,7 +98,7 @@ Write-Host "[2/6] Checking FFmpeg engine..." -ForegroundColor Yellow
 if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) {
     Write-Host "FFmpeg not found. Installing Gyan.FFmpeg via winget..." -ForegroundColor Cyan
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        Invoke-Native { winget install Gyan.FFmpeg --accept-package-agreements --accept-source-agreements } "FFmpeg installation"
+        Invoke-Native { winget install --id Gyan.FFmpeg --exact --source winget --silent --disable-interactivity --accept-package-agreements --accept-source-agreements } "FFmpeg installation"
         Refresh-EnvPath
     } else {
         Write-Host "ERROR: winget is unavailable, so FFmpeg could not be installed automatically." -ForegroundColor Red
@@ -119,9 +119,9 @@ if (-not (Get-Command ffprobe -ErrorAction SilentlyContinue)) {
 # 3. Check Node.js (Recommended for YouTube challenge resolution)
 Write-Host "[3/6] Checking Node.js runtime..." -ForegroundColor Yellow
 if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    Write-Host "Node.js not found. Installing OpenJS.NodeJS.LTS via winget..." -ForegroundColor Cyan
+    Write-Host "Node.js not found. Installing OpenJS.NodeJS.LTS via winget (a Windows security prompt may appear)..." -ForegroundColor Cyan
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        & winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements
+        & winget install --id OpenJS.NodeJS.LTS --exact --source winget --silent --disable-interactivity --accept-package-agreements --accept-source-agreements
         if ($LASTEXITCODE -ne 0) {
             Write-Host "NOTICE: Node.js installation was not completed. You can continue without it, but some YouTube sources may fail." -ForegroundColor DarkGray
         }
@@ -137,8 +137,10 @@ if (Get-Command node -ErrorAction SilentlyContinue) {
 
 # 4. Install Python Dependencies
 Write-Host "[4/6] Installing Python studio dependencies..." -ForegroundColor Yellow
-Invoke-Native { & $venvPython -m pip install --upgrade pip --quiet } "Pip upgrade"
-Invoke-Native { & $venvPython -m pip install -r requirements.txt --quiet } "Requirements installation"
+Write-Host "Updating pip (this may take a minute; no input is required)..." -ForegroundColor Cyan
+Invoke-Native { & $venvPython -m pip install --upgrade pip --disable-pip-version-check --no-input } "Pip upgrade"
+Write-Host "Installing JaneConverter dependencies (download progress will appear)..." -ForegroundColor Cyan
+Invoke-Native { & $venvPython -m pip install --disable-pip-version-check --no-input -r requirements.txt } "Requirements installation"
 Write-Host "-> Python dependencies installed." -ForegroundColor Green
 
 # 5. Verify Core Python Modules

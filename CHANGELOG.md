@@ -15,6 +15,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Added bounded retries for transient playlist downloads and FFmpeg conversions, with fresh temporary directories for each download attempt.
 - Added a Python 3.10+ guard to the macOS/Linux installer and clearer Apple Music no-match errors.
 - Windows setup now builds the Rust frontend when Cargo is available and moves stale native binaries aside when it is not.
+- Windows setup now uses non-interactive winget installs and visible pip progress, so setup should not require Enter to continue.
+- Removed the setup wrapper's hidden PAUSE prompt; failed setup runs now preserve the error code and close automatically after a short message.
 
 ## [1.1.0] - 2026-09-11
 
