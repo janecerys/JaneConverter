@@ -925,7 +925,7 @@ class JaneConverterApp(ctk.CTk):
 
         self.interface_btn = ctk.CTkButton(
             self.sidebar,
-            text="⚙ Use Rust UI Next Launch",
+            text="⚙ Use Legacy Rust Next Launch",
             font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
             fg_color=THEME["card_inner"],
             hover_color=THEME["card_border_glow"],
@@ -937,6 +937,21 @@ class JaneConverterApp(ctk.CTk):
             command=self._use_rust_interface_next_launch,
         )
         self.interface_btn.pack(side="bottom", fill="x", padx=12, pady=(0, 8))
+
+        self.main_interface_btn = ctk.CTkButton(
+            self.sidebar,
+            text="⚙ Use Main UI Next Launch",
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            fg_color=THEME["card_inner"],
+            hover_color=THEME["card_border_glow"],
+            border_width=1,
+            border_color=THEME["card_border"],
+            text_color=THEME["text_primary"],
+            height=30,
+            corner_radius=8,
+            command=self._use_main_interface_next_launch,
+        )
+        self.main_interface_btn.pack(side="bottom", fill="x", padx=12, pady=(0, 4))
 
         self.update_btn = ctk.CTkButton(
             self.sidebar,
@@ -1012,7 +1027,11 @@ class JaneConverterApp(ctk.CTk):
         elif not compact and self.update_btn.cget("state") != "disabled":
             self.update_btn.configure(text="🔄 Check for Updates")
         self.interface_btn.configure(
-            text="⚙" if compact else "⚙ Use Rust UI Next Launch",
+            text="R" if compact else "⚙ Use Legacy Rust Next Launch",
+            width=32 if compact else 0,
+        )
+        self.main_interface_btn.configure(
+            text="M" if compact else "⚙ Use Main UI Next Launch",
             width=32 if compact else 0,
         )
 
@@ -2045,21 +2064,27 @@ Local files and conversion
         except OSError:
             pass
 
-    def _use_rust_interface_next_launch(self):
+    def _set_interface_preference(self, preference: str, label: str):
         try:
             os.makedirs(os.path.dirname(FRONTEND_PREFERENCE_PATH), exist_ok=True)
             with open(FRONTEND_PREFERENCE_PATH, "w", encoding="utf-8") as preference_file:
-                preference_file.write("rust\n")
-            self.status_label.configure(text="Rust interface selected for the next launch.")
+                preference_file.write(f"{preference}\n")
+            self.status_label.configure(text=f"{label} selected for the next launch.")
             messagebox.showinfo(
                 "Interface Preference",
-                "The Rust interface will open next time JaneConverter starts.",
+                f"{label} will open next time JaneConverter starts.",
             )
         except OSError as exc:
             messagebox.showerror(
                 "Interface Preference",
                 f"Could not save the interface preference.\n\n{exc}",
             )
+
+    def _use_main_interface_next_launch(self):
+        self._set_interface_preference("tauri", "Main UI")
+
+    def _use_rust_interface_next_launch(self):
+        self._set_interface_preference("rust", "Legacy Rust")
 
     # -------------------------------------------------------------
     # 6. HARDWARE TELEMETRY LOOP

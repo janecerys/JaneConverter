@@ -21,11 +21,11 @@ The standard way to use JaneConverter is its modern dark-themed desktop studio a
 
 JaneConverter runs from a private Python environment with an optional native launcher and automated setup scripts for Windows, macOS, and Linux. Update checks are read-only; a verified staged package is applied by a short-lived restart helper before the next launch.
 
-On Windows, the launcher prefers the native Rust desktop frontend for a responsive interface. On macOS and Linux, use `run_converter.sh`; it prefers a locally built Rust frontend and falls back to the original Python interface. The original Python interface remains available as a recovery fallback on every supported platform.
+On Windows, launch `JaneConverter.exe`, the universal entry point. It reads the saved launch preference and starts the Main UI (Tauri + React), Legacy Rust, or Legacy Python interface. All three inherit the same project-local data root and therefore share the same `converted` library. On macOS and Linux, use `run_converter.sh`; it uses the selected frontend when available and falls back to the original Python interface.
 
 ### Interface preference
 
-JaneConverter opens the Rust interface by default. From the Rust header, open **Interface** and choose **Use legacy Python interface** if you need the original CustomTkinter layout; restart JaneConverter to apply the choice. The legacy Python interface includes a **Use Rust UI Next Launch** button so the preference can be changed back. The installer also creates direct **JaneConverter Legacy** and **JaneConverter Rust** shortcuts. Both interfaces use the same conversion backend.
+JaneConverter.exe opens the Main UI by default. In Settings, choose Main UI, Legacy Rust, or Legacy Python; the choice is saved beside the launcher and takes effect the next time you open JaneConverter.exe. The individual child executables remain available for recovery and diagnostics, but the universal launcher is the normal entry point. The development checkout also keeps a top-level `JaneConverter.exe`; it resolves the newest complete package under `dist` so the main launcher is easy to find without duplicating the application files. Unless `JANECONVERTER_DATA_DIR` is set, every interface uses the `converted` folder beside JaneConverter.exe.
 
 ## Source troubleshooting FAQ
 
@@ -91,7 +91,7 @@ What `setup.bat` does automatically:
 2. Verifies **FFmpeg** (installs it via winget if missing).
 3. Verifies **Node.js** for YouTube bot challenge handling.
 4. Creates a private `.venv` and installs all required Python dependencies from `requirements.txt` without changing the user's global Python environment.
-5. Compiles the Windows launcher with the embedded app icon and builds `JaneConverterNative.exe` when Rust/Cargo is available; otherwise it keeps the Python UI as the fallback.
+5. Compiles the universal Windows launcher with the embedded app icon and builds both `JaneConverterDesktop.exe` and `JaneConverterNative.exe` when Rust/Cargo is available; the Python UI remains bundled as the recovery interface.
 6. Creates a **JaneConverter** shortcut directly on your Windows Desktop.
 7. Launches the studio window immediately.
 

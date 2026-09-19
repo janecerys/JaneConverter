@@ -42,7 +42,7 @@ Get-ChildItem -LiteralPath $staging -Recurse -Force -File |
 # available. The launcher retains the Python GUI as a recovery fallback for
 # source checkouts and environments that cannot build the native binary.
 $nativeBinary = Join-Path $scriptDir "native_ui\target\release\janeconverter-native.exe"
-$cargo = Get-Command cargo.exe -ErrorAction SilentlyContinue
+$cargo = Get-Command cargo -ErrorAction SilentlyContinue
 if ($cargo) {
     # Keep Cargo's generated files out of the source checkout. This also
     # allows release builds from protected or read-only source locations.
@@ -73,6 +73,36 @@ if (Test-Path -LiteralPath $nativeBinary) {
     throw "The Rust frontend was not built. Install Rust or pass -AllowPythonFallback for a development-only package."
 }
 
+$desktopBinary = Join-Path $scriptDir "desktop-ui\src-tauri\target\release\janeconverter-desktop.exe"
+$npm = Get-Command npm -ErrorAction SilentlyContinue
+$npmCache = Join-Path $scriptDir "desktop-ui\.npm-cache"
+$env:npm_config_cache = $npmCache
+if ($cargo -and $npm) {
+    Push-Location (Join-Path $scriptDir "desktop-ui")
+    try {
+        & $npm.Source install --no-audit --no-fund --ignore-scripts
+        if ($LASTEXITCODE -ne 0) { throw "Desktop UI dependency installation failed." }
+        & $npm.Source run build
+        if ($LASTEXITCODE -ne 0) { throw "Desktop UI frontend build failed." }
+    } finally {
+        Pop-Location
+    }
+    $desktopCargoTarget = Join-Path $scriptDir "dist\tauri-cargo-target-$Version"
+    $env:CARGO_TARGET_DIR = $desktopCargoTarget
+    Push-Location (Join-Path $scriptDir "desktop-ui")
+    try {
+        & $npm.Source run tauri:build
+        if ($LASTEXITCODE -ne 0) { throw "Tauri desktop UI build failed." }
+    } finally {
+        Pop-Location
+    }
+    $desktopBinary = Join-Path $desktopCargoTarget "release\janeconverter-desktop.exe"}
+if (Test-Path -LiteralPath $desktopBinary) {
+    Copy-Item -LiteralPath $desktopBinary -Destination (Join-Path $staging "JaneConverterDesktop.exe")
+} elseif (-not $AllowPythonFallback) {
+    throw "The Tauri desktop UI was not built. Install Node.js and Rust or pass -AllowPythonFallback for a development-only package."
+}
+
 $candidates = @(
     "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe",
     "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe"
@@ -81,10 +111,11 @@ $csc = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 if ($csc) {
     & $csc /target:winexe /win32icon:"$staging\assets\icon.ico" /out:"$staging\JaneConverter.exe" "$staging\Program.cs" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Native launcher compilation failed." }
+    Copy-Item -LiteralPath (Join-Path $staging "JaneConverter.exe") -Destination (Join-Path $scriptDir "JaneConverter.exe") -Force
 }
 
 $requiredFiles = @("JaneConverter.exe", "gui.py", "run_converter.py", "update_helper.py", "requirements.txt", "README.md", "LICENSE", "assets\icon.ico", "engine\version.py")
-if (-not $AllowPythonFallback) { $requiredFiles += "JaneConverterNative.exe" }
+if (-not $AllowPythonFallback) { $requiredFiles += "JaneConverterNative.exe"; $requiredFiles += "JaneConverterDesktop.exe" }
 foreach ($requiredFile in $requiredFiles) {
     if (-not (Test-Path -LiteralPath (Join-Path $staging $requiredFile) -PathType Leaf)) {
         throw "Release package is missing required file: $requiredFile"

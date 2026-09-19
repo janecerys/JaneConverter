@@ -15,6 +15,9 @@ dist/
 .vscode/
 .idea/
 native_ui/target/
+desktop-ui/node_modules/
+desktop-ui/dist/
+desktop-ui/src-tauri/target/
 
 # Virtual environments
 venv/
@@ -31,3 +34,9 @@ config.json
 frontend.preference
 native.settings
 updates/
+desktop-ui/.npm-cache/
+desktop-ui/.cargo-target/
+.cargo-local/
+.rustup-local/
+
+*.stale

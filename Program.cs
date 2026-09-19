@@ -14,32 +14,42 @@ namespace JaneConverterLauncher
             try
             {
                 string baseDir = AppDomain.CurrentDomain.BaseDirectory;
-                string nativeUiPath = Path.Combine(baseDir, "JaneConverterNative.exe");
+                string runtimeDir = ResolveRuntimeDirectory(baseDir);
+                string desktopUiPath = Path.Combine(runtimeDir, "JaneConverterDesktop.exe");
+                string nativeUiPath = Path.Combine(runtimeDir, "JaneConverterNative.exe");
                 bool forceLegacy = HasArgument(args, "--legacy-python");
+                bool forceTauri = HasArgument(args, "--tauri");
                 bool forceRust = HasArgument(args, "--rust");
                 if (!HasArgument(args, "--skip-pending-update"))
                 {
-                    TrySchedulePendingUpdate(baseDir);
+                    TrySchedulePendingUpdate(runtimeDir);
                 }
                 string preference = ReadFrontendPreference(baseDir);
 
-                // Rust is the default. The preference and explicit command-line
-                // switches keep the original Python interface available as a
-                // reversible recovery path.
-                if (!forceLegacy && (forceRust || !string.Equals(preference, "python", StringComparison.OrdinalIgnoreCase)) && File.Exists(nativeUiPath))
+                // Tauri is the default when its bundled executable is present.
+                // The existing Rust and Python surfaces remain reversible fallbacks.
+                if (!forceLegacy && !forceRust && (forceTauri || string.Equals(preference, "tauri", StringComparison.OrdinalIgnoreCase)) && File.Exists(desktopUiPath))
                 {
-                    Process.Start(new ProcessStartInfo
-                    {
-                        FileName = nativeUiPath,
-                        WorkingDirectory = baseDir,
-                        UseShellExecute = true,
-                        CreateNoWindow = true,
-                        WindowStyle = ProcessWindowStyle.Hidden
-                    });
+                    StartChild(desktopUiPath, string.Empty, runtimeDir, baseDir);
+
                     return;
                 }
 
-                string scriptPath = Path.Combine(baseDir, "gui.py");
+                if (!forceLegacy && (forceRust || string.Equals(preference, "rust", StringComparison.OrdinalIgnoreCase)) && File.Exists(nativeUiPath))
+                {
+                    StartChild(nativeUiPath, string.Empty, runtimeDir, baseDir);
+
+                    return;
+                }
+
+                if (!forceLegacy && !forceTauri && !forceRust && string.Equals(preference, "tauri", StringComparison.OrdinalIgnoreCase) && File.Exists(nativeUiPath))
+                {
+                    StartChild(nativeUiPath, string.Empty, runtimeDir, baseDir);
+
+                    return;
+                }
+
+                string scriptPath = Path.Combine(runtimeDir, "gui.py");
 
                 if (!File.Exists(scriptPath))
                 {
@@ -56,8 +66,8 @@ namespace JaneConverterLauncher
                 string pythonExe = "pythonw.exe";
                 string[] candidatePaths = new string[]
                 {
-                    Path.Combine(baseDir, "venv", "Scripts", "pythonw.exe"),
-                    Path.Combine(baseDir, ".venv", "Scripts", "pythonw.exe"),
+                    Path.Combine(runtimeDir, "venv", "Scripts", "pythonw.exe"),
+                    Path.Combine(runtimeDir, ".venv", "Scripts", "pythonw.exe"),
                     Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python", "Python312", "pythonw.exe"),
                     Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "Python", "Python311", "pythonw.exe"),
                     @"C:\Python314\pythonw.exe",
@@ -75,17 +85,8 @@ namespace JaneConverterLauncher
                     }
                 }
 
-                ProcessStartInfo psi = new ProcessStartInfo
-                {
-                    FileName = pythonExe,
-                    Arguments = "\"" + scriptPath + "\"",
-                    WorkingDirectory = baseDir,
-                    UseShellExecute = true,
-                    CreateNoWindow = true,
-                    WindowStyle = ProcessWindowStyle.Hidden
-                };
+                StartChild(pythonExe, Quote(scriptPath), runtimeDir, baseDir);
 
-                Process.Start(psi);
             }
             catch (System.ComponentModel.Win32Exception)
             {
@@ -109,6 +110,59 @@ namespace JaneConverterLauncher
             }
         }
 
+        static string ResolveRuntimeDirectory(string launcherDir)
+        {
+            if (HasRuntimeExecutables(launcherDir))
+            {
+                return launcherDir;
+            }
+
+            string distDir = Path.Combine(launcherDir, "dist");
+            if (Directory.Exists(distDir))
+            {
+                string[] candidates = Directory.GetDirectories(distDir, "JaneConverter-*");
+                Array.Sort(candidates, StringComparer.OrdinalIgnoreCase);
+                for (int index = candidates.Length - 1; index >= 0; index--)
+                {
+                    if (HasRuntimeExecutables(candidates[index]))
+                    {
+                        return candidates[index];
+                    }
+                }
+            }
+
+            return launcherDir;
+        }
+
+        static bool HasRuntimeExecutables(string directory)
+        {
+            return File.Exists(Path.Combine(directory, "JaneConverterDesktop.exe")) ||
+                   File.Exists(Path.Combine(directory, "JaneConverterNative.exe"));
+        }
+        static string SharedDataRoot(string baseDir)
+        {
+            string configured = Environment.GetEnvironmentVariable("JANECONVERTER_DATA_DIR");
+            if (!string.IsNullOrWhiteSpace(configured))
+            {
+                return Path.GetFullPath(configured);
+            }
+            return baseDir;
+        }
+
+        static void StartChild(string fileName, string arguments, string workingDirectory, string dataRoot)
+        {
+            ProcessStartInfo info = new ProcessStartInfo
+            {
+                FileName = fileName,
+                Arguments = arguments ?? string.Empty,
+                WorkingDirectory = workingDirectory,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden
+            };
+            info.EnvironmentVariables["JANECONVERTER_DATA_DIR"] = SharedDataRoot(dataRoot);
+            Process.Start(info);
+        }
         static bool HasArgument(string[] args, string expected)
         {
             foreach (string arg in args ?? new string[0])
@@ -140,7 +194,8 @@ namespace JaneConverterLauncher
                     }
                     string value = File.ReadAllText(candidate).Trim();
                     if (string.Equals(value, "python", StringComparison.OrdinalIgnoreCase) ||
-                        string.Equals(value, "rust", StringComparison.OrdinalIgnoreCase))
+                        string.Equals(value, "rust", StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(value, "tauri", StringComparison.OrdinalIgnoreCase))
                     {
                         return value;
                     }
@@ -150,7 +205,7 @@ namespace JaneConverterLauncher
                     // A locked preference must never prevent the application from launching.
                 }
             }
-            return "rust";
+            return "tauri";
         }
 
         static void TrySchedulePendingUpdate(string baseDir)
@@ -184,15 +239,8 @@ namespace JaneConverterLauncher
             string python = FindPython(baseDir);
             try
             {
-                Process.Start(new ProcessStartInfo
-                {
-                    FileName = python,
-                    Arguments = Quote(helper) + " " + Quote(baseDir) + " " + Process.GetCurrentProcess().Id.ToString(),
-                    WorkingDirectory = baseDir,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                    WindowStyle = ProcessWindowStyle.Hidden
-                });
+                StartChild(python, Quote(helper) + " " + Quote(baseDir) + " " + Process.GetCurrentProcess().Id.ToString(), baseDir, baseDir);
+
                 Environment.Exit(0);
             }
             catch (Win32Exception)

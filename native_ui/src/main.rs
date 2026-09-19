@@ -912,10 +912,10 @@ impl JaneConverterApp {
                 self.frontend_preference = preference.to_owned();
                 self.status = format!(
                     "{} interface selected for the next launch",
-                    if preference == "python" {
-                        "Legacy Python"
-                    } else {
-                        "Rust"
+                    match preference {
+                        "tauri" => "Main UI",
+                        "python" => "Legacy Python",
+                        _ => "Legacy Rust",
                     }
                 );
             }
@@ -1597,15 +1597,18 @@ impl eframe::App for JaneConverterApp {
                     ui.label(
                         RichText::new(format!(
                             "Current preference: {}",
-                            if self.frontend_preference == "python" {
-                                "Legacy Python"
-                            } else {
-                                "Rust"
+                            match self.frontend_preference.as_str() {
+                                "tauri" => "Main UI",
+                                "python" => "Legacy Python",
+                                _ => "Legacy Rust",
                             }
                         ))
                         .color(BLUE),
                     );
                     ui.add_space(8.0);
+                    if ui.button("Use Main UI").clicked() {
+                        self.set_frontend_preference("tauri");
+                    }
                     if ui.button("Use Rust interface").clicked() {
                         self.set_frontend_preference("rust");
                     }
@@ -2029,12 +2032,12 @@ fn read_frontend_preference(root: &Path) -> String {
     for candidate in frontend_preference_candidates(root) {
         if let Ok(value) = fs::read_to_string(candidate) {
             let value = value.trim().to_ascii_lowercase();
-            if value == "python" || value == "rust" {
+            if value == "python" || value == "rust" || value == "tauri" {
                 return value;
             }
         }
     }
-    "rust".to_owned()
+    "tauri".to_owned()
 }
 
 fn write_frontend_preference(root: &Path, preference: &str) -> io::Result<PathBuf> {
