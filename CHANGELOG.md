@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Added stale-download protection and Unix frontend preference handling so older native binaries are not silently reused after installation.
 
 ### Fixed
+- Windows setup now ignores the Microsoft Store Python execution alias and validates a working Python runtime before creating the private environment.
 - Preserved per-track playlist credits files even when a provider has no description.
 - Added bounded retries for transient playlist downloads and FFmpeg conversions, with fresh temporary directories for each download attempt.
 - Added a Python 3.10+ guard to the macOS/Linux installer and clearer Apple Music no-match errors.

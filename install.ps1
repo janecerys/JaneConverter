@@ -28,29 +28,60 @@ function Invoke-Native {
     }
 }
 
+function Get-UsablePythonRuntime {
+    $candidate = Get-Command python.exe -ErrorAction SilentlyContinue
+    if (-not $candidate) {
+        return $null
+    }
+
+    try {
+        # Windows 11 can expose a Microsoft Store app-execution alias even when
+        # Python is not installed. Treat a failed version command as missing.
+        $versionOutput = & $candidate.Source --version 2>&1
+        if ($LASTEXITCODE -ne 0) {
+            return $null
+        }
+        $versionText = ($versionOutput | Out-String).Trim()
+        $versionMatch = [regex]::Match($versionText, 'Python\s+([0-9]+)\.([0-9]+)')
+        if (-not $versionMatch.Success) {
+            return $null
+        }
+        return [PSCustomObject]@{
+            Command = $candidate.Source
+            VersionText = $versionText
+            Major = [int]$versionMatch.Groups[1].Value
+            Minor = [int]$versionMatch.Groups[2].Value
+        }
+    } catch {
+        return $null
+    }
+}
+
 # 1. Check Python
 Write-Host "[1/6] Checking Python runtime..." -ForegroundColor Yellow
-$pyCmd = Get-Command python -ErrorAction SilentlyContinue
-if (-not $pyCmd) {
-    Write-Host "Python not found in PATH. Attempting automatic installation via winget..." -ForegroundColor Cyan
+$pythonRuntime = Get-UsablePythonRuntime
+if (-not $pythonRuntime) {
+    Write-Host "Python was not found. Attempting automatic installation via winget..." -ForegroundColor Cyan
     if (Get-Command winget -ErrorAction SilentlyContinue) {
         Invoke-Native { winget install Python.Python.3.12 --accept-package-agreements --accept-source-agreements } "Python installation"
         Refresh-EnvPath
+        $pythonRuntime = Get-UsablePythonRuntime
     } else {
         Write-Host "ERROR: Please install Python 3.10+ from https://www.python.org/downloads/ and check 'Add to PATH'." -ForegroundColor Red
         exit 1
     }
 }
-$pyVer = & python --version 2>&1
+if (-not $pythonRuntime) {
+    Write-Host "ERROR: Python installation completed, but a usable Python runtime was not found in PATH. Open a new terminal and run setup.bat again." -ForegroundColor Red
+    exit 1
+}
+$pyVer = $pythonRuntime.VersionText
 Write-Host "-> Found: $pyVer" -ForegroundColor Green
-$pyVersionMatch = [regex]::Match(($pyVer | Out-String), '([0-9]+)\.([0-9]+)')
-if ($pyVersionMatch.Success) {
-    $pyMajor = [int]$pyVersionMatch.Groups[1].Value
-    $pyMinor = [int]$pyVersionMatch.Groups[2].Value
-    if (($pyMajor -lt 3) -or (($pyMajor -eq 3) -and ($pyMinor -lt 10))) {
-        Write-Host "ERROR: Python 3.10 or newer is required." -ForegroundColor Red
-        exit 1
-    }
+$pyMajor = $pythonRuntime.Major
+$pyMinor = $pythonRuntime.Minor
+if (($pyMajor -lt 3) -or (($pyMajor -eq 3) -and ($pyMinor -lt 10))) {
+    Write-Host "ERROR: Python 3.10 or newer is required." -ForegroundColor Red
+    exit 1
 }
 
 # Keep JaneConverter's dependencies isolated from the user's other Python work.
@@ -59,7 +90,7 @@ $venvPython = Join-Path $venvPath "Scripts\python.exe"
 $venvPythonw = Join-Path $venvPath "Scripts\pythonw.exe"
 if (-not (Test-Path $venvPython)) {
     Write-Host "Creating private JaneConverter Python environment..." -ForegroundColor Cyan
-    Invoke-Native { python -m venv $venvPath } "Private Python environment"
+    Invoke-Native { & $pythonRuntime.Command -m venv $venvPath } "Private Python environment"
 }
 
 # 2. Check FFmpeg (Required for audio/video conversion)
