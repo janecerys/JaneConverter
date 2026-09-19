@@ -43,7 +43,7 @@ export function Sidebar({ activeView, onChange }: { activeView: ViewKey; onChang
         })}
       </nav>
 
-      <div className="mt-auto rounded-2xl border border-white/[0.07] bg-white/[0.025] p-3">
+      <div className="mt-4 rounded-2xl border border-white/[0.07] bg-white/[0.025] p-3">
         <div className="flex items-center gap-2 text-xs text-zinc-300"><Activity className="size-3.5 text-zinc-500" /> Project-local workspace</div>
         <p className="mt-2 text-[11px] leading-relaxed text-zinc-600">Media, temporary files, settings, and logs stay beside JaneConverter whenever possible.</p>
       </div>

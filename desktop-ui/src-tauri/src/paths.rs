@@ -66,6 +66,31 @@ pub fn command_available(program: &str) -> bool {
     run_command(program, &["--version"]).is_ok()
 }
 
+pub fn find_ffmpeg() -> PathBuf {
+    let root = project_root();
+    #[cfg(target_os = "windows")]
+    let candidates = [
+        root.join("ffmpeg.exe"),
+        root.join("bin").join("ffmpeg.exe"),
+        root.join("engine").join("ffmpeg.exe"),
+    ];
+    #[cfg(not(target_os = "windows"))]
+    let candidates = [
+        root.join("ffmpeg"),
+        root.join("bin").join("ffmpeg"),
+        root.join("engine").join("ffmpeg"),
+    ];
+    for candidate in candidates {
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+    #[cfg(target_os = "windows")]
+    return PathBuf::from("ffmpeg.exe");
+    #[cfg(not(target_os = "windows"))]
+    PathBuf::from("ffmpeg")
+}
+
 pub fn find_python() -> PathBuf {
     let root = project_root();
     #[cfg(target_os = "windows")]

@@ -2,9 +2,9 @@ import { useEffect, useState } from "react";
 import { CircleHelp, Cpu, HardDrive, X } from "lucide-react";
 import type { RuntimeInfo } from "../bridge";
 
-export function Topbar({ runtime, activeView }: { runtime: RuntimeInfo | null; activeView: string }) {
+export function Topbar({ runtime }: { runtime: RuntimeInfo | null }) {
   const [helpOpen, setHelpOpen] = useState(false);
-  const labels: Record<string, string> = { converter: "Conversion workspace", library: "Converted library", console: "Live console", settings: "Application settings" };
+
 
   useEffect(() => {
     if (!helpOpen) return;
@@ -17,11 +17,7 @@ export function Topbar({ runtime, activeView }: { runtime: RuntimeInfo | null; a
 
   return (
     <>
-      <header className="flex h-16 shrink-0 items-center justify-between border-b border-white/[0.06] px-8">
-        <div>
-          <div className="mono-label">{labels[activeView] ?? "JaneConverter"}</div>
-          <div className="mt-1 text-sm text-zinc-300">A quieter control room for your media.</div>
-        </div>
+      <header className="flex h-16 shrink-0 items-center justify-end border-b border-white/[0.06] px-8">
         <div className="flex items-center gap-2">
           <div className="hidden items-center gap-2 rounded-full border border-white/[0.07] bg-white/[0.025] px-3 py-1.5 text-[11px] text-zinc-500 xl:flex">
             <span className={`size-1.5 rounded-full ${runtime?.mode === "tauri" ? "bg-emerald-400" : "bg-amber-400"}`} />

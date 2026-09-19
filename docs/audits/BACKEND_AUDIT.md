@@ -3,6 +3,7 @@
 **Audit date:** 2026-09-11
 **Repository:** JaneConverter  
 **Review scope:** GUI/backend boundary, extraction, conversion, updates, filesystem behavior, packaging, tests, documentation, and consumer readiness.
+**Status:** Historical v1.1 baseline; v1.2.0 release work is documented in `CHANGELOG.md`.
 
 ## Executive verdict
 
@@ -74,7 +75,7 @@ The highest-value fix is to coalesce progress updates and batch console output b
 
 - The repository has a real test suite, offline-by-default pytest configuration, and GitHub Actions coverage across Windows and Ubuntu.
 - Tests cover FFmpeg command construction, metadata writing, Spotify parsing, playlist extraction, sanitization, and immediate abort behavior.
-- The existing [POLISHING_PLAN.md](POLISHING_PLAN.md) correctly identifies several structural debts, especially GUI decomposition, settings persistence, updater testing, and release artifacts.
+- The existing [POLISHING_PLAN.md](../planning/POLISHING_PLAN.md) correctly identifies several structural debts, especially GUI decomposition, settings persistence, updater testing, and release artifacts.
 
 ## Critical findings
 

@@ -108,7 +108,7 @@ export default function App() {
   const content = activeView === "converter"
     ? <ConverterView settings={settings} runtime={runtime} events={events} access={access} running={Boolean(jobId)} progress={progress} status={status} onSettings={updateSettings} onStart={start} onCancel={cancel} onCreateAccess={createAccess} onClearAccess={clearAccess} onStatus={statusMessage} />
     : activeView === "library"
-      ? <LibraryView settings={settings} onStatus={statusMessage} />
+      ? <LibraryView settings={settings} onSettings={updateSettings} onStatus={statusMessage} />
       : activeView === "console"
         ? <ConsoleView events={events} onClear={() => setEvents([])} onStatus={statusMessage} />
         : <SettingsView runtime={runtime} onStatus={statusMessage} />;
@@ -120,7 +120,7 @@ export default function App() {
       <div className="pointer-events-none absolute right-0 top-16 h-px w-[58%] top-right-glow-line" />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,rgba(255,255,255,.018),transparent_35%)]" />
       <Sidebar activeView={activeView} onChange={setActiveView} />
-      <div className="relative flex min-w-0 flex-1 flex-col"><Topbar runtime={runtime} activeView={activeView} /><main className="min-h-0 flex-1 overflow-y-auto px-8 py-8"><motion.div key={activeView} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .25 }}>{content}</motion.div></main></div>
+      <div className="relative flex min-w-0 flex-1 flex-col"><Topbar runtime={runtime} /><main className="min-h-0 flex-1 overflow-y-auto px-8 py-8"><motion.div key={activeView} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .25 }}>{content}</motion.div></main></div>
     </div>
   );
 }

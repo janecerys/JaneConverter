@@ -14,6 +14,7 @@ use process::{
     terminate_child,
 };
 use rfd::FileDialog;
+use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -239,6 +240,31 @@ fn scan_library(path: String) -> Result<Vec<LibraryEntry>, String> {
 }
 
 #[tauri::command]
+fn get_thumbnail(root: String, path: String) -> Result<Option<String>, String> {
+    library::thumbnail(&root, &path)
+}
+
+#[tauri::command]
+fn move_library(source: String, destination_parent: String) -> Result<String, String> {
+    let mut settings = settings_get_internal();
+    let configured = fs::canonicalize(settings.output_dir.trim())
+        .map_err(|error| format!("The configured library is unavailable: {error}"))?;
+    let requested = fs::canonicalize(source.trim())
+        .map_err(|error| format!("The current library is unavailable: {error}"))?;
+    if configured != requested {
+        return Err("For safety, only the active converted library can be moved.".into());
+    }
+    let destination = library::move_directory(&source, &destination_parent)?;
+    settings.output_dir = destination.clone();
+    write_settings(&settings).map_err(|error| {
+        format!(
+            "The library moved to {destination}, but JaneConverter could not save the new location: {error}"
+        )
+    })?;
+    Ok(destination)
+}
+
+#[tauri::command]
 fn delete_library_entry(root: String, path: String) -> Result<(), String> {
     library::delete_inside(&root, &path)
 }
@@ -286,6 +312,32 @@ fn clear_access_link(state: State<'_, AppState>) -> Result<(), String> {
 fn set_frontend_preference(preference: String) -> Result<(), String> {
     write_preference(preference.trim())
         .map_err(|error| format!("Could not save interface preference: {error}"))
+}
+
+#[tauri::command]
+fn relaunch(app: tauri::AppHandle) -> Result<(), String> {
+    let root = project_root();
+    #[cfg(target_os = "windows")]
+    let preferred_launcher = root.join("JaneConverter.exe");
+    #[cfg(not(target_os = "windows"))]
+    let preferred_launcher = root.join("run_converter.sh");
+
+    let launcher = if preferred_launcher.is_file() {
+        preferred_launcher
+    } else {
+        std::env::current_exe()
+            .map_err(|error| format!("Could not locate JaneConverter: {error}"))?
+    };
+    let mut command = Command::new(&launcher);
+    command
+        .current_dir(&root)
+        .env("JANECONVERTER_DATA_DIR", data_root());
+    prepare_command(&mut command);
+    command
+        .spawn()
+        .map_err(|error| format!("Could not relaunch JaneConverter: {error}"))?;
+    app.exit(0);
+    Ok(())
 }
 
 fn format_update_summary(stdout: &str) -> String {
@@ -393,11 +445,14 @@ pub fn run() {
             cancel_conversion,
             load_playlist,
             scan_library,
+            get_thumbnail,
+            move_library,
             delete_library_entry,
             create_access_link,
             access_status,
             clear_access_link,
             set_frontend_preference,
+            relaunch,
             check_updates
         ])
         .run(tauri::generate_context!())

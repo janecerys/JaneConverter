@@ -46,6 +46,15 @@ ICON_PNG = os.path.join(ASSETS_DIR, "icon.png")
 for d in (DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR, ASSETS_DIR):
     os.makedirs(d, exist_ok=True)
 
+def get_relaunch_command() -> list[str]:
+    """Return the preference-aware launcher command for the current install."""
+    universal_launcher = os.path.join(BASE_DIR, "JaneConverter.exe")
+    if os.path.isfile(universal_launcher):
+        return [universal_launcher]
+    # Source checkouts may run gui.py directly before the universal launcher is built.
+    return [sys.executable, os.path.abspath(__file__)]
+
+
 from engine.extractor import identify_source_type, is_playlist_url, is_url, fetch_playlist_entries
 from engine.version import __version__
 from engine.converter import (
@@ -953,6 +962,21 @@ class JaneConverterApp(ctk.CTk):
         )
         self.main_interface_btn.pack(side="bottom", fill="x", padx=12, pady=(0, 4))
 
+        self.relaunch_btn = ctk.CTkButton(
+            self.sidebar,
+            text="↻ Relaunch JaneConverter",
+            font=ctk.CTkFont(family="Segoe UI", size=10, weight="bold"),
+            fg_color=THEME["card_inner"],
+            hover_color=THEME["card_border_glow"],
+            border_width=1,
+            border_color=THEME["card_border"],
+            text_color=THEME["text_primary"],
+            height=30,
+            corner_radius=8,
+            command=self._relaunch,
+        )
+        self.relaunch_btn.pack(side="bottom", fill="x", padx=12, pady=(0, 4))
+
         self.update_btn = ctk.CTkButton(
             self.sidebar,
             text="🔄 Check for Updates",
@@ -1032,6 +1056,10 @@ class JaneConverterApp(ctk.CTk):
         )
         self.main_interface_btn.configure(
             text="M" if compact else "⚙ Use Main UI Next Launch",
+            width=32 if compact else 0,
+        )
+        self.relaunch_btn.configure(
+            text="↻" if compact else "↻ Relaunch JaneConverter",
             width=32 if compact else 0,
         )
 
@@ -2079,6 +2107,37 @@ Local files and conversion
                 "Interface Preference",
                 f"Could not save the interface preference.\n\n{exc}",
             )
+
+    def _relaunch(self):
+        if self.is_converting:
+            messagebox.showwarning(
+                "Conversion in Progress",
+                "Wait for the current conversion to finish before relaunching JaneConverter.",
+            )
+            return
+
+        env = os.environ.copy()
+        env["JANECONVERTER_DATA_DIR"] = os.path.dirname(FRONTEND_PREFERENCE_PATH)
+        launch_kwargs = {
+            "cwd": BASE_DIR,
+            "env": env,
+            "close_fds": os.name != "nt",
+        }
+        if os.name == "nt":
+            launch_kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+        try:
+            subprocess.Popen(get_relaunch_command(), **launch_kwargs)
+        except OSError as exc:
+            self.status_label.configure(text=f"Could not relaunch JaneConverter: {exc}")
+            messagebox.showerror(
+                "Relaunch failed",
+                f"JaneConverter could not be relaunched.\n\n{exc}",
+            )
+            return
+
+        self._finalize_close()
+
 
     def _use_main_interface_next_launch(self):
         self._set_interface_preference("tauri", "Main UI")

@@ -3,11 +3,18 @@
 All notable changes to JaneConverter are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [1.2.0] - 2026-09-20
 
 ### Added
+- Added the Main UI release surface built with Tauri 2, React, TypeScript, Tailwind CSS, Framer Motion, and Rust-native process/file-dialog bridging.
+- Added a shared converted-library browser with root-safe navigation, Open folder, Move library, media thumbnails, cover-art previews, refresh, and safe delete actions.
+- Added immediate Relaunch controls to the Main UI, Legacy Rust, and Legacy Python interfaces so the saved launcher preference can be applied without manual restarts.
 - Added Apple Music catalog resolution for public song and album links, album track listing, matching-source search, and source troubleshooting guidance.
 - Added stale-download protection and Unix frontend preference handling so older native binaries are not silently reused after installation.
+
+### Changed
+- Made the universal launcher the single entry point for all three interfaces while preserving the legacy launchers as recovery paths.
+- Kept converted-library data project-local and consistent across launchers, with the Main UI using the same configured output directory as the legacy interfaces.
 
 ### Fixed
 - Windows setup now ignores the Microsoft Store Python execution alias and validates a working Python runtime before creating the private environment.

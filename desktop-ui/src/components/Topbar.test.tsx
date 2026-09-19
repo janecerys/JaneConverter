@@ -12,8 +12,11 @@ describe("Topbar help", () => {
     const root = createRoot(container);
 
     await act(async () => {
-      root.render(<Topbar runtime={null} activeView="converter" />);
+      root.render(<Topbar runtime={null} />);
     });
+
+    expect(container.textContent).not.toContain("A quieter control room for your media.");
+    expect(container.textContent).not.toContain("Conversion workspace");
 
     const help = container.querySelector<HTMLButtonElement>('[aria-label="JaneConverter help"]');
     expect(help).not.toBeNull();

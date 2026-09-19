@@ -15,6 +15,8 @@
   <img src="https://img.shields.io/badge/Audio-24--bit%20WAV%20%7C%20FLAC%20%7C%20320k%20MP3-orange?style=flat-square" alt="Audio" />
 </p>
 
+**Current release: v1.2.0** — The release includes the Main UI, shared library management, cover previews, and one-click relaunch controls across all three interfaces.
+
 JaneConverter downloads media from virtually any online source, matches high-resolution metadata and album cover art, normalizes audio to streaming broadcast standards, and transcodes files into studio-grade audio or hardware-accelerated video formats.
 
 The standard way to use JaneConverter is its modern dark-themed desktop studio application. A complete command-line interface is also available for automated workflows and terminal users.
@@ -25,7 +27,7 @@ On Windows, launch `JaneConverter.exe`, the universal entry point. It reads the 
 
 ### Interface preference
 
-JaneConverter.exe opens the Main UI by default. In Settings, choose Main UI, Legacy Rust, or Legacy Python; the choice is saved beside the launcher and takes effect the next time you open JaneConverter.exe. The individual child executables remain available for recovery and diagnostics, but the universal launcher is the normal entry point. The development checkout also keeps a top-level `JaneConverter.exe`; it resolves the newest complete package under `dist` so the main launcher is easy to find without duplicating the application files. Unless `JANECONVERTER_DATA_DIR` is set, every interface uses the `converted` folder beside JaneConverter.exe.
+JaneConverter.exe opens the Main UI by default. In Settings, choose Main UI, Legacy Rust, or Legacy Python; the choice is saved beside the launcher. Each interface now exposes a **Relaunch** action so the selected interface can be applied immediately without manually closing and reopening the program. The individual child executables remain available for recovery and diagnostics, but the universal launcher is the normal entry point. The development checkout also keeps a top-level `JaneConverter.exe`; it resolves the newest complete package under `dist` so the main launcher is easy to find without duplicating the application files. Unless `JANECONVERTER_DATA_DIR` is set, every interface uses the `converted` folder beside `JaneConverter.exe`.
 
 ## Source troubleshooting FAQ
 
@@ -44,6 +46,21 @@ The provider may require login, enforce an age or regional restriction, return a
 ### Why can a local file or otherwise valid source fail?
 
 The file may be unreadable, the output folder may not be writable, disk space may be low, or FFmpeg/ffprobe may be missing. The Console contains the detailed reason. A recognized source and an available downloadable stream are separate checks.
+
+## v1.2.0 release highlights
+
+- **Main UI:** Tauri 2 + React + TypeScript desktop surface with Tailwind styling, restrained motion, a low-contrast pink glow, and native Rust process/file-dialog bridging.
+- **One universal launcher:** `JaneConverter.exe` opens the selected Main UI, Legacy Rust, or Legacy Python interface while keeping settings and exports in the same project-local data root.
+- **Shared converted library:** All three interfaces browse the same export directory. The Main UI can open the root folder, move the library, preview media thumbnails/covers, refresh, and safely delete items without leaving the configured root.
+- **Immediate interface switching:** Main UI, Legacy Rust, and Legacy Python each provide a relaunch path that applies the saved interface preference.
+
+## Project documentation
+
+- [UI rebuild architecture and parity contract](docs/architecture/UI_REBUILD_SPEC.md)
+- [Backend and release audit](docs/audits/BACKEND_AUDIT.md)
+- [Main UI feature parity matrix](docs/audits/UI_FEATURE_PARITY.md)
+- [Release-readiness roadmap](docs/planning/RELEASE_READINESS_ROADMAP.md)
+- [Post-1.0 polishing plan](docs/planning/POLISHING_PLAN.md)
 
 ## What it does
 
@@ -163,14 +180,14 @@ When pasting a playlist or album URL (YouTube playlist, Spotify album or playlis
 
 ### 3. Converted Library Tab
 
-- Lists all exported audio and video files organized by date.
-- Shows file size, format, and its organized source location.
-- Click **Folder** to open the specific output location.
-- Click **Delete** to remove files you no longer need.
+- Browses the same converted library from the Main UI, Legacy Rust, and Legacy Python interfaces.
+- Shows file size, format, organized source location, and available thumbnail or cover art.
+- Use **Open folder** for the active export directory or an individual item. **Move library** lets you relocate the shared library without moving files manually.
+- The root folder has a disabled Back control so navigation cannot escape the library; **Delete** remains available for files and folders inside it.
 
 ### 4. Live Console
 
-- The native interface keeps a fixed-height live console below the converter so progress is visible without a separate tab.
+- The Main UI and Legacy Rust interface keep conversion progress visible without requiring an external terminal; the Legacy Python interface retains its dedicated Console tab.
 - Displays real-time streaming output from the extraction and transcode engine.
 - Displays automatic update checks for the underlying extractor engine.
 - Displays live CPU, RAM, and GPU telemetry in the top header.

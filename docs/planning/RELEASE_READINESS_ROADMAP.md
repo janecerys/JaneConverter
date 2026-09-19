@@ -1,8 +1,8 @@
 # JaneConverter Consumer Release-Readiness Roadmap
 
-**Baseline:** v1.1.0 plus current working-tree changes
+**Baseline:** v1.2.0 release plus remaining post-release validation
 **Created:** 2026-09-09  
-**Companion review:** [BACKEND_AUDIT.md](BACKEND_AUDIT.md)
+**Companion review:** [BACKEND_AUDIT.md](../audits/BACKEND_AUDIT.md)
 
 ## Mission
 
@@ -12,7 +12,7 @@ Release-ready means a clean-machine user can install the application, convert co
 
 ## Current decision
 
-**Not ready for an official consumer release.**
+**v1.2.0 is released as a controlled Windows package.** Clean-machine installation, signing, and broader platform acceptance remain follow-up gates before calling it a fully supported consumer release.
 
 The implementation passes are now present in the working tree. They materially reduce the original lag risk with bounded native event delivery and asynchronous library scans, add in-app playlist selection, terminate conversion process trees on abort/close, persist native settings, add restart-time update handoff, provide diagnostics/uninstall tooling, harden account access, and produce a Windows ZIP/checksum artifact. Clean-machine installation, full GUI acceptance, long-running conversion/abort validation, signing, and final legal/dependency review still require release-candidate validation.
 

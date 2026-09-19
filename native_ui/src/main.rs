@@ -925,6 +925,25 @@ impl JaneConverterApp {
         }
     }
 
+    fn relaunch(&mut self) {
+        let current_exe =
+            std::env::current_exe().unwrap_or_else(|_| self.root.join("JaneConverterNative.exe"));
+        let launcher = resolve_universal_launcher(&self.root, &current_exe);
+        let mut command = Command::new(&launcher);
+        command
+            .current_dir(&self.root)
+            .env("JANECONVERTER_DATA_DIR", default_data_dir(&self.root));
+        #[cfg(target_os = "windows")]
+        command.creation_flags(0x08000000);
+
+        match command.spawn() {
+            Ok(_) => std::process::exit(0),
+            Err(error) => {
+                self.status = format!("Could not relaunch JaneConverter: {error}");
+            }
+        }
+    }
+
     fn refresh_library(&mut self) {
         self.library_path = PathBuf::from(&self.output_dir);
         self.refresh_library_view();
@@ -1616,8 +1635,11 @@ impl eframe::App for JaneConverterApp {
                         self.set_frontend_preference("python");
                     }
                     ui.add_space(6.0);
+                    if ui.button("Relaunch now").clicked() {
+                        self.relaunch();
+                    }
                     ui.label(
-                        RichText::new("Restart JaneConverter to apply the preference.")
+                        RichText::new("Relaunch to apply the preference immediately.")
                             .small()
                             .color(MUTED),
                     );
@@ -2012,6 +2034,19 @@ fn default_data_dir(root: &Path) -> PathBuf {
         .unwrap_or_else(|| root.to_owned())
 }
 
+fn resolve_universal_launcher(root: &Path, current_exe: &Path) -> PathBuf {
+    #[cfg(target_os = "windows")]
+    let launcher = root.join("JaneConverter.exe");
+    #[cfg(not(target_os = "windows"))]
+    let launcher = root.join("run_converter.sh");
+
+    if launcher.is_file() {
+        launcher
+    } else {
+        current_exe.to_owned()
+    }
+}
+
 fn frontend_preference_candidates(root: &Path) -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     if let Some(data_dir) = std::env::var_os("JANECONVERTER_DATA_DIR") {
@@ -2095,7 +2130,7 @@ fn main() -> eframe::Result {
 mod tests {
     use super::{
         detect_browser, explorer_selection_argument, html_escape, is_supported_source_url,
-        parse_playlist_listing,
+        parse_playlist_listing, resolve_universal_launcher,
     };
 
     #[test]
@@ -2147,5 +2182,15 @@ mod tests {
             )),
             r#"/select,"D:\Documents\GitHub Repo\JaneConverter\converted\file.mp4""#
         );
+    }
+
+    #[test]
+    fn relaunch_falls_back_to_the_current_interface_when_launcher_is_missing() {
+        let root = std::env::temp_dir().join(format!(
+            "janeconverter-relaunch-test-{}",
+            std::process::id()
+        ));
+        let current_exe = root.join("JaneConverterNative.exe");
+        assert_eq!(resolve_universal_launcher(&root, &current_exe), current_exe);
     }
 }

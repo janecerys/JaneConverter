@@ -87,11 +87,14 @@ export interface JaneBridge {
   loadPlaylist(source: string): Promise<PlaylistCatalog>;
   subscribe(listener: (event: ConverterEvent) => void): Promise<UnlistenFn>;
   scanLibrary(path: string): Promise<LibraryEntry[]>;
+  getThumbnail(root: string, path: string): Promise<string | null>;
+  moveLibrary(source: string, destinationParent: string): Promise<string>;
   deleteLibraryEntry(root: string, path: string): Promise<void>;
   createAccessLink(source: string): Promise<AccessStatus>;
   accessStatus(): Promise<AccessStatus>;
   clearAccessLink(): Promise<void>;
   setFrontendPreference(preference: FrontendPreference): Promise<void>;
+  relaunch(): Promise<void>;
   checkUpdates(): Promise<string>;
 }
 
@@ -124,11 +127,14 @@ const demoBridge: JaneBridge = {
   async loadPlaylist() { return { title: "Preview playlist", items: [] }; },
   async subscribe() { return () => {}; },
   async scanLibrary() { return []; },
+  async getThumbnail() { return null; },
+  async moveLibrary(source) { return source; },
   async deleteLibraryEntry() {},
   async createAccessLink() { return { active: true, link: "Preview mode", browser: "" }; },
   async accessStatus() { return { active: false, link: "", browser: "" }; },
   async clearAccessLink() {},
   async setFrontendPreference() {},
+  async relaunch() {},
   async checkUpdates() { return "Preview mode: update checks are available in the desktop build."; },
 };
 
@@ -147,11 +153,14 @@ const tauriBridge: JaneBridge = {
   loadPlaylist: (source) => invoke<PlaylistCatalog>("load_playlist", { source }),
   subscribe: (listener) => listen<ConverterEvent>("converter-event", (event) => listener(event.payload)),
   scanLibrary: (path) => invoke<LibraryEntry[]>("scan_library", { path }),
+  getThumbnail: (root, path) => invoke<string | null>("get_thumbnail", { root, path }),
+  moveLibrary: (source, destinationParent) => invoke<string>("move_library", { source, destinationParent }),
   deleteLibraryEntry: (root, path) => invoke<void>("delete_library_entry", { root, path }),
   createAccessLink: (source) => invoke<AccessStatus>("create_access_link", { source }),
   accessStatus: () => invoke<AccessStatus>("access_status"),
   clearAccessLink: () => invoke<void>("clear_access_link"),
   setFrontendPreference: (preference) => invoke<void>("set_frontend_preference", { preference }),
+  relaunch: () => invoke<void>("relaunch"),
   checkUpdates: () => invoke<string>("check_updates"),
 };
 
