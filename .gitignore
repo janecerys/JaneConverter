@@ -7,6 +7,7 @@ __pycache__/
 
 # Build artifacts
 JaneConverter.exe
+JaneConverterDesktop.exe
 JaneConverterNative.exe
 ffmpeg.exe
 build/
