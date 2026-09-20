@@ -111,9 +111,9 @@ Most consumers should use the single-file installer from the latest GitHub relea
 5. Start JaneConverter from the Desktop or Start Menu shortcut. The **Main UI** is
    selected automatically; the Legacy Rust and Legacy Python interfaces remain
    available in **Settings → Launch preference**.
-6. On first launch, allow the optional browser-bridge setup if you want to download
-   media that requires an account session. If you decline, JaneConverter still works
-   for public media and you can install the bridge later using the instructions below.
+6. If you want to download media that requires an account session, install the
+   optional Browser Bridge using the short instructions in **Authorized browser
+   sessions** below. If you skip it, JaneConverter still works for public media.
 
 The consumer installer is self-contained: Python, pip, Rust, Node.js, FFmpeg, and
 FFprobe do not need to be installed separately. The installer also includes the
@@ -133,8 +133,8 @@ the installer and download it again from the official release page.
 
 The installer does not silently install a browser extension or read browser
 passwords. Browser extensions require explicit user consent. JaneConverter ships the
-bridge files and presents the optional setup choice; if you decline it, use the
-manual **Load unpacked** steps below.
+bridge files beside the installed application; install them only if you need
+account-only browser sessions, using the manual **Load unpacked** steps below.
 
 ### Portable/developer safety net
 
