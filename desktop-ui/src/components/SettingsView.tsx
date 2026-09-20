@@ -82,7 +82,7 @@ export function SettingsView({ runtime, onStatus }: { runtime: RuntimeInfo | nul
             <RotateCw className={"size-3.5 " + (relaunching ? "animate-spin" : "")} /> {relaunching ? "Relaunching..." : "Relaunch now"}
           </button>
         </div>      </section>
-      <section className="panel flex flex-wrap items-center justify-between gap-4 p-5"><div><div className="text-sm text-zinc-200">Check for updates</div><div className="mt-1 text-xs text-zinc-600">Checks the existing read-only application and extractor update services.</div></div><button type="button" disabled={checking} onClick={() => void updates()} className="subtle-button flex items-center gap-2 px-4 py-2 text-xs"><RefreshCw className={`size-3.5 ${checking ? "animate-spin" : ""}`} /> {checking ? "Checking..." : "Check now"}</button></section>
+      <section className="panel flex flex-wrap items-center justify-between gap-4 p-5"><div><div className="text-sm text-zinc-200">Check for updates</div><div className="mt-1 text-xs text-zinc-600">Checks the latest published JaneConverter release on GitHub and the extractor service. Nothing is installed silently.</div></div><button type="button" disabled={checking} onClick={() => void updates()} className="subtle-button flex items-center gap-2 px-4 py-2 text-xs"><RefreshCw className={`size-3.5 ${checking ? "animate-spin" : ""}`} /> {checking ? "Checking..." : "Check now"}</button></section>
       <div className="flex items-center gap-2 text-[11px] text-zinc-700"><ExternalLink size={12} /> Project-local storage is the default. User-selected folders are always respected.</div>
     </div>
   );

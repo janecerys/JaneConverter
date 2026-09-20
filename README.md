@@ -96,28 +96,56 @@ Node.js is optional but recommended when fetching YouTube media, as it enables t
 
 ## Installation & Setup
 
-### Consumer installer (Windows, recommended)
+### Windows consumer installation (recommended)
 
-Run `dist\JaneConverter-Setup.exe` from a release download. It installs one
-consumer-facing JaneConverter entry point with the Main UI selected by default,
-while keeping Legacy Rust and Legacy Python available from the launch preference
-setting. The installer bundles the conversion engine, FFmpeg/ffprobe, and the
-browser-bridge files, so consumers do not need to install Python, pip, Rust, Node.js,
-or FFmpeg separately.
+Most consumers should use the single-file installer from the latest GitHub release:
 
-The browser bridge remains consent-based because Chromium browsers do not permit a
-normal application installer to silently install extensions. The installer includes
-the extension files; if the consumer declines the optional browser setup, use the
-manual **Load unpacked** instructions below.
+1. Open the [latest JaneConverter release](https://github.com/janecerys/JaneConverter/releases/latest).
+2. Under **Assets**, download **`JaneConverter-Setup.exe`** to your computer. Do not
+   run it from inside a ZIP file.
+3. Double-click the downloaded installer. If Windows shows SmartScreen, choose
+   **More info** → **Run anyway** only when the file came from the official
+   `janecerys/JaneConverter` release page.
+4. Accept the default install location, or choose another folder with enough free
+   space for the application and converted media.
+5. Start JaneConverter from the Desktop or Start Menu shortcut. The **Main UI** is
+   selected automatically; the Legacy Rust and Legacy Python interfaces remain
+   available in **Settings → Launch preference**.
+6. On first launch, allow the optional browser-bridge setup if you want to download
+   media that requires an account session. If you decline, JaneConverter still works
+   for public media and you can install the bridge later using the instructions below.
+
+The consumer installer is self-contained: Python, pip, Rust, Node.js, FFmpeg, and
+FFprobe do not need to be installed separately. The installer also includes the
+conversion engine, the shared converted-library support, the three launcher modes,
+and the JaneConverter Browser Bridge files.
+
+For a quick authenticity check before running the installer, download the matching
+`JaneConverter-Setup.exe.sha256` file from the same release and run this in PowerShell
+from the download folder:
+
+```powershell
+Get-FileHash .\JaneConverter-Setup.exe -Algorithm SHA256
+```
+
+The displayed hash must match the value in the `.sha256` file. If it does not, delete
+the installer and download it again from the official release page.
+
+The installer does not silently install a browser extension or read browser
+passwords. Browser extensions require explicit user consent. JaneConverter ships the
+bridge files and presents the optional setup choice; if you decline it, use the
+manual **Load unpacked** steps below.
 
 ### Portable/developer safety net
 
 The `JaneConverter-1.2.0-windows.zip` package is the source-visible recovery path.
 It keeps `setup.bat`, the Python engine, the legacy interfaces, diagnostics, and
 the project-local data layout available for developers or troubleshooting. Extract
-it, then run `setup.bat` from the extracted folder.
+it to a normal folder first, then run `setup.bat` from the extracted folder. This is
+not the recommended consumer path because it may need to install prerequisites and
+is intended as a recovery/developer path.
 
-### 1-Click Automated Setup (Portable path)
+### 1-Click Automated Setup (portable path)
 
 Clone this repository or extract the downloaded ZIP folder, open PowerShell or Command Prompt in the `JaneConverter` folder, and run:
 
@@ -235,7 +263,7 @@ The extension is intentionally local and source-scoped. It does not run continuo
 
 ## Updates, releases, and uninstalling
 
-JaneConverter checks for updates without modifying the running installation. Published ZIP packages include a SHA-256 checksum and can be staged for application on the next restart. A short-lived helper waits for the launcher to exit before applying staged files, so the application never replaces files that it still has open.
+JaneConverter checks for updates without modifying the running installation. Packaged consumer snapshots query the latest published GitHub release because they do not contain a Git checkout; the Main UI performs this check shortly after launch and Settings can retry it manually. Published ZIP packages include a SHA-256 checksum and can be staged for application on the next restart. A short-lived helper waits for the launcher to exit before applying staged files, so the application never replaces files that it still has open.
 
 To remove JaneConverter's private environment and user data, close the app and run `uninstall.ps1` on Windows or `./uninstall.sh` on macOS/Linux. Exported media is included in the removal, so copy anything you want to keep first.
 
@@ -335,7 +363,7 @@ python run_converter.py --help
 - **Local files stay local**: Local conversion does not upload media. Startup update checks are network requests and can be disabled with `--no-update`.
 - **Zero API keys required**: Spotify metadata extraction uses public catalog endpoints and OpenGraph information. No Spotify account, developer keys, or logins are needed.
 - **Direct stream retrieval**: Media streams are fetched directly from host servers without passing through third-party proxy services.
-- **Update checks are read-only**: On launch, JaneConverter may check PyPI and the application repository for available updates. It does not install packages, pull Git changes, or replace the launcher automatically. Extractor upgrades are kept within the tested dependency range and should be delivered through a verified release process.
+- **Update checks are read-only**: On launch, JaneConverter may check PyPI and the latest published GitHub release for available updates. It does not install packages, pull Git changes, or replace the launcher automatically. Extractor upgrades are kept within the tested dependency range and application upgrades remain a consent-based release-install step.
 
 ## Troubleshooting
 

@@ -61,6 +61,21 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [access.active]);
 
+  useEffect(() => {
+    let mounted = true;
+    const timer = window.setTimeout(() => {
+      void bridge.checkUpdates().then((message) => {
+        if (!mounted || !/update available|check unavailable/i.test(message)) return;
+        setStatus(message);
+        setEvents((current) => [...current.slice(-1499), { jobId: "ui", kind: "status", message }]);
+      }).catch(() => {
+        // Startup checks stay quiet when the machine is offline. The Settings
+        // view remains available for an explicit retry and full status text.
+      });
+    }, 1200);
+    return () => { mounted = false; window.clearTimeout(timer); };
+  }, []);
+
   function statusMessage(message: string) {
     setStatus(message);
     setEvents((current) => [...current.slice(-1499), { jobId: "ui", kind: "status", message }]);

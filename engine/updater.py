@@ -3,13 +3,19 @@ Update checks and explicitly requested update operations for JaneConverter.
 """
 
 import os
+import re
 import sys
 import subprocess
 from typing import Optional, Dict, Any, Callable
+from urllib.parse import urlparse
 import requests
 import yt_dlp
 
+from engine.version import __version__
+
 REPO_DIR = os.path.realpath(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/janecerys/JaneConverter/releases/latest"
+GITHUB_RELEASE_PREFIX = "https://github.com/janecerys/JaneConverter/releases/"
 
 def _run_git_cmd(args: list, timeout: float = 10.0) -> subprocess.CompletedProcess:
     no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -61,18 +67,131 @@ def get_upstream_branch() -> str:
         pass
     return "origin/main"
 
+
+def _is_newer_version(latest: str, current: str) -> bool:
+    """Compare release versions without making the frozen runtime depend on Git."""
+    try:
+        from packaging.version import Version
+
+        return Version(str(latest)) > Version(str(current))
+    except Exception:
+        def numeric_parts(value: str) -> tuple:
+            match = re.match(r"^v?(\d+(?:\.\d+){0,3})", str(value).strip())
+            if not match:
+                return tuple()
+            return tuple(int(part) for part in match.group(1).split("."))
+
+        return numeric_parts(latest) > numeric_parts(current)
+
+
+def _trusted_release_url(value: Any) -> str:
+    """Return only URLs belonging to the canonical JaneConverter GitHub release path."""
+    candidate = str(value or "").strip()
+    parsed = urlparse(candidate)
+    if parsed.scheme == "https" and parsed.netloc.lower() == "github.com" and candidate.startswith(GITHUB_RELEASE_PREFIX):
+        return candidate
+    return ""
+
+
+def check_for_release_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
+    """Check the published GitHub release used by packaged consumer installs.
+
+    A packaged snapshot has no ``.git`` directory, so Git fetches cannot tell it
+    whether a newer consumer build exists. This endpoint is read-only and only
+    reports a newer published release; it never downloads or installs anything.
+    """
+    current_version = __version__
+    unavailable = {
+        "has_update": False,
+        "online": False,
+        "current_version": current_version,
+        "latest_version": current_version,
+        "release_url": "",
+        "installer_available": False,
+        "installer_url": "",
+        "installer_checksum_url": "",
+        "error": None,
+    }
+    try:
+        response = requests.get(
+            GITHUB_LATEST_RELEASE_URL,
+            headers={
+                "Accept": "application/vnd.github+json",
+                "User-Agent": f"JaneConverter/{current_version}",
+            },
+            timeout=max(1.0, float(timeout_seconds)),
+        )
+    except Exception as error:
+        unavailable["error"] = f"GitHub release check unavailable: {error}"
+        return unavailable
+
+    if response.status_code != 200:
+        unavailable["error"] = f"GitHub release check returned HTTP {response.status_code}."
+        return unavailable
+
+    try:
+        release = response.json()
+    except ValueError:
+        unavailable["error"] = "GitHub release check returned invalid JSON."
+        return unavailable
+    if not isinstance(release, dict):
+        unavailable["error"] = "GitHub release check returned an unexpected response."
+        return unavailable
+
+    tag = str(release.get("tag_name", "")).strip()
+    latest_version = tag[1:] if tag.lower().startswith("v") else tag
+    if not re.fullmatch(r"\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?", latest_version):
+        unavailable["error"] = "GitHub latest release did not contain a valid JaneConverter version."
+        return unavailable
+
+    assets = release.get("assets") if isinstance(release, dict) else []
+    if not isinstance(assets, list):
+        assets = []
+    installer_url = ""
+    installer_checksum_url = ""
+    for asset in assets:
+        if not isinstance(asset, dict):
+            continue
+        asset_name = str(asset.get("name", "")).strip().lower()
+        asset_url = _trusted_release_url(asset.get("browser_download_url"))
+        if asset_name == "janeconverter-setup.exe":
+            installer_url = asset_url
+        elif asset_name == "janeconverter-setup.exe.sha256":
+            installer_checksum_url = asset_url
+
+    release_url = _trusted_release_url(release.get("html_url"))
+    return {
+        "has_update": _is_newer_version(latest_version, current_version),
+        "online": True,
+        "current_version": current_version,
+        "latest_version": latest_version,
+        "release_url": release_url,
+        "installer_available": bool(installer_url),
+        "installer_url": installer_url,
+        "installer_checksum_url": installer_checksum_url,
+        "error": None,
+    }
+
 def check_for_repo_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
     """
     Queries the Git remote to check if newer application commits exist.
     """
     if not is_git_repo():
+        release = check_for_release_updates(timeout_seconds=timeout_seconds)
         return {
-            "has_update": False,
+            "has_update": release["has_update"],
             "is_git": False,
             "current_commit": "unknown",
-            "latest_commit": "unknown",
+            "latest_commit": release["latest_version"],
             "commits_behind": 0,
-            "error": "Not a Git repository"
+            "current_version": release["current_version"],
+            "latest_version": release["latest_version"],
+            "online": release["online"],
+            "release_url": release["release_url"],
+            "installer_available": release["installer_available"],
+            "installer_url": release.get("installer_url", ""),
+            "installer_checksum_url": release.get("installer_checksum_url", ""),
+            "error": release["error"],
         }
 
     upstream = get_upstream_branch()

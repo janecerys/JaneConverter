@@ -4,6 +4,7 @@ import os
 
 from engine.events import BoundedLogQueue, CoalescingCallbackQueue
 from engine.extractor import identify_source_type, is_playlist_url
+from engine import updater
 from engine.updater import check_and_apply_all_updates, update_engine
 from run_converter import media_library_folder, _metadata_folder
 
@@ -74,3 +75,64 @@ def test_engine_install_requires_explicit_permission(monkeypatch):
         "latest_version": "2026.2",
     })
     assert result is False
+
+
+def test_published_release_check_finds_newer_github_version_and_installer(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "tag_name": "v1.3.0",
+                "html_url": "https://github.com/janecerys/JaneConverter/releases/tag/v1.3.0",
+                "assets": [
+                    {
+                        "name": "JaneConverter-Setup.exe",
+                        "browser_download_url": "https://github.com/janecerys/JaneConverter/releases/download/v1.3.0/JaneConverter-Setup.exe",
+                    },
+                    {
+                        "name": "JaneConverter-Setup.exe.sha256",
+                        "browser_download_url": "https://github.com/janecerys/JaneConverter/releases/download/v1.3.0/JaneConverter-Setup.exe.sha256",
+                    },
+                ],
+            }
+
+    requested = {}
+
+    def fake_get(url, **kwargs):
+        requested.update(url=url, kwargs=kwargs)
+        return FakeResponse()
+
+    monkeypatch.setattr(updater.requests, "get", fake_get)
+    monkeypatch.setattr(updater, "__version__", "1.2.0")
+
+    result = updater.check_for_release_updates()
+
+    assert result["has_update"] is True
+    assert result["current_version"] == "1.2.0"
+    assert result["latest_version"] == "1.3.0"
+    assert result["installer_available"] is True
+    assert result["release_url"].endswith("/v1.3.0")
+    assert requested["url"] == updater.GITHUB_LATEST_RELEASE_URL
+    assert requested["kwargs"]["headers"]["User-Agent"].startswith("JaneConverter/")
+
+
+def test_non_git_snapshot_uses_published_release_check(monkeypatch):
+    monkeypatch.setattr(updater, "is_git_repo", lambda: False)
+    monkeypatch.setattr(updater, "check_for_release_updates", lambda **_: {
+        "has_update": True,
+        "online": True,
+        "current_version": "1.2.0",
+        "latest_version": "1.3.0",
+        "installer_available": True,
+        "release_url": "https://github.com/janecerys/JaneConverter/releases/tag/v1.3.0",
+        "error": None,
+    })
+
+    result = updater.check_for_repo_updates()
+
+    assert result["is_git"] is False
+    assert result["has_update"] is True
+    assert result["current_version"] == "1.2.0"
+    assert result["latest_version"] == "1.3.0"
+    assert result["installer_available"] is True

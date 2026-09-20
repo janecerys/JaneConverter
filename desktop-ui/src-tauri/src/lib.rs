@@ -391,7 +391,55 @@ fn format_update_summary(stdout: &str) -> String {
     }
 
     if let Some(repo) = payload.get("repo") {
-        if repo
+        let packaged_snapshot = !repo
+            .get("is_git")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(true)
+            && repo.get("current_version").is_some();
+        if packaged_snapshot && repo
+            .get("has_update")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            let current = repo
+                .get("current_version")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("installed");
+            let latest = repo
+                .get("latest_version")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("latest");
+            let installer_note = if repo
+                .get("installer_available")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
+            {
+                " The latest consumer installer is available from GitHub."
+            } else {
+                " Open the published GitHub release to update this snapshot."
+            };
+            messages.push(format!(
+                "JaneConverter update available: v{current} -> v{latest}.{installer_note}"
+            ));
+        } else if packaged_snapshot {
+            if let Some(error) = repo.get("error").and_then(serde_json::Value::as_str) {
+                if !error.trim().is_empty() {
+                    messages.push(format!("JaneConverter release check unavailable: {error}"));
+                } else {
+                    let current = repo
+                        .get("current_version")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or("installed");
+                    messages.push(format!("JaneConverter is up to date (v{current})."));
+                }
+            } else {
+                let current = repo
+                    .get("current_version")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("installed");
+                messages.push(format!("JaneConverter is up to date (v{current})."));
+            }
+        } else if repo
             .get("has_update")
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false)
@@ -497,6 +545,16 @@ mod tests {
         assert!(summary.contains("Extractor engine is up to date"));
         assert!(summary.contains("repository check unavailable"));
         assert!(!summary.contains("\"engine\""));
+    }
+
+    #[test]
+    fn packaged_snapshot_reports_published_release() {
+        let summary = format_update_summary(
+            r#"{"engine":{"has_update":false,"current_version":"2026.08.30","latest_version":"2026.08.19","online":true},"repo":{"has_update":true,"is_git":false,"current_version":"1.2.0","latest_version":"1.3.0","installer_available":true,"error":null}}"#,
+        );
+        assert!(summary.contains("JaneConverter update available: v1.2.0 -> v1.3.0"));
+        assert!(summary.contains("latest consumer installer"));
+        assert!(!summary.contains("not a Git repository"));
     }
 
     #[test]

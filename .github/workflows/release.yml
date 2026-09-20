@@ -25,6 +25,15 @@ jobs:
       - name: Build portable source package
         shell: pwsh
         run: .\build_release.ps1 -Version "${{ github.ref_name }}".TrimStart('v')
+      - name: Ensure FFmpeg is available for the consumer bundle
+        shell: pwsh
+        run: |
+          if (-not (Get-Command ffmpeg.exe -ErrorAction SilentlyContinue) -or -not (Get-Command ffprobe.exe -ErrorAction SilentlyContinue)) {
+            choco install ffmpeg --no-progress --yes
+          }
+      - name: Build consumer setup installer
+        shell: pwsh
+        run: .\packaging\build_consumer.ps1 -Version "${{ github.ref_name }}".TrimStart('v') -SkipPortable
       - name: Verify release package contents
         shell: pwsh
         run: |
@@ -50,6 +59,8 @@ jobs:
           python -m py_compile "$package\run_converter.py" "$package\gui.py" "$package\update_helper.py"
           $version = python "$package\run_converter.py" --version
           if (-not $version -or $version -notmatch "JaneConverter") { throw "Packaged CLI version check failed." }
+          $installer = Get-Item dist\JaneConverter-Setup.exe -ErrorAction Stop
+          if ($installer.Length -lt 1MB) { throw "Consumer setup installer is unexpectedly small." }
       - name: Upload workflow artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -57,6 +68,7 @@ jobs:
           path: |
             dist/*.zip
             dist/*.sha256
+            dist/JaneConverter-Setup.exe
       - name: Publish tagged release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
@@ -64,4 +76,5 @@ jobs:
           files: |
             dist/*.zip
             dist/*.sha256
+            dist/JaneConverter-Setup.exe
           generate_release_notes: true
