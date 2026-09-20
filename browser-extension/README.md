@@ -21,8 +21,17 @@ It does not export a cookie file, upload session data, or send anything to a rem
 
 The existing browser-database path remains available as a fallback when the bridge is not installed or not selected.
 
-## Built-in platform coverage
+## Site coverage and permissions
 
-The packaged manifest declares common social, video, live-streaming, audio, photo, and creator hosts up front, including Facebook, Instagram, X/Twitter, YouTube, TikTok, Reddit, Twitch, Vimeo, Dailymotion, Rumble, Kick, SoundCloud, Spotify, Apple Music, Bandcamp, Mixcloud, Discord, Telegram, Pinterest, LinkedIn, Snapchat, Tumblr, Flickr, Imgur, Bilibili, VK, WhatsApp, and Streamable.
+The extension does not maintain a hard-coded list of social or media platforms.
+It supports any HTTP or HTTPS source that the browser exposes through its cookies
+API. When the Connect button is clicked, the browser asks for permission for the
+current source origin only. This keeps the install narrow while still supporting
+Facebook, Instagram, X/Twitter, YouTube, TikTok, Reddit, Twitch, Vimeo,
+Dailymotion, Rumble, Kick, SoundCloud, Spotify, Apple Music, Bandcamp, Mixcloud,
+Discord, Telegram, Pinterest, LinkedIn, Snapchat, Tumblr, Flickr, Imgur, Bilibili,
+VK, WhatsApp, Streamable, and other supported yt-dlp sites without editing the
+manifest.
 
-Other sites remain supported through the existing source-scoped optional permission request. The extension still reads only cookies applicable to the confirmed source URL and sends them only to JaneConverter's one-time loopback bridge.
+The extension reads only cookies applicable to the confirmed source URL and sends
+them only to JaneConverter's one-time loopback bridge.

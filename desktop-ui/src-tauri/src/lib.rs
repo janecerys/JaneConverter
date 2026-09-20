@@ -6,8 +6,9 @@ mod process;
 
 use model::{AccessStatus, ConversionRequest, LibraryEntry, RuntimeInfo};
 use paths::{
-    command_available, data_root, detect_gpu, find_python, packaged_engine, prepare_command,
-    project_root, read_preference, settings_get_internal, write_preference, write_settings,
+    command_available, data_root, detect_gpu, find_ffmpeg, find_python, packaged_engine,
+    prepare_command, project_root, read_preference, settings_get_internal, write_preference,
+    write_settings,
 };
 use process::{
     load_playlist as load_playlist_engine, start_conversion as start_engine_conversion,
@@ -25,6 +26,7 @@ use tauri::State;
 pub struct AppState {
     active_child: Arc<Mutex<Option<Arc<Mutex<std::process::Child>>>>>,
     active_cancel: Arc<Mutex<Option<Arc<AtomicBool>>>>,
+    active_job: Arc<Mutex<Option<String>>>,
     sequence: Arc<AtomicU64>,
     access: Arc<Mutex<Option<access::AccessServer>>>,
 }
@@ -34,6 +36,7 @@ impl Default for AppState {
         Self {
             active_child: Arc::new(Mutex::new(None)),
             active_cancel: Arc::new(Mutex::new(None)),
+            active_job: Arc::new(Mutex::new(None)),
             sequence: Arc::new(AtomicU64::new(1)),
             access: Arc::new(Mutex::new(None)),
         }
@@ -57,10 +60,15 @@ fn active_bridge_payload(state: &AppState, source: &str) -> Option<String> {
     })
 }
 
+fn job_is_active(active_job: Option<&str>, requested_job: &str) -> bool {
+    active_job == Some(requested_job.trim())
+}
+
 #[tauri::command]
 fn runtime_info() -> RuntimeInfo {
     let (gpu_available, gpu_label) = detect_gpu();
     let python = find_python();
+    let ffmpeg = find_ffmpeg();
     RuntimeInfo {
         mode: "tauri",
         python_ready: if python.is_file() {
@@ -68,7 +76,7 @@ fn runtime_info() -> RuntimeInfo {
         } else {
             command_available(python.to_str().unwrap_or("python"))
         },
-        ffmpeg_ready: command_available("ffmpeg"),
+        ffmpeg_ready: command_available(ffmpeg.to_str().unwrap_or("ffmpeg")),
         python_path: python.display().to_string(),
         data_root: data_root().display().to_string(),
         project_root: project_root().display().to_string(),
@@ -185,11 +193,23 @@ fn start_conversion(
     );
     let child_slot = Arc::clone(&state.active_child);
     let cancel_slot = Arc::clone(&state.active_cancel);
+    let active_job_slot = Arc::clone(&state.active_job);
     let child_slot_for_worker = Arc::clone(&child_slot);
     let cancel_slot_for_worker = Arc::clone(&cancel_slot);
+    let active_job_for_worker = Arc::clone(&active_job_slot);
+    let completed_job_id = job_id.clone();
     let browser = active_browser(&state);
     let bridge_payload = active_bridge_payload(&state, &request.source);
-    start_engine_conversion(
+    {
+        let mut active_job = active_job_slot
+            .lock()
+            .map_err(|_| "The conversion registry is unavailable.")?;
+        if active_job.is_some() {
+            return Err("A conversion is already running.".into());
+        }
+        *active_job = Some(job_id.clone());
+    }
+    if let Err(error) = start_engine_conversion(
         app,
         job_id.clone(),
         request,
@@ -204,8 +224,20 @@ fn start_conversion(
             if let Ok(mut value) = cancel_slot_for_worker.lock() {
                 *value = None;
             }
+            if let Ok(mut value) = active_job_for_worker.lock() {
+                if value.as_deref() == Some(completed_job_id.as_str()) {
+                    *value = None;
+                }
+            }
         },
-    )?;
+    ) {
+        if let Ok(mut active_job) = active_job_slot.lock() {
+            if active_job.as_deref() == Some(job_id.as_str()) {
+                *active_job = None;
+            }
+        }
+        return Err(error);
+    }
     Ok(job_id)
 }
 
@@ -213,6 +245,14 @@ fn start_conversion(
 fn cancel_conversion(state: State<'_, AppState>, job_id: String) -> Result<(), String> {
     if job_id.trim().is_empty() {
         return Err("The conversion id is missing.".into());
+    }
+    let active_job = state
+        .active_job
+        .lock()
+        .map_err(|_| "The conversion registry is unavailable.")?
+        .clone();
+    if !job_is_active(active_job.as_deref(), &job_id) {
+        return Err("That conversion is no longer active.".into());
     }
     let cancel = state
         .active_cancel
@@ -396,10 +436,11 @@ fn format_update_summary(stdout: &str) -> String {
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(true)
             && repo.get("current_version").is_some();
-        if packaged_snapshot && repo
-            .get("has_update")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false)
+        if packaged_snapshot
+            && repo
+                .get("has_update")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(false)
         {
             let current = repo
                 .get("current_version")
@@ -526,6 +567,13 @@ pub fn run() {
 mod tests {
     use super::*;
     use crate::model::ConversionRequest;
+
+    #[test]
+    fn cancellation_only_matches_the_active_job() {
+        assert!(job_is_active(Some("conversion-123"), " conversion-123 "));
+        assert!(!job_is_active(Some("conversion-123"), "conversion-stale"));
+        assert!(!job_is_active(None, "conversion-123"));
+    }
 
     #[test]
     fn settings_default_is_project_local() {

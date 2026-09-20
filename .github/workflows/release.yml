@@ -20,8 +20,48 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable-x86_64-pc-windows-msvc
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: desktop-ui/package-lock.json
+      - name: Install Rust advisory scanner
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit
       - name: Install Python dependencies for package smoke tests
         run: python -m pip install -r requirements-dev.txt
+      - name: Verify Python dependencies
+        run: python -m pip check
+      - name: Audit Python dependencies
+        shell: pwsh
+        run: |
+          python -m pip install pip-audit
+          python -m pip_audit -r requirements.txt
+      - name: Audit Rust dependencies
+        shell: pwsh
+        run: |
+          cargo audit --file desktop-ui/src-tauri/Cargo.lock
+          cargo audit --file native_ui/Cargo.lock
+      - name: Enforce Rust formatting
+        shell: pwsh
+        run: |
+          cargo fmt --manifest-path desktop-ui/src-tauri/Cargo.toml -- --check
+          cargo fmt --manifest-path native_ui/Cargo.toml -- --check
+      - name: Test Rust launchers
+        shell: pwsh
+        run: |
+          cargo test --manifest-path desktop-ui/src-tauri/Cargo.toml --locked
+          cargo test --manifest-path native_ui/Cargo.toml --locked
+      - name: Test and build Main UI
+        shell: pwsh
+        working-directory: desktop-ui
+        run: |
+          npm ci --no-audit --no-fund --ignore-scripts
+          npm test
+          npm run build
+          npm audit --omit=dev --audit-level=high
       - name: Build portable source package
         shell: pwsh
         run: .\build_release.ps1 -Version "${{ github.ref_name }}".TrimStart('v')

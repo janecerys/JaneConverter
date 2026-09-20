@@ -13,6 +13,7 @@ use url::Url;
 const MAX_BRIDGE_PAYLOAD_BYTES: usize = 256 * 1024;
 const MAX_BRIDGE_COOKIES: usize = 500;
 const MAX_COOKIE_FIELD_BYTES: usize = 8192;
+const BRIDGE_HEADER: &str = "x-janecconverter-bridge";
 
 pub struct AccessServer {
     pub link: String,
@@ -71,7 +72,10 @@ impl AccessServer {
         if self.source.trim() != source.trim() {
             return None;
         }
-        self.bridge_payload.lock().ok().and_then(|value| value.clone())
+        self.bridge_payload
+            .lock()
+            .ok()
+            .and_then(|value| value.clone())
     }
 }
 
@@ -103,12 +107,20 @@ fn browser_label_from_signal(signal: &str) -> String {
     }
 }
 
-fn http_response(status: u16, reason: &str, content_type: &str, body: &str, cors: bool) -> String {
-    let cors_headers = if cors {
-        "Access-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: content-type\r\n"
-    } else {
-        ""
-    };
+fn http_response(
+    status: u16,
+    reason: &str,
+    content_type: &str,
+    body: &str,
+    cors_origin: Option<&str>,
+) -> String {
+    let cors_headers = cors_origin
+        .map(|origin| {
+            format!(
+                "Access-Control-Allow-Origin: {origin}\r\nVary: Origin\r\nAccess-Control-Allow-Headers: content-type, {BRIDGE_HEADER}\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\n"
+            )
+        })
+        .unwrap_or_default();
     format!(
         "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; style-src 'unsafe-inline'\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\n{cors_headers}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
         body.as_bytes().len(),
@@ -154,7 +166,8 @@ fn read_request(stream: &mut std::net::TcpStream) -> Result<HttpRequest, String>
                     .lines()
                     .find_map(|line| {
                         let (name, value) = line.split_once(':')?;
-                        name.trim().eq_ignore_ascii_case("content-length")
+                        name.trim()
+                            .eq_ignore_ascii_case("content-length")
                             .then(|| value.trim().parse::<usize>().ok())
                             .flatten()
                     })
@@ -185,11 +198,41 @@ fn read_request(stream: &mut std::net::TcpStream) -> Result<HttpRequest, String>
 }
 
 fn send_html(stream: &mut std::net::TcpStream, status: u16, reason: &str, body: &str) {
-    let _ = stream.write_all(http_response(status, reason, "text/html; charset=utf-8", body, false).as_bytes());
+    let _ = stream.write_all(
+        http_response(status, reason, "text/html; charset=utf-8", body, None).as_bytes(),
+    );
 }
 
 fn send_json(stream: &mut std::net::TcpStream, status: u16, reason: &str, body: &str) {
-    let _ = stream.write_all(http_response(status, reason, "application/json; charset=utf-8", body, true).as_bytes());
+    let _ = stream.write_all(
+        http_response(
+            status,
+            reason,
+            "application/json; charset=utf-8",
+            body,
+            None,
+        )
+        .as_bytes(),
+    );
+}
+
+fn send_json_cors(
+    stream: &mut std::net::TcpStream,
+    status: u16,
+    reason: &str,
+    origin: &str,
+    body: &str,
+) {
+    let _ = stream.write_all(
+        http_response(
+            status,
+            reason,
+            "application/json; charset=utf-8",
+            body,
+            Some(origin),
+        )
+        .as_bytes(),
+    );
 }
 
 fn serve(
@@ -200,6 +243,8 @@ fn serve(
     browser: Arc<Mutex<Option<String>>>,
     confirmed: Arc<AtomicBool>,
     bridge_payload: Arc<Mutex<Option<String>>>,
+    bridge_nonce: String,
+    bridge_received: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
 ) {
     let _ = listener.set_nonblocking(true);
@@ -209,13 +254,27 @@ fn serve(
                 let request = match read_request(&mut stream) {
                     Ok(request) => request,
                     Err(error) => {
-                        send_json(&mut stream, 413, "Payload Too Large", &json!({"error": error}).to_string());
+                        send_json(
+                            &mut stream,
+                            413,
+                            "Payload Too Large",
+                            &json!({"error": error}).to_string(),
+                        );
                         continue;
                     }
                 };
                 let base = format!("/access/{token}");
                 if request.method == "OPTIONS" && request.path.starts_with(&base) {
-                    send_json(&mut stream, 200, "OK", "{}");
+                    match bridge_origin(&request.headers) {
+                        Ok(Some(origin)) => send_json_cors(&mut stream, 200, "OK", &origin, "{}"),
+                        Ok(None) => send_json(&mut stream, 200, "OK", "{}"),
+                        Err(error) => send_json(
+                            &mut stream,
+                            403,
+                            "Forbidden",
+                            &json!({"error": error}).to_string(),
+                        ),
+                    }
                     continue;
                 }
                 if request.method == "GET" && request.path == format!("{base}/ready") {
@@ -229,45 +288,150 @@ fn serve(
                     continue;
                 }
                 if request.method == "GET" && request.path == format!("{base}/bridge/challenge") {
+                    let origin = match bridge_origin(&request.headers) {
+                        Ok(origin) => origin,
+                        Err(error) => {
+                            send_json(
+                                &mut stream,
+                                403,
+                                "Forbidden",
+                                &json!({"error": error}).to_string(),
+                            );
+                            continue;
+                        }
+                    };
                     if !confirmed.load(Ordering::Relaxed) {
-                        send_json(&mut stream, 409, "Conflict", &json!({"error": "Confirm account access in the browser first."}).to_string());
+                        send_json_cors_or_plain(
+                            &mut stream,
+                            409,
+                            "Conflict",
+                            origin.as_deref(),
+                            &json!({"error": "Confirm account access in the browser first."})
+                                .to_string(),
+                        );
                     } else {
-                        send_json(&mut stream, 200, "OK", &json!({"sourceUrl": source, "confirmed": true}).to_string());
+                        let response = if bridge_received.load(Ordering::Acquire) {
+                            json!({"sourceUrl": source, "confirmed": true, "connected": true})
+                        } else {
+                            json!({"sourceUrl": source, "confirmed": true, "connected": false, "bridgeToken": bridge_nonce.clone()})
+                        };
+                        send_json_cors_or_plain(
+                            &mut stream,
+                            200,
+                            "OK",
+                            origin.as_deref(),
+                            &response.to_string(),
+                        );
                     }
                     continue;
                 }
                 if request.method == "POST" && request.path == format!("{base}/bridge") {
+                    let origin = match bridge_origin(&request.headers) {
+                        Ok(origin) => origin,
+                        Err(error) => {
+                            send_json(
+                                &mut stream,
+                                403,
+                                "Forbidden",
+                                &json!({"error": error}).to_string(),
+                            );
+                            continue;
+                        }
+                    };
                     if !confirmed.load(Ordering::Relaxed) {
-                        send_json(&mut stream, 409, "Conflict", &json!({"error": "Confirm account access in the browser first."}).to_string());
+                        send_json_cors_or_plain(
+                            &mut stream,
+                            409,
+                            "Conflict",
+                            origin.as_deref(),
+                            &json!({"error": "Confirm account access in the browser first."})
+                                .to_string(),
+                        );
+                        continue;
+                    }
+                    if bridge_received.load(Ordering::Acquire) {
+                        send_json_cors_or_plain(
+                            &mut stream,
+                            409,
+                            "Conflict",
+                            origin.as_deref(),
+                            &json!({"error": "A browser session is already connected. Clear access before connecting again."}).to_string(),
+                        );
+                        continue;
+                    }
+                    if header_value(&request.headers, BRIDGE_HEADER).unwrap_or_default()
+                        != bridge_nonce
+                    {
+                        send_json_cors_or_plain(
+                            &mut stream,
+                            403,
+                            "Forbidden",
+                            origin.as_deref(),
+                            &json!({"error": "The browser bridge challenge was invalid or expired."}).to_string(),
+                        );
                         continue;
                     }
                     match validate_bridge_payload(&request.body, &source) {
                         Ok(payload) => {
+                            if bridge_received.swap(true, Ordering::AcqRel) {
+                                send_json_cors_or_plain(
+                                    &mut stream,
+                                    409,
+                                    "Conflict",
+                                    origin.as_deref(),
+                                    &json!({"error": "A browser session is already connected. Clear access before connecting again."}).to_string(),
+                                );
+                                continue;
+                            }
                             if let Ok(mut value) = bridge_payload.lock() {
                                 *value = Some(payload);
                             }
-                            send_json(&mut stream, 200, "OK", &json!({"ok": true}).to_string());
+                            send_json_cors_or_plain(
+                                &mut stream,
+                                200,
+                                "OK",
+                                origin.as_deref(),
+                                &json!({"ok": true}).to_string(),
+                            );
                         }
-                        Err(error) => send_json(&mut stream, 400, "Bad Request", &json!({"error": error}).to_string()),
+                        Err(error) => send_json_cors_or_plain(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            origin.as_deref(),
+                            &json!({"error": error}).to_string(),
+                        ),
                     }
                     continue;
                 }
-                if request.method == "GET" && (request.path == base || request.path == format!("{base}/")) {
+                if request.method == "GET"
+                    && (request.path == base || request.path == format!("{base}/"))
+                {
                     let signal = browser_signal_from_headers(&request.headers);
                     let detection = resolve_browser_label(&signal, default_browser.as_deref());
                     if let Ok(mut value) = browser.lock() {
                         *value = Some(detection.clone());
                     }
-                    send_html(&mut stream, 200, "OK", &access_page(
-                        "JaneConverter account access",
-                        &format!(
-                            r#"<p>Use this temporary page in the browser whose session you want to use. The link only identifies that browser; JaneConverter never asks for or stores your password or copies or uploads your cookies.</p><ol><li>Open the source page below.</li><li>Sign in normally if needed.</li><li>Return here and confirm access.</li></ol><p><a class="primary" href="{}" target="_blank" rel="noreferrer">Open source link</a></p><p><a class="confirm" href="/access/{token}/ready">I am signed in - confirm access</a></p><p class="note">The link expires when JaneConverter closes or access is cleared.</p>"#,
-                            html_escape(&source)
+                    send_html(
+                        &mut stream,
+                        200,
+                        "OK",
+                        &access_page(
+                            "JaneConverter account access",
+                            &format!(
+                                r#"<p>Use this temporary page in the browser whose session you want to use. The link only identifies that browser; JaneConverter never asks for or stores your password or copies or uploads your cookies.</p><ol><li>Open the source page below.</li><li>Sign in normally if needed.</li><li>Return here and confirm access.</li></ol><p><a class="primary" href="{}" target="_blank" rel="noreferrer">Open source link</a></p><p><a class="confirm" href="/access/{token}/ready">I am signed in - confirm access</a></p><p class="note">The link expires when JaneConverter closes or access is cleared.</p>"#,
+                                html_escape(&source)
+                            ),
                         ),
-                    ));
+                    );
                     continue;
                 }
-                send_html(&mut stream, 404, "Not Found", &access_page("Link unavailable", "<p>This access link is not valid.</p>"));
+                send_html(
+                    &mut stream,
+                    404,
+                    "Not Found",
+                    &access_page("Link unavailable", "<p>This access link is not valid.</p>"),
+                );
             }
             Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(100))
@@ -293,15 +457,23 @@ pub fn create(source: &str, _stamp: u128) -> Result<AccessServer, String> {
     let browser = Arc::new(Mutex::new(None));
     let confirmed = Arc::new(AtomicBool::new(false));
     let bridge_payload = Arc::new(Mutex::new(None));
+    let bridge_nonce: String = rand::rng()
+        .sample_iter(&Alphanumeric)
+        .take(32)
+        .map(char::from)
+        .collect();
+    let bridge_received = Arc::new(AtomicBool::new(false));
     let stop = Arc::new(AtomicBool::new(false));
     let thread_browser = Arc::clone(&browser);
     let thread_confirmed = Arc::clone(&confirmed);
     let thread_bridge_payload = Arc::clone(&bridge_payload);
+    let thread_bridge_received = Arc::clone(&bridge_received);
     let thread_stop = Arc::clone(&stop);
     let source = source.trim().to_owned();
     let worker = thread::spawn({
         let source_for_thread = source.clone();
         let token = token.clone();
+        let bridge_nonce = bridge_nonce.clone();
         move || {
             serve(
                 listener,
@@ -311,6 +483,8 @@ pub fn create(source: &str, _stamp: u128) -> Result<AccessServer, String> {
                 thread_browser,
                 thread_confirmed,
                 thread_bridge_payload,
+                bridge_nonce,
+                thread_bridge_received,
                 thread_stop,
             )
         }
@@ -323,6 +497,48 @@ pub fn create(source: &str, _stamp: u128) -> Result<AccessServer, String> {
         stop,
         thread: Some(worker),
     })
+}
+
+fn send_json_cors_or_plain(
+    stream: &mut std::net::TcpStream,
+    status: u16,
+    reason: &str,
+    origin: Option<&str>,
+    body: &str,
+) {
+    if let Some(origin) = origin {
+        send_json_cors(stream, status, reason, origin, body);
+    } else {
+        send_json(stream, status, reason, body);
+    }
+}
+
+fn header_value<'a>(headers: &'a str, name: &str) -> Option<&'a str> {
+    headers.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.trim()
+            .eq_ignore_ascii_case(name)
+            .then_some(value.trim())
+    })
+}
+
+fn bridge_origin(headers: &str) -> Result<Option<String>, String> {
+    let Some(origin) = header_value(headers, "origin") else {
+        return Ok(None);
+    };
+    let parsed =
+        Url::parse(origin).map_err(|_| "The browser bridge origin was invalid.".to_owned())?;
+    if !matches!(
+        parsed.scheme(),
+        "chrome-extension" | "edge-extension" | "moz-extension" | "safari-web-extension"
+    ) || parsed.host_str().is_none()
+        || (!parsed.path().is_empty() && parsed.path() != "/")
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err("The browser bridge origin was not allowed.".into());
+    }
+    Ok(Some(origin.to_owned()))
 }
 
 fn validate_bridge_payload(body: &[u8], source: &str) -> Result<String, String> {

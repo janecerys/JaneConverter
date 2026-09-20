@@ -163,21 +163,36 @@ fn handle_access_request(
         }
         request_bytes.extend_from_slice(&chunk[..count]);
         if request_bytes.len() > 272 * 1024 {
-            send_json(stream, 413, "{\"error\":\"The browser bridge request is too large.\"}");
+            send_json(
+                stream,
+                413,
+                "{\"error\":\"The browser bridge request is too large.\"}",
+            );
             return;
         }
         if header_end.is_none() {
-            if let Some(position) = request_bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+            if let Some(position) = request_bytes
+                .windows(4)
+                .position(|window| window == b"\r\n\r\n")
+            {
                 let end = position + 4;
                 let headers = String::from_utf8_lossy(&request_bytes[..position]);
-                content_length = headers.lines().find_map(|line| {
-                    let (name, value) = line.split_once(':')?;
-                    name.trim().eq_ignore_ascii_case("content-length")
-                        .then(|| value.trim().parse::<usize>().ok())
-                        .flatten()
-                }).unwrap_or(0);
+                content_length = headers
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        name.trim()
+                            .eq_ignore_ascii_case("content-length")
+                            .then(|| value.trim().parse::<usize>().ok())
+                            .flatten()
+                    })
+                    .unwrap_or(0);
                 if content_length > 256 * 1024 {
-                    send_json(stream, 413, "{\"error\":\"The browser bridge payload is too large.\"}");
+                    send_json(
+                        stream,
+                        413,
+                        "{\"error\":\"The browser bridge payload is too large.\"}",
+                    );
                     return;
                 }
                 header_end = Some(end);
@@ -228,32 +243,67 @@ fn handle_access_request(
         }
         send_html(stream, 200, &ready_page(&detection));
         if first_confirmation {
-            let _ = events.send(AccessEvent { generation, browser: detection });
+            let _ = events.send(AccessEvent {
+                generation,
+                browser: detection,
+            });
         }
     } else if path == format!("{base}/bridge/challenge") {
         if !confirmed.load(Ordering::Relaxed) || stop.load(Ordering::Relaxed) {
-            send_json(stream, 409, "{\"error\":\"Confirm account access in the browser first.\"}");
+            send_json(
+                stream,
+                409,
+                "{\"error\":\"Confirm account access in the browser first.\"}",
+            );
         } else {
-            send_json(stream, 200, &format!("{{\"sourceUrl\":{},\"confirmed\":true}}", json_string(source)));
+            send_json(
+                stream,
+                200,
+                &format!(
+                    "{{\"sourceUrl\":{},\"confirmed\":true}}",
+                    json_string(source)
+                ),
+            );
         }
     } else if path == format!("{base}/bridge") {
         if !confirmed.load(Ordering::Relaxed) || stop.load(Ordering::Relaxed) {
-            send_json(stream, 409, "{\"error\":\"Confirm account access in the browser first.\"}");
+            send_json(
+                stream,
+                409,
+                "{\"error\":\"Confirm account access in the browser first.\"}",
+            );
         } else if body.len() > 256 * 1024 {
-            send_json(stream, 413, "{\"error\":\"The browser bridge payload is too large.\"}");
+            send_json(
+                stream,
+                413,
+                "{\"error\":\"The browser bridge payload is too large.\"}",
+            );
         } else if serde_json::from_slice::<Value>(body)
             .ok()
-            .and_then(|value| value.get("cookies").and_then(Value::as_array).map(|cookies| !cookies.is_empty()))
+            .and_then(|value| {
+                value
+                    .get("cookies")
+                    .and_then(Value::as_array)
+                    .map(|cookies| !cookies.is_empty())
+            })
             != Some(true)
         {
-            send_json(stream, 400, "{\"error\":\"The browser bridge payload was invalid.\"}");
+            send_json(
+                stream,
+                400,
+                "{\"error\":\"The browser bridge payload was invalid.\"}",
+            );
         } else if let Ok(payload) = String::from_utf8(body.to_vec()) {
             if let Ok(mut value) = bridge_payload.lock() {
                 *value = Some(payload);
             }
             send_json(stream, 200, "{\"ok\":true}");
         } else {
-            send_json(stream, 400, "{\"error\":\"The browser bridge payload was not UTF-8.\"}");
+            send_json(
+                stream,
+                400,
+                "{\"error\":\"The browser bridge payload was not UTF-8.\"}",
+            );
         }
     } else {
         send_html(stream, 404, &error_page("This access link is not valid."));
@@ -2272,7 +2322,9 @@ fn app_root() -> PathBuf {
     if let Some(parent) = exe.parent() {
         if parent.join("run_converter.py").exists()
             || parent.join("JaneConverterEngine.exe").exists()
-            || parent.join("resources/runtime/JaneConverterEngine.exe").exists()
+            || parent
+                .join("resources/runtime/JaneConverterEngine.exe")
+                .exists()
         {
             return parent.to_owned();
         }

@@ -221,6 +221,12 @@ async function connect() {
     if (!accessTab || !challenge) {
       throw lastError || new Error("Open and confirm the JaneConverter access link first.");
     }
+    if (challenge.connected) {
+      throw new Error("JaneConverter already has a browser session connected. Return to the app, or clear access before connecting again.");
+    }
+    if (!challenge.bridgeToken) {
+      throw new Error("JaneConverter did not provide a one-time bridge challenge. Reopen and confirm a fresh access link, then retry.");
+    }
 
     setStatus("Requesting permission for this source only...", "warning");
     if (!await requestSourcePermission(challenge.sourceUrl)) {
@@ -243,7 +249,10 @@ async function connect() {
     setStatus("Sending the source-scoped session to JaneConverter...");
     const bridgeResponse = await fetch(accessEndpoint(accessTab, "/bridge"), {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-JaneConverter-Bridge": challenge.bridgeToken
+      },
       body: JSON.stringify({ cookies: collected.cookies })
     });
     const result = await readJson(bridgeResponse);

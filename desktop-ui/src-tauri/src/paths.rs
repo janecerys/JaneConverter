@@ -75,7 +75,9 @@ pub fn run_command(program: &str, args: &[&str]) -> io::Result<Output> {
 }
 
 pub fn command_available(program: &str) -> bool {
-    run_command(program, &["--version"]).is_ok()
+    run_command(program, &["--version"])
+        .map(|output| output.status.success())
+        .unwrap_or(false)
 }
 
 pub fn find_ffmpeg() -> PathBuf {
@@ -156,7 +158,10 @@ fn parse_bool(values: &HashMap<String, String>, key: &str, default: bool) -> boo
 
 pub fn detect_gpu() -> (bool, String) {
     let ffmpeg = find_ffmpeg();
-    let output = run_command(ffmpeg.to_str().unwrap_or("ffmpeg"), &["-hide_banner", "-encoders"]);
+    let output = run_command(
+        ffmpeg.to_str().unwrap_or("ffmpeg"),
+        &["-hide_banner", "-encoders"],
+    );
     let text = output
         .ok()
         .map(|value| String::from_utf8_lossy(&value.stdout).to_ascii_lowercase())

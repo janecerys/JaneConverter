@@ -187,7 +187,9 @@ pub fn start_conversion(
             .ok_or_else(|| "Could not open the browser bridge handoff.".to_owned())?;
         if let Err(error) = stdin.write_all(payload.as_bytes()) {
             terminate_child(&mut child);
-            return Err(format!("Could not send the browser bridge handoff: {error}"));
+            return Err(format!(
+                "Could not send the browser bridge handoff: {error}"
+            ));
         }
     }
     let stdout = child.stdout.take();
@@ -335,7 +337,9 @@ pub fn load_playlist(
             .ok_or_else(|| "Could not open the browser bridge handoff.".to_owned())?;
         if let Err(error) = stdin.write_all(payload.as_bytes()) {
             terminate_child(&mut child);
-            return Err(format!("Could not send the browser bridge handoff: {error}"));
+            return Err(format!(
+                "Could not send the browser bridge handoff: {error}"
+            ));
         }
     }
     let output = child

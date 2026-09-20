@@ -8,6 +8,7 @@ the extractor in memory while the browser remains open.
 """
 
 from html import escape
+from hmac import compare_digest
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -19,6 +20,13 @@ from engine.auth import BrowserDetection, detect_browser_from_headers
 
 
 MAX_BRIDGE_PAYLOAD_BYTES = 256 * 1024
+BRIDGE_HEADER = "X-JaneConverter-Bridge"
+ALLOWED_BRIDGE_ORIGIN_SCHEMES = {
+    "chrome-extension",
+    "edge-extension",
+    "moz-extension",
+    "safari-web-extension",
+}
 
 
 class AccountAccessServer:
@@ -38,6 +46,8 @@ class AccountAccessServer:
         self._confirmed = False
         self._detected_browser = None
         self._bridge_payload = None
+        self._bridge_nonce = secrets.token_urlsafe(24)
+        self._bridge_received = False
 
     @property
     def access_link(self) -> Optional[str]:
@@ -95,7 +105,11 @@ class AccountAccessServer:
                     parsed = urlparse(self.path)
                     base_path = f"/access/{owner._token}"
                     if parsed.path.startswith(f"{base_path}/bridge"):
-                        owner._send_json(self, {"ok": True})
+                        origin = owner._bridge_origin(self)
+                        if origin == "":
+                            owner._send_json(self, {"error": "The browser bridge origin was not allowed."}, status=403)
+                        else:
+                            owner._send_json(self, {"ok": True}, cors_origin=origin)
                     else:
                         owner._send_response(self, "", 404)
 
@@ -105,15 +119,19 @@ class AccountAccessServer:
                     if parsed.path != f"{base_path}/bridge":
                         owner._send_json(self, {"error": "This access link is not valid."}, status=404)
                         return
+                    origin = owner._bridge_origin(self)
+                    if origin == "":
+                        owner._send_json(self, {"error": "The browser bridge origin was not allowed."}, status=403)
+                        return
                     try:
                         content_length = int(self.headers.get("Content-Length", "0"))
                     except ValueError:
                         content_length = 0
                     if content_length <= 0 or content_length > MAX_BRIDGE_PAYLOAD_BYTES:
-                        owner._send_json(self, {"error": "The browser bridge payload is too large or empty."}, status=413)
+                        owner._send_json(self, {"error": "The browser bridge payload is too large or empty."}, status=413, cors_origin=origin)
                         return
                     body = self.rfile.read(content_length)
-                    owner._receive_bridge_payload(self, body)
+                    owner._receive_bridge_payload(self, body, origin)
 
                 def log_message(self, _format, *_args):
                     # Never log URLs containing the one-time access token.
@@ -138,6 +156,8 @@ class AccountAccessServer:
             server = self._server
             self._server = None
             self._consumed = True
+            self._bridge_payload = None
+            self._bridge_nonce = ""
         if server is not None:
             server.shutdown()
             server.server_close()
@@ -160,18 +180,39 @@ class AccountAccessServer:
                 pass
 
     def _send_bridge_challenge(self, handler):
-        with self._lock:
-            confirmed = self._confirmed and not self._consumed and self._server is not None
-        if not confirmed:
-            self._send_json(handler, {"error": "Confirm account access in the browser first."}, status=409)
+        origin = self._bridge_origin(handler)
+        if origin == "":
+            self._send_json(handler, {"error": "The browser bridge origin was not allowed."}, status=403)
             return
-        self._send_json(handler, {"sourceUrl": self.source_url, "confirmed": True})
-
-    def _receive_bridge_payload(self, handler, body: bytes):
         with self._lock:
             confirmed = self._confirmed and not self._consumed and self._server is not None
+            connected = self._bridge_received
         if not confirmed:
-            self._send_json(handler, {"error": "Confirm account access in the browser first."}, status=409)
+            self._send_json(
+                handler,
+                {"error": "Confirm account access in the browser first."},
+                status=409,
+                cors_origin=origin,
+            )
+            return
+        response = {"sourceUrl": self.source_url, "confirmed": True, "connected": connected}
+        if not connected:
+            response["bridgeToken"] = self._bridge_nonce
+        self._send_json(handler, response, cors_origin=origin)
+
+    def _receive_bridge_payload(self, handler, body: bytes, origin: Optional[str]):
+        with self._lock:
+            confirmed = self._confirmed and not self._consumed and self._server is not None
+            connected = self._bridge_received
+            expected_nonce = self._bridge_nonce
+        if not confirmed:
+            self._send_json(handler, {"error": "Confirm account access in the browser first."}, status=409, cors_origin=origin)
+            return
+        if connected:
+            self._send_json(handler, {"error": "A browser session is already connected. Clear access before connecting again."}, status=409, cors_origin=origin)
+            return
+        if not compare_digest(handler.headers.get(BRIDGE_HEADER, ""), expected_nonce):
+            self._send_json(handler, {"error": "The browser bridge challenge was invalid or expired."}, status=403, cors_origin=origin)
             return
         try:
             from engine.browser_bridge import cookie_jar_from_payload
@@ -181,11 +222,36 @@ class AccountAccessServer:
             if not isinstance(parsed, dict) or not isinstance(parsed.get("cookies"), list):
                 raise ValueError("The browser bridge payload has an invalid shape.")
         except Exception as error:
-            self._send_json(handler, {"error": str(error)}, status=400)
+            self._send_json(handler, {"error": str(error)}, status=400, cors_origin=origin)
             return
         with self._lock:
+            if self._bridge_received:
+                self._send_json(
+                    handler,
+                    {"error": "A browser session is already connected. Clear access before connecting again."},
+                    status=409,
+                    cors_origin=origin,
+                )
+                return
             self._bridge_payload = body.decode("utf-8")
-        self._send_json(handler, {"ok": True})
+            self._bridge_received = True
+        self._send_json(handler, {"ok": True}, cors_origin=origin)
+
+    @staticmethod
+    def _bridge_origin(handler) -> Optional[str]:
+        origin = handler.headers.get("Origin", "").strip()
+        if not origin:
+            return None
+        parsed = urlparse(origin)
+        if (
+            parsed.scheme in ALLOWED_BRIDGE_ORIGIN_SCHEMES
+            and parsed.netloc
+            and parsed.path in {"", "/"}
+            and not parsed.query
+            and not parsed.fragment
+        ):
+            return origin
+        return ""
 
     def _record_browser(self, headers):
         detection = detect_browser_from_headers(headers)
@@ -262,15 +328,17 @@ h1 {{ color:#f1f5f9; }} a {{ color:#93c5fd; }} .primary,.confirm {{ display:inli
         handler.wfile.write(payload)
 
     @staticmethod
-    def _send_json(handler, payload: dict, status: int = 200):
+    def _send_json(handler, payload: dict, status: int = 200, cors_origin: Optional[str] = None):
         body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
         handler.send_response(status)
         handler.send_header("Content-Type", "application/json; charset=utf-8")
         handler.send_header("Content-Length", str(len(body)))
         handler.send_header("Cache-Control", "no-store")
-        handler.send_header("Access-Control-Allow-Origin", "*")
-        handler.send_header("Access-Control-Allow-Headers", "content-type")
-        handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        if cors_origin:
+            handler.send_header("Access-Control-Allow-Origin", cors_origin)
+            handler.send_header("Vary", "Origin")
+            handler.send_header("Access-Control-Allow-Headers", f"content-type, {BRIDGE_HEADER}")
+            handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         handler.send_header("X-Content-Type-Options", "nosniff")
         handler.send_header("Connection", "close")
         handler.end_headers()

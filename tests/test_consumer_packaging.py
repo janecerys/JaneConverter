@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+import zipfile
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +49,22 @@ def test_frozen_engine_entrypoint_keeps_source_cli_compatibility():
     assert "run_converter.py" in entrypoint
     assert "from run_converter import main" in entrypoint
     assert "sys.argv" in entrypoint
+
+
+def test_browser_bridge_archive_matches_the_source_extension():
+    manifest = json.loads((REPO_ROOT / "browser-extension" / "manifest.json").read_text(encoding="utf-8"))
+    archives = sorted((REPO_ROOT / "browser-extension" / "releases").glob("JaneConverter-Browser-Bridge-*.zip"))
+    assert archives
+    assert archives[-1].stem.endswith(manifest["version"])
+
+    with zipfile.ZipFile(archives[-1]) as archive:
+        names = set(archive.namelist())
+        assert names == {"manifest.json", "popup.html", "popup.js", "README.md"}
+        packaged_manifest = json.loads(archive.read("manifest.json"))
+
+    assert packaged_manifest == manifest
+    assert packaged_manifest["host_permissions"] == ["http://127.0.0.1/*", "http://localhost/*"]
+    assert packaged_manifest["optional_host_permissions"] == ["*://*/*"]
 
 
 def test_engine_has_a_packaged_update_check_mode():

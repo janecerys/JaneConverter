@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { bridge, type AccessStatus, type ConverterEvent, type ConverterSettings, type RuntimeInfo } from "./bridge";
 import { Sidebar, type ViewKey } from "./components/Sidebar";
@@ -29,6 +29,7 @@ export default function App() {
   const [events, setEvents] = useState<ConverterEvent[]>([]);
   const [access, setAccess] = useState<AccessStatus>({ active: false, link: "", browser: "", bridgeConnected: false });
   const [jobId, setJobId] = useState("");
+  const activeJobRef = useRef("");
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState("Ready. Paste a link or choose a file to begin.");
 
@@ -46,14 +47,21 @@ export default function App() {
     void bridge.subscribe((event) => {
       if (!mounted) return;
       setEvents((current) => [...current.slice(-1499), event]);
-      if (event.jobId && event.jobId === jobId) {
+      if (event.kind === "started" && !activeJobRef.current) {
+        activeJobRef.current = event.jobId;
+        setJobId(event.jobId);
+      }
+      if (event.jobId && event.jobId === activeJobRef.current) {
         if (event.progress !== undefined) setProgress(event.progress);
         setStatus(event.message);
-        if (event.kind === "finished" || event.kind === "failed" || event.kind === "cancelled") setJobId("");
+        if (event.kind === "finished" || event.kind === "failed" || event.kind === "cancelled") {
+          activeJobRef.current = "";
+          setJobId("");
+        }
       }
     }).then((unlisten) => { cleanup = unlisten; });
     return () => { mounted = false; cleanup?.(); };
-  }, [jobId]);
+  }, []);
 
   useEffect(() => {
     if (!access.active) return;
@@ -89,6 +97,7 @@ export default function App() {
   async function start(source: string, playlistIndexes?: string) {
     try {
       const nextJob = await bridge.startConversion({ ...settings, source, playlistIndexes, browserSession: access.browser || undefined });
+      activeJobRef.current = nextJob;
       setJobId(nextJob);
       setProgress(.02);
       setStatus("Starting conversion...");

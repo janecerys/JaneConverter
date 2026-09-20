@@ -60,6 +60,36 @@ developer and recovery safety net.
 - [x] Document the two distribution paths and rollback procedure.
 - [x] Verify checksums, package contents, and clean-worktree impact.
 
+## Follow-up: Product hardening and consumer readiness
+
+The dual-distribution work is complete. The next improvement pass focuses on
+making the Main UI the dependable consumer path while preserving the legacy
+interfaces as recovery tools.
+
+### Phase 5: Safe browser access and session lifecycle
+
+- [x] Narrow browser-extension permissions to the explicitly connected source.
+- [x] Harden the localhost bridge with origin checks and one-time handoff
+  consumption without breaking the Vivaldi workflow.
+- [x] Add regression coverage for bridge expiry, reuse, malformed payloads,
+  and cookie cleanup after a completed conversion.
+
+### Phase 6: Consumer reliability and performance
+
+- [ ] Add a persistent job record and user-visible retry/resume state for
+  interrupted playlist work.
+- [ ] Measure and improve startup, library scanning, and large-playlist
+  responsiveness.
+- [ ] Keep the Main UI package minimal while retaining legacy launchers in a
+  clearly documented recovery distribution.
+
+### Phase 7: Release confidence
+
+- [x] Add Python and Rust dependency advisory checks to CI.
+- [x] Enforce Rust formatting and frontend production-build checks.
+- [ ] Add a clean-machine Windows acceptance checklist for install, launch,
+  browser bridge, library relocation, relaunch, and uninstall.
+
 ## Risks and mitigations
 
 | Risk | Impact | Mitigation |
