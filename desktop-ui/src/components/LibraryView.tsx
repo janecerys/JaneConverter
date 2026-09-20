@@ -47,6 +47,9 @@ function joinPath(parent: string, name: string) {
   return parent.replace(/[\\/]+$/, "") + "\\" + name;
 }
 
+type LibrarySection = "explorer" | "recent";
+type PreviewSetter = (update: (current: Record<string, string>) => Record<string, string>) => void;
+
 type PendingAction =
   | { kind: "move"; destination: string }
   | { kind: "delete"; entry: LibraryEntry };
@@ -71,10 +74,15 @@ export function LibraryView({
   const [currentPath, setCurrentPath] = useState(settings.outputDir);
   const [entries, setEntries] = useState<LibraryEntry[]>([]);
   const [previews, setPreviews] = useState<Record<string, string>>({});
+  const [recentEntries, setRecentEntries] = useState<LibraryEntry[]>([]);
+  const [recentPreviews, setRecentPreviews] = useState<Record<string, string>>({});
+  const [section, setSection] = useState<LibrarySection>("explorer");
   const [loading, setLoading] = useState(false);
+  const [recentLoading, setRecentLoading] = useState(false);
   const [moving, setMoving] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const refreshSequence = useRef(0);
+  const recentRefreshSequence = useRef(0);
   const cancelConfirmRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -87,7 +95,13 @@ export function LibraryView({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [pendingAction]);
 
-  async function loadPreviews(scanned: LibraryEntry[], libraryRoot: string, token: number) {
+  async function loadPreviews(
+    scanned: LibraryEntry[],
+    libraryRoot: string,
+    token: number,
+    isCurrent: () => boolean,
+    setPreview: PreviewSetter,
+  ) {
     const candidates = scanned.slice(0, 24);
     let nextIndex = 0;
     async function worker() {
@@ -95,8 +109,8 @@ export function LibraryView({
         const entry = candidates[nextIndex++];
         try {
           const preview = await bridge.getThumbnail(libraryRoot, entry.path);
-          if (preview && token === refreshSequence.current) {
-            setPreviews((current) => ({ ...current, [entry.path]: preview }));
+          if (preview && isCurrent()) {
+            setPreview((current) => ({ ...current, [entry.path]: preview }));
           }
         } catch {
           // A missing cover, unsupported codec, or unavailable FFmpeg should not block browsing.
@@ -114,7 +128,7 @@ export function LibraryView({
       if (token !== refreshSequence.current) return;
       setEntries(scanned);
       setPreviews({});
-      void loadPreviews(scanned, libraryRoot, token);
+      void loadPreviews(scanned, libraryRoot, token, () => token === refreshSequence.current, setPreviews);
     } catch (error) {
       onStatus(error instanceof Error ? error.message : String(error));
     } finally {
@@ -122,10 +136,27 @@ export function LibraryView({
     }
   }
 
+  async function refreshRecent(libraryRoot = root) {
+    const token = ++recentRefreshSequence.current;
+    setRecentLoading(true);
+    try {
+      const scanned = await bridge.recentConversions(libraryRoot, 100);
+      if (token !== recentRefreshSequence.current) return;
+      setRecentEntries(scanned);
+      setRecentPreviews({});
+      void loadPreviews(scanned, libraryRoot, token, () => token === recentRefreshSequence.current, setRecentPreviews);
+    } catch (error) {
+      onStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (token === recentRefreshSequence.current) setRecentLoading(false);
+    }
+  }
+
   useEffect(() => {
     setRoot(settings.outputDir);
     setCurrentPath(settings.outputDir);
     void refresh(settings.outputDir, settings.outputDir);
+    void refreshRecent(settings.outputDir);
   }, [settings.outputDir]);
 
   function navigate(path: string) {
@@ -146,6 +177,14 @@ export function LibraryView({
   async function openPath(path: string) {
     try {
       await bridge.openPath(path);
+    } catch (error) {
+      onStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function openFile(path: string) {
+    try {
+      await bridge.openFile(path);
     } catch (error) {
       onStatus(error instanceof Error ? error.message : String(error));
     }
@@ -189,7 +228,11 @@ export function LibraryView({
     try {
       await bridge.deleteLibraryEntry(root, action.entry.path);
       onStatus(action.entry.name + " deleted.");
-      await refresh(currentPath);
+      if (section === "recent") {
+        await refreshRecent();
+      } else {
+        await refresh(currentPath);
+      }
     } catch (error) {
       onStatus(error instanceof Error ? error.message : String(error));
     }
@@ -221,6 +264,18 @@ export function LibraryView({
 
   const confirmation = pendingActionCopy();
   const atRoot = pathKey(currentPath) === pathKey(root);
+  const visibleEntries = section === "recent" ? recentEntries : entries;
+  const visiblePreviews = section === "recent" ? recentPreviews : previews;
+  const activeLoading = section === "recent" ? recentLoading : loading;
+
+  function removePreview(path: string) {
+    const setPreview = section === "recent" ? setRecentPreviews : setPreviews;
+    setPreview((current) => {
+      const next = { ...current };
+      delete next[path];
+      return next;
+    });
+  }
 
   return (
     <div className="mx-auto max-w-[1180px] space-y-5 pb-10">
@@ -228,27 +283,49 @@ export function LibraryView({
         <div>
           <div className="mono-label">Project library</div>
           <h1 className="mt-2 text-3xl font-semibold tracking-[-.04em] text-white">Converted media.</h1>
-          <p className="mt-2 text-sm text-zinc-500">Browse the organized folders produced by the existing engine.</p>
+          <p className="mt-2 text-sm text-zinc-500">
+            {section === "recent" ? "Find the newest converted media across every library folder." : "Browse the organized folders produced by the existing engine."}
+          </p>
+          <div className="mt-4 inline-flex rounded-xl border border-white/[0.08] bg-white/[0.025] p-1">
+            <button
+              type="button"
+              aria-pressed={section === "explorer"}
+              onClick={() => setSection("explorer")}
+              className={"rounded-lg px-3 py-2 text-xs transition-colors " + (section === "explorer" ? "bg-white/[0.09] text-white" : "text-zinc-500 hover:text-zinc-300")}
+            >
+              Library Explorer
+            </button>
+            <button
+              type="button"
+              aria-pressed={section === "recent"}
+              onClick={() => setSection("recent")}
+              className={"rounded-lg px-3 py-2 text-xs transition-colors " + (section === "recent" ? "bg-white/[0.09] text-white" : "text-zinc-500 hover:text-zinc-300")}
+            >
+              Recent Conversions
+            </button>
+          </div>
         </div>
-        <button type="button" onClick={() => void refresh()} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs">
-          <RefreshCw className={"size-3.5 " + (loading ? "animate-spin" : "")} /> Refresh
+        <button type="button" onClick={() => void (section === "recent" ? refreshRecent() : refresh())} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs">
+          <RefreshCw className={"size-3.5 " + (activeLoading ? "animate-spin" : "")} /> Refresh
         </button>
       </motion.div>
 
       <section className="panel space-y-3 p-4">
-        <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
-          <button
-            type="button"
-            disabled={atRoot}
-            title={atRoot ? "Already at the library root" : "Go to the parent folder"}
-            onClick={goBack}
-            className={"subtle-button flex items-center gap-2 px-3 py-2 " + (atRoot ? "cursor-not-allowed opacity-40" : "")}
-          >
-            <ArrowLeft className="size-3.5" /> Back
-          </button>
-          <span className="truncate font-mono text-[11px] text-zinc-700">{currentPath}</span>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-white/[0.06] pt-3">
+        {section === "explorer" && (
+          <div className="flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+            <button
+              type="button"
+              disabled={atRoot}
+              title={atRoot ? "Already at the library root" : "Go to the parent folder"}
+              onClick={goBack}
+              className={"subtle-button flex items-center gap-2 px-3 py-2 " + (atRoot ? "cursor-not-allowed opacity-40" : "")}
+            >
+              <ArrowLeft className="size-3.5" /> Back
+            </button>
+            <span className="truncate font-mono text-[11px] text-zinc-700">{currentPath}</span>
+          </div>
+        )}
+        <div className={"flex flex-wrap items-center justify-between gap-3 " + (section === "explorer" ? "border-t border-white/[0.06] pt-3" : "")}>
           <div>
             <div className="text-xs text-zinc-400">Library root</div>
             <div className="mt-1 truncate font-mono text-[11px] text-zinc-600">{root}</div>
@@ -265,9 +342,9 @@ export function LibraryView({
       </section>
 
       <section className="space-y-2">
-        {!entries.length && <div className="panel py-14 text-center text-sm text-zinc-600">{loading ? "Scanning converted media..." : "No converted media found in this folder."}</div>}
-        {entries.slice(0, 500).map((entry) => {
-          const preview = previews[entry.path];
+        {!visibleEntries.length && <div className="panel py-14 text-center text-sm text-zinc-600">{activeLoading ? "Scanning converted media..." : section === "recent" ? "No recent conversions found in this library." : "No converted media found in this folder."}</div>}
+        {visibleEntries.slice(0, 500).map((entry) => {
+          const preview = visiblePreviews[entry.path];
           const details = entry.isDirectory
             ? entry.mediaCount + " media item" + (entry.mediaCount === 1 ? "" : "s") + " - " + size(entry.totalBytes)
             : entry.extension + " - " + size(entry.totalBytes);
@@ -275,7 +352,12 @@ export function LibraryView({
             <motion.div key={entry.path} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="panel flex flex-wrap items-center gap-3 px-4 py-3">
               <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl border border-white/[0.07] bg-black/15 text-zinc-500">
                 {preview ? (
-                  <img src={preview} alt="" className="size-full object-cover" onError={() => setPreviews((current) => { const next = { ...current }; delete next[entry.path]; return next; })} />
+                  <img
+                    src={preview}
+                    alt=""
+                    className="size-full object-cover"
+                    onError={() => removePreview(entry.path)}
+                  />
                 ) : entry.isDirectory ? (
                   <Folder className={entry.isPlaylist ? "text-[#d75b88]" : ""} size={17} />
                 ) : (
@@ -285,13 +367,21 @@ export function LibraryView({
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm text-zinc-300">{entry.name}</div>
                 <div className="mt-1 text-[11px] text-zinc-600">{details}{entry.isPlaylist ? " - playlist" : ""}</div>
+                {section === "recent" && <div className="mt-1 truncate font-mono text-[10px] text-zinc-700">{parentPath(entry.path)}</div>}
               </div>
               {entry.isDirectory ? (
                 <button type="button" onClick={() => navigate(entry.path)} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs">
                   <FolderOpen className="size-3.5" /> Open
                 </button>
               ) : (
-                <button type="button" onClick={() => void openPath(entry.path)} className="subtle-button px-3 py-2 text-xs">Show file</button>
+                <div className="flex flex-wrap gap-2">
+                  <button type="button" aria-label={"Open " + entry.name} onClick={() => void openFile(entry.path)} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs">
+                    <ExternalLink className="size-3.5" /> Open
+                  </button>
+                  <button type="button" aria-label={"Show " + entry.name + " in folder"} onClick={() => void openPath(entry.path)} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs">
+                    <FolderOpen className="size-3.5" /> Show file
+                  </button>
+                </div>
               )}
               <button type="button" onClick={() => remove(entry)} className="grid size-8 place-items-center rounded-lg text-zinc-600 transition-colors hover:bg-red-500/10 hover:text-red-300" aria-label={"Delete " + entry.name}>
                 <Trash2 size={14} />
@@ -299,8 +389,8 @@ export function LibraryView({
             </motion.div>
           );
         })}
-        {entries.length > 500 && <div className="text-center text-[11px] text-zinc-700">Showing the first 500 items to keep the library responsive.</div>}
-        {!loading && entries.length > 0 && Object.keys(previews).length === 0 && (
+        {visibleEntries.length > 500 && <div className="text-center text-[11px] text-zinc-700">Showing the first 500 items to keep the library responsive.</div>}
+        {!activeLoading && visibleEntries.length > 0 && Object.keys(visiblePreviews).length === 0 && (
           <div className="flex items-center justify-center gap-2 pt-2 text-[11px] text-zinc-700">
             <ImageIcon size={13} /> Covers and previews appear when embedded artwork or a supported video frame is available.
           </div>

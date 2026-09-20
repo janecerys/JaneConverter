@@ -120,8 +120,41 @@ fn open_path(path: String) -> Result<(), String> {
     }
     #[cfg(target_os = "windows")]
     {
-        Command::new("explorer")
+        let mut command = Command::new("explorer");
+        if target.is_file() {
+            command.arg("/select,").arg(&target);
+        } else {
+            command.arg(&target);
+        }
+        command.spawn().map_err(|error| error.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
             .arg(&target)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        Command::new("xdg-open")
+            .arg(&target)
+            .spawn()
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn open_file(path: String) -> Result<(), String> {
+    let target = PathBuf::from(path.trim());
+    if !target.is_file() {
+        return Err("That media file no longer exists.".into());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("cmd")
+            .args(["/C", "start", "", target.to_string_lossy().as_ref()])
             .spawn()
             .map_err(|error| error.to_string())?;
     }
@@ -288,6 +321,11 @@ fn load_playlist(
 #[tauri::command]
 fn scan_library(path: String) -> Result<Vec<LibraryEntry>, String> {
     library::scan(&path)
+}
+
+#[tauri::command]
+fn recent_conversions(path: String, limit: usize) -> Result<Vec<LibraryEntry>, String> {
+    library::recent(&path, limit)
 }
 
 #[tauri::command]
@@ -544,11 +582,13 @@ pub fn run() {
             choose_file,
             choose_folder,
             open_path,
+            open_file,
             open_url,
             start_conversion,
             cancel_conversion,
             load_playlist,
             scan_library,
+            recent_conversions,
             get_thumbnail,
             move_library,
             delete_library_entry,

@@ -5,7 +5,7 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub fn media_extension(path: &Path) -> bool {
     matches!(
@@ -55,6 +55,25 @@ fn directory_summary(path: &Path) -> (usize, u64) {
     (count, bytes)
 }
 
+fn media_file_entry(path: &Path, bytes: u64) -> LibraryEntry {
+    LibraryEntry {
+        path: path.display().to_string(),
+        name: path
+            .file_name()
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_default(),
+        is_directory: false,
+        is_playlist: false,
+        media_count: 1,
+        total_bytes: bytes,
+        extension: path
+            .extension()
+            .and_then(|value| value.to_str())
+            .unwrap_or_default()
+            .to_ascii_uppercase(),
+    }
+}
+
 pub fn scan(path: &str) -> Result<Vec<LibraryEntry>, String> {
     let root = std::path::PathBuf::from(path.trim());
     if !root.exists() {
@@ -83,22 +102,13 @@ pub fn scan(path: &str) -> Result<Vec<LibraryEntry>, String> {
                 extension: String::new(),
             });
         } else if kind.is_file() && media_extension(&child) {
-            result.push(LibraryEntry {
-                path: child.display().to_string(),
-                name,
-                is_directory: false,
-                is_playlist: false,
-                media_count: 1,
-                total_bytes: entry
+            result.push(media_file_entry(
+                &child,
+                entry
                     .metadata()
                     .map(|value| value.len())
                     .unwrap_or_default(),
-                extension: child
-                    .extension()
-                    .and_then(|value| value.to_str())
-                    .unwrap_or_default()
-                    .to_ascii_uppercase(),
-            });
+            ));
         }
     }
     result.sort_by(|left, right| {
@@ -106,6 +116,64 @@ pub fn scan(path: &str) -> Result<Vec<LibraryEntry>, String> {
             .cmp(&(!right.is_directory, right.name.to_ascii_lowercase()))
     });
     Ok(result)
+}
+
+const MAX_RECENT_DEPTH: usize = 32;
+
+fn collect_recent(
+    path: &Path,
+    depth: usize,
+    result: &mut Vec<(SystemTime, LibraryEntry)>,
+) -> Result<(), String> {
+    if depth > MAX_RECENT_DEPTH {
+        return Ok(());
+    }
+    for entry in fs::read_dir(path)
+        .map_err(|error| format!("Could not read the converted library: {error}"))?
+        .flatten()
+    {
+        let child = entry.path();
+        let kind = entry.file_type().map_err(|error| error.to_string())?;
+        if kind.is_symlink() {
+            continue;
+        }
+        if kind.is_dir() {
+            collect_recent(&child, depth + 1, result)?;
+        } else if kind.is_file() && media_extension(&child) {
+            let metadata = entry.metadata().map_err(|error| error.to_string())?;
+            let modified = metadata.modified().unwrap_or(UNIX_EPOCH);
+            result.push((modified, media_file_entry(&child, metadata.len())));
+        }
+    }
+    Ok(())
+}
+
+pub fn recent(path: &str, limit: usize) -> Result<Vec<LibraryEntry>, String> {
+    let input = PathBuf::from(path.trim());
+    if !input.exists() {
+        return Ok(Vec::new());
+    }
+    let root = fs::canonicalize(&input)
+        .map_err(|error| format!("Could not read the converted library: {error}"))?;
+    if !root.is_dir() {
+        return Err("The converted library path is not a folder.".into());
+    }
+
+    let mut candidates = Vec::new();
+    collect_recent(&root, 0, &mut candidates)?;
+    candidates.sort_by(|left, right| {
+        right.0.cmp(&left.0).then_with(|| {
+            left.1
+                .name
+                .to_ascii_lowercase()
+                .cmp(&right.1.name.to_ascii_lowercase())
+        })
+    });
+    Ok(candidates
+        .into_iter()
+        .take(limit.clamp(1, 200))
+        .map(|(_, entry)| entry)
+        .collect())
 }
 
 fn canonical_library_item(root: &str, path: &str) -> Result<(PathBuf, PathBuf), String> {
@@ -328,5 +396,24 @@ mod tests {
     fn preview_sources_include_covers_without_listing_them_as_media() {
         assert!(image_extension(Path::new("cover.jpg")));
         assert!(!media_extension(Path::new("cover.jpg")));
+    }
+
+    #[test]
+    fn recent_returns_nested_media_and_ignores_non_media_files() {
+        let root = std::env::temp_dir().join(format!("janec-recent-{}", crate::paths::now_stamp()));
+        let nested = root.join("Videos").join("Facebook");
+        fs::create_dir_all(&nested).expect("create recent test folders");
+        fs::write(root.join("cover.jpg"), b"cover").expect("write cover");
+        fs::write(root.join("first.mp4"), b"first").expect("write first media");
+        fs::write(nested.join("second.mp3"), b"second").expect("write nested media");
+
+        let entries =
+            recent(root.to_str().expect("recent test path"), 10).expect("scan recent media");
+
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().any(|entry| entry.name == "first.mp4"));
+        assert!(entries.iter().any(|entry| entry.name == "second.mp3"));
+        assert!(entries.iter().all(|entry| entry.extension != "JPG"));
+        fs::remove_dir_all(root).expect("clean recent test folders");
     }
 }

@@ -8,9 +8,11 @@ import { LibraryView } from "./LibraryView";
 const fakeBridge = vi.hoisted(() => ({
   scanLibrary: vi.fn(),
   openPath: vi.fn(),
+  openFile: vi.fn(),
   chooseFolder: vi.fn(),
   moveLibrary: vi.fn(),
   getThumbnail: vi.fn(),
+  recentConversions: vi.fn(),
   deleteLibraryEntry: vi.fn(),
 }));
 
@@ -34,9 +36,11 @@ describe("Converted library", () => {
   beforeEach(() => {
     fakeBridge.scanLibrary.mockReset();
     fakeBridge.openPath.mockReset();
+    fakeBridge.openFile.mockReset();
     fakeBridge.chooseFolder.mockReset();
     fakeBridge.moveLibrary.mockReset();
     fakeBridge.getThumbnail.mockReset();
+    fakeBridge.recentConversions.mockReset();
     fakeBridge.deleteLibraryEntry.mockReset();
     fakeBridge.scanLibrary.mockResolvedValue([
       {
@@ -58,6 +62,7 @@ describe("Converted library", () => {
         extension: "MP3",
       },
     ]);
+    fakeBridge.recentConversions.mockResolvedValue([]);
     fakeBridge.getThumbnail.mockResolvedValue("data:image/jpeg;base64,preview");
   });
 
@@ -126,6 +131,60 @@ describe("Converted library", () => {
     expect(fakeBridge.moveLibrary).toHaveBeenCalledWith(settings.outputDir, "E:\\Media");
     expect(onSettings).toHaveBeenCalledWith({ ...settings, outputDir: "E:\\Media\\converted" });
     expect(onStatus).toHaveBeenCalledWith(expect.stringContaining("Library moved"));
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+
+  it("offers separate open and reveal actions for media files", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<LibraryView settings={settings} onSettings={vi.fn()} onStatus={vi.fn()} />);
+    });
+
+    await act(async () => {
+      container.querySelector('button[aria-label="Open song.mp3"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      container.querySelector('button[aria-label="Show song.mp3 in folder"]')?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await Promise.resolve();
+    });
+
+    expect(fakeBridge.openFile).toHaveBeenCalledWith("D:\\JaneConverter\\converted\\song.mp3");
+    expect(fakeBridge.openPath).toHaveBeenCalledWith("D:\\JaneConverter\\converted\\song.mp3");
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+
+  it("shows recent conversions from every library folder", async () => {
+    fakeBridge.recentConversions.mockResolvedValue([
+      {
+        path: "D:\\JaneConverter\\converted\\Videos\\Facebook\\recent.mp4",
+        name: "recent.mp4",
+        isDirectory: false,
+        isPlaylist: false,
+        mediaCount: 1,
+        totalBytes: 2048,
+        extension: "MP4",
+      },
+    ]);
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<LibraryView settings={settings} onSettings={vi.fn()} onStatus={vi.fn()} />);
+    });
+    await act(async () => {
+      Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Recent Conversions")?.click();
+      await Promise.resolve();
+    });
+
+    expect(fakeBridge.recentConversions).toHaveBeenCalledWith(settings.outputDir, 100);
+    expect(container.textContent).toContain("recent.mp4");
+    expect(container.textContent).toContain("D:\\JaneConverter\\converted\\Videos\\Facebook");
+
     await act(async () => { root.unmount(); });
     container.remove();
   });

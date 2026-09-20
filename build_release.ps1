@@ -104,6 +104,17 @@ if (Test-Path -LiteralPath $desktopBinary) {
     throw "The Tauri desktop UI was not built. Install Node.js and Rust or pass -AllowPythonFallback for a development-only package."
 }
 
+# The universal launcher is the only visible entry point. Keep the selected
+# frontend binaries beside it for dispatch, but mark them as implementation
+# details in portable Windows packages.
+foreach ($internalLauncher in @("JaneConverterDesktop.exe", "JaneConverterNative.exe", "JaneConverterPython.exe")) {
+    $internalLauncherPath = Join-Path $staging $internalLauncher
+    if (Test-Path -LiteralPath $internalLauncherPath -PathType Leaf) {
+        $internalLauncherItem = Get-Item -LiteralPath $internalLauncherPath
+        $internalLauncherItem.Attributes = $internalLauncherItem.Attributes -bor [System.IO.FileAttributes]::Hidden
+    }
+}
+
 $candidates = @(
     "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe",
     "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe"

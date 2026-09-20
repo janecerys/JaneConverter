@@ -82,12 +82,14 @@ export interface JaneBridge {
   chooseFile(): Promise<string | null>;
   chooseFolder(): Promise<string | null>;
   openPath(path: string): Promise<void>;
+  openFile(path: string): Promise<void>;
   openUrl(url: string): Promise<void>;
   startConversion(request: ConversionRequest): Promise<string>;
   cancelConversion(jobId: string): Promise<void>;
   loadPlaylist(source: string): Promise<PlaylistCatalog>;
   subscribe(listener: (event: ConverterEvent) => void): Promise<UnlistenFn>;
   scanLibrary(path: string): Promise<LibraryEntry[]>;
+  recentConversions(path: string, limit: number): Promise<LibraryEntry[]>;
   getThumbnail(root: string, path: string): Promise<string | null>;
   moveLibrary(source: string, destinationParent: string): Promise<string>;
   deleteLibraryEntry(root: string, path: string): Promise<void>;
@@ -122,12 +124,14 @@ const demoBridge: JaneBridge = {
   async chooseFile() { return null; },
   async chooseFolder() { return null; },
   async openPath() {},
+  async openFile() {},
   async openUrl() {},
   async startConversion() { return "preview-job"; },
   async cancelConversion() {},
   async loadPlaylist() { return { title: "Preview playlist", items: [] }; },
   async subscribe() { return () => {}; },
   async scanLibrary() { return []; },
+  async recentConversions() { return []; },
   async getThumbnail() { return null; },
   async moveLibrary(source) { return source; },
   async deleteLibraryEntry() {},
@@ -148,12 +152,14 @@ const tauriBridge: JaneBridge = {
   chooseFile: () => invoke<string | null>("choose_file"),
   chooseFolder: () => invoke<string | null>("choose_folder"),
   openPath: (path) => invoke<void>("open_path", { path }),
+  openFile: (path) => invoke<void>("open_file", { path }),
   openUrl: (url) => invoke<void>("open_url", { url }),
   startConversion: (request) => invoke<string>("start_conversion", { request }),
   cancelConversion: (jobId) => invoke<void>("cancel_conversion", { jobId }),
   loadPlaylist: (source) => invoke<PlaylistCatalog>("load_playlist", { source }),
   subscribe: (listener) => listen<ConverterEvent>("converter-event", (event) => listener(event.payload)),
   scanLibrary: (path) => invoke<LibraryEntry[]>("scan_library", { path }),
+  recentConversions: (path, limit) => invoke<LibraryEntry[]>("recent_conversions", { path, limit }),
   getThumbnail: (root, path) => invoke<string | null>("get_thumbnail", { root, path }),
   moveLibrary: (source, destinationParent) => invoke<string>("move_library", { source, destinationParent }),
   deleteLibraryEntry: (root, path) => invoke<void>("delete_library_entry", { root, path }),

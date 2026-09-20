@@ -499,6 +499,17 @@ if ($desktopBuilt -and (Test-Path -LiteralPath $desktopBinaryPath -PathType Leaf
     Write-Host "-> Set the universal launcher preference to Main UI." -ForegroundColor Green
 }
 
+# Keep the universal launcher as the only visible executable entry point.
+# The selected interface remains available through Settings and the launcher
+# preference; these child binaries are implementation details.
+foreach ($internalLauncher in @("JaneConverterDesktop.exe", "JaneConverterNative.exe", "JaneConverterPython.exe")) {
+    $internalLauncherPath = Join-Path $scriptDir $internalLauncher
+    if (Test-Path -LiteralPath $internalLauncherPath -PathType Leaf) {
+        $internalLauncherItem = Get-Item -LiteralPath $internalLauncherPath
+        $internalLauncherItem.Attributes = $internalLauncherItem.Attributes -bor [System.IO.FileAttributes]::Hidden
+    }
+}
+
 $cscPath = "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
 if (-not (Test-Path $cscPath)) {
     $cscPath = "$env:WINDIR\Microsoft.NET\Framework\v4.0.30319\csc.exe"
@@ -537,20 +548,13 @@ try {
     Write-Host "-> Created Desktop shortcut: JaneConverter.lnk" -ForegroundColor Green
 
     if ($buildSuccess -and (Test-Path "$scriptDir\JaneConverter.exe")) {
-        foreach ($variant in @(
-            @{ Name = "JaneConverter Legacy.lnk"; Arguments = "--legacy-python"; Description = "JaneConverter - Original Python interface" },
-            @{ Name = "JaneConverter Rust.lnk"; Arguments = "--rust"; Description = "JaneConverter - Native Rust interface" }
-        )) {
-            $variantShortcut = Join-Path $desktopPath $variant.Name
-            $variantSc = $wsh.CreateShortcut($variantShortcut)
-            $variantSc.TargetPath = "$scriptDir\JaneConverter.exe"
-            $variantSc.Arguments = $variant.Arguments
-            $variantSc.WorkingDirectory = $scriptDir
-            $variantSc.IconLocation = "$scriptDir\assets\icon.ico"
-            $variantSc.Description = $variant.Description
-            $variantSc.Save()
+        foreach ($variantName in @("JaneConverter Legacy.lnk", "JaneConverter Rust.lnk")) {
+            $variantShortcut = Join-Path $desktopPath $variantName
+            if (Test-Path -LiteralPath $variantShortcut) {
+                Remove-Item -LiteralPath $variantShortcut -Force
+            }
         }
-        Write-Host "-> Created Rust and Legacy Python interface shortcuts." -ForegroundColor Green
+        Write-Host "-> Kept JaneConverter.exe as the only launcher shortcut." -ForegroundColor Green
     }
 } catch {
     Write-Host "Notice: Could not write desktop shortcut: $_" -ForegroundColor DarkGray
