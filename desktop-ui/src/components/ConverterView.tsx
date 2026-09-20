@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Clipboard, FilePlus2, FolderOpen, Info, Link2, ListMusic, LockKeyhole, Play, RefreshCw, ShieldCheck, Square } from "lucide-react";
+import { AlertCircle, CheckCircle2, Clipboard, FilePlus2, FolderOpen, Info, Link2, ListMusic, LoaderCircle, LockKeyhole, Play, RefreshCw, ShieldCheck, Square } from "lucide-react";
 import { motion } from "framer-motion";
 import type { AccessStatus, ConverterEvent, ConverterSettings, PlaylistCatalog, RuntimeInfo } from "../bridge";
 import { bridge } from "../bridge";
@@ -51,7 +51,7 @@ export function ConverterView({
   onSettings: (next: ConverterSettings) => void;
   onStart: (source: string, playlistIndexes?: string) => Promise<void>;
   onCancel: () => Promise<void>;
-  onCreateAccess: (source: string) => Promise<void>;
+  onCreateAccess: (source: string) => Promise<AccessStatus>;
   onClearAccess: () => Promise<void>;
   onStatus: (message: string) => void;
 }) {
@@ -59,6 +59,9 @@ export function ConverterView({
   const [playlist, setPlaylist] = useState<PlaylistCatalog | null>(null);
   const [loadingPlaylist, setLoadingPlaylist] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [accessBusy, setAccessBusy] = useState(false);
+  const [accessNotice, setAccessNotice] = useState("");
+  const [accessNoticeTone, setAccessNoticeTone] = useState<"neutral" | "success" | "error">("neutral");
   const formats = useMemo(() => formatsFor(settings.category), [settings.category]);
   const qualities = useMemo(() => qualitiesFor(settings.format), [settings.format]);
   const isVideo = videoFormats.includes(settings.format);
@@ -67,6 +70,20 @@ export function ConverterView({
   useEffect(() => {
     if (!formats.includes(settings.format)) onSettings({ ...settings, format: formats[0], bitrate: qualitiesFor(formats[0])[0] });
   }, [formats, settings, onSettings]);
+
+  useEffect(() => {
+    if (access.bridgeConnected) {
+      setAccessBusy(false);
+      setAccessNotice(`Browser bridge connected through ${access.browser || "your browser"}. The source-scoped session is ready for conversion while the browser stays open.`);
+      setAccessNoticeTone("success");
+      return;
+    }
+    if (access.browser) {
+      setAccessBusy(false);
+      setAccessNotice(`Selected ${access.browser}. JaneConverter will first try a read-only in-memory session, so you can keep the browser open. If Windows blocks that path, the conversion error will explain when a full exit is needed.`);
+      setAccessNoticeTone("success");
+    }
+  }, [access.browser]);
 
   const update = (patch: Partial<ConverterSettings>) => onSettings({ ...settings, ...patch });
 
@@ -104,6 +121,75 @@ export function ConverterView({
     }
   }
 
+  async function createAccess() {
+    if (!source.trim()) {
+      const message = "Paste an online source URL first to create account access.";
+      setAccessNotice(message);
+      setAccessNoticeTone("error");
+      onStatus(message);
+      return;
+    }
+
+    setAccessBusy(true);
+    setAccessNotice("Creating a temporary access page and opening your browser...");
+    setAccessNoticeTone("neutral");
+    try {
+      const nextAccess = await onCreateAccess(source.trim());
+      if (nextAccess.browser) {
+        setAccessNotice(`Selected ${nextAccess.browser}. JaneConverter will first try a read-only in-memory session, so you can keep the browser open. If Windows blocks that path, the conversion error will explain when a full exit is needed.`);
+        setAccessNoticeTone("success");
+      } else {
+        setAccessNotice("Access page opened. Sign in there if needed, then click “I am signed in — confirm access” before converting.");
+        setAccessNoticeTone("neutral");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setAccessNotice(message);
+      setAccessNoticeTone("error");
+    } finally {
+      setAccessBusy(false);
+    }
+  }
+
+  async function clearAccess() {
+    setAccessBusy(true);
+    try {
+      await onClearAccess();
+      setAccessNotice("Account access cleared. Future conversions will use public-only extraction.");
+      setAccessNoticeTone("neutral");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setAccessNotice(message);
+      setAccessNoticeTone("error");
+    } finally {
+      setAccessBusy(false);
+    }
+  }
+
+  async function copyAccessLink() {
+    try {
+      await navigator.clipboard.writeText(access.link);
+      setAccessNotice("Temporary access link copied to the clipboard.");
+      setAccessNoticeTone("success");
+    } catch {
+      const message = "The link could not be copied. Use Open link instead.";
+      setAccessNotice(message);
+      setAccessNoticeTone("error");
+    }
+  }
+
+  async function openAccessLink() {
+    try {
+      await bridge.openUrl(access.link);
+      setAccessNotice("Access page opened in your browser. Return here after confirming the browser session.");
+      setAccessNoticeTone("neutral");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      setAccessNotice(message);
+      setAccessNoticeTone("error");
+    }
+  }
+
   async function convert(indexes?: string) {
     if (!source.trim()) { onStatus("Paste a source URL or choose a local file first."); return; }
     await onStart(source.trim(), indexes);
@@ -138,15 +224,19 @@ export function ConverterView({
         <div className="mt-5 border-t border-white/[0.06] pt-4">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-xs text-zinc-400"><LockKeyhole className="size-3.5 text-zinc-600" /> Optional account access <span className="text-zinc-700">- session only</span></div>
-            <span className={`text-[11px] ${access.browser ? "text-emerald-400" : "text-zinc-600"}`}>{access.browser ? `Connected through ${access.browser}` : "Public-only extraction"}</span>
+            <span className={`text-[11px] ${access.bridgeConnected ? "text-emerald-400" : access.browser ? "text-emerald-400" : access.active ? "text-amber-300" : "text-zinc-600"}`}>{access.bridgeConnected ? `Bridge connected through ${access.browser || "browser"}` : access.browser ? `Browser selected: ${access.browser}` : access.active ? "Access page open" : "Public-only extraction"}</span>
           </div>
-          <p className="mt-2 max-w-3xl text-[11px] leading-relaxed text-zinc-600">Create a temporary local link and open it in the browser whose session you want to use. JaneConverter never asks for or stores your password or cookies.</p>
+            <p className="mt-2 max-w-3xl text-[11px] leading-relaxed text-zinc-600">{access.bridgeConnected ? "Browser Bridge connected for this source. Keep the browser open; JaneConverter is using only the current source-scoped session in memory." : access.active ? "Sign in in the browser page if needed, confirm access there, then click the JaneConverter Browser Bridge extension's Connect button. The link only identifies the browser; JaneConverter does not capture, upload, or save your password or cookies." : "Create a temporary local link and open it in the browser whose session you want to use. JaneConverter retries a short read-only in-memory session path first, so you can keep the browser open when Windows allows it. The link only identifies the browser; JaneConverter does not capture, upload, or save your password or cookies."}</p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            {access.link && <button type="button" onClick={() => void navigator.clipboard.writeText(access.link)} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs"><Link2 className="size-3.5" /> Copy link</button>}
-            {access.link && <button type="button" onClick={() => void bridge.openUrl(access.link)} className="subtle-button px-3 py-2 text-xs">Open link</button>}
-            {access.active ? <button type="button" onClick={() => void onClearAccess()} className="subtle-button px-3 py-2 text-xs">Clear access</button> : <button type="button" onClick={() => void onCreateAccess(source)} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs"><ShieldCheck className="size-3.5" /> Create access link</button>}
+            {access.link && <button type="button" disabled={accessBusy} onClick={() => void copyAccessLink()} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"><Link2 className="size-3.5" /> Copy link</button>}
+            {access.link && <button type="button" disabled={accessBusy} onClick={() => void openAccessLink()} className="subtle-button px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50">Open link</button>}
+            {access.active ? <button type="button" disabled={accessBusy} onClick={() => void clearAccess()} className="subtle-button px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50">{accessBusy ? "Working..." : "Clear access"}</button> : <button type="button" disabled={accessBusy || running} onClick={() => void createAccess()} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50">{accessBusy ? <LoaderCircle className="size-3.5 animate-spin" /> : <ShieldCheck className="size-3.5" />} {accessBusy ? "Opening access page..." : "Create access link"}</button>}
             {access.link && <span className="max-w-[420px] truncate text-[11px] text-zinc-700">{access.link}</span>}
           </div>
+          {accessNotice && <div role="status" aria-live="polite" className={`mt-3 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[11px] leading-relaxed ${accessNoticeTone === "success" ? "border-emerald-400/20 bg-emerald-400/[0.05] text-emerald-300" : accessNoticeTone === "error" ? "border-rose-400/20 bg-rose-400/[0.05] text-rose-300" : "border-white/[0.08] bg-white/[0.025] text-zinc-400"}`}>
+            {accessNoticeTone === "success" ? <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" /> : accessNoticeTone === "error" ? <AlertCircle className="mt-0.5 size-3.5 shrink-0" /> : <Info className="mt-0.5 size-3.5 shrink-0" />}
+            <span>{accessNotice}</span>
+          </div>}
         </div>
 
         <button type="button" onClick={() => setNotesOpen((value) => !value)} className="mt-4 flex items-center gap-2 text-xs text-zinc-500 transition-colors hover:text-zinc-300"><Info className="size-3.5" /> Source notes and common failures <span className="text-zinc-700">{notesOpen ? "Hide" : "Show"}</span></button>

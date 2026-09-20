@@ -1,6 +1,6 @@
 use crate::model::{ConversionRequest, ConverterEvent, PlaylistCatalog, PlaylistItem};
 use crate::paths::{find_python, prepare_command, project_root};
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -110,7 +110,10 @@ pub fn build_conversion_args(
         .or_else(|| request.browser_session.clone())
         .filter(|value| !value.trim().is_empty())
     {
-        args.extend(["--browser-session".into(), browser]);
+        args.extend([
+            "--browser-session".into(),
+            normalize_browser_session_arg(&browser)?,
+        ]);
     }
     if let Some(indexes) = &request.playlist_indexes {
         if !indexes.trim().is_empty() {
@@ -124,16 +127,41 @@ pub fn build_conversion_args(
     Ok(args)
 }
 
+fn normalize_browser_session_arg(value: &str) -> Result<String, String> {
+    let normalized = value.trim().to_ascii_lowercase();
+    if matches!(
+        normalized.as_str(),
+        "none"
+            | "chrome"
+            | "edge"
+            | "firefox"
+            | "brave"
+            | "vivaldi"
+            | "opera"
+            | "chromium"
+            | "safari"
+    ) {
+        return Ok(normalized);
+    }
+    Err(format!(
+        "Unsupported browser session '{value}'. Choose Chrome, Edge, Firefox, Brave, Vivaldi, Opera, Chromium, Safari, or Public only."
+    ))
+}
+
 pub fn start_conversion(
     app: tauri::AppHandle,
     job_id: String,
     request: ConversionRequest,
     browser: Option<String>,
+    bridge_payload: Option<String>,
     child_slot: Arc<Mutex<Option<Arc<Mutex<Child>>>>>,
     cancel_slot: Arc<Mutex<Option<Arc<AtomicBool>>>>,
     output: impl FnOnce(i32, bool) + Send + 'static,
 ) -> Result<(), String> {
-    let args = build_conversion_args(&request, browser)?;
+    let mut args = build_conversion_args(&request, browser)?;
+    if bridge_payload.is_some() {
+        args.push("--browser-bridge-stdin".into());
+    }
     std::fs::create_dir_all(&request.output_dir)
         .map_err(|error| format!("Could not use the export folder: {error}"))?;
     let mut command = Command::new(find_python());
@@ -141,12 +169,27 @@ pub fn start_conversion(
         .args(&args)
         .current_dir(project_root())
         .env("PYTHONUNBUFFERED", "1")
+        .stdin(if bridge_payload.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     prepare_command(&mut command);
     let mut child = command
         .spawn()
         .map_err(|error| format!("Could not start the Python engine: {error}"))?;
+    if let Some(payload) = bridge_payload {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "Could not open the browser bridge handoff.".to_owned())?;
+        if let Err(error) = stdin.write_all(payload.as_bytes()) {
+            terminate_child(&mut child);
+            return Err(format!("Could not send the browser bridge handoff: {error}"));
+        }
+    }
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let child = Arc::new(Mutex::new(child));
@@ -253,7 +296,11 @@ pub fn parse_playlist_output(output: &str) -> Result<PlaylistCatalog, String> {
     Ok(PlaylistCatalog { title, items })
 }
 
-pub fn load_playlist(source: &str, browser: Option<String>) -> Result<PlaylistCatalog, String> {
+pub fn load_playlist(
+    source: &str,
+    browser: Option<String>,
+    bridge_payload: Option<String>,
+) -> Result<PlaylistCatalog, String> {
     let script = project_root().join("run_converter.py");
     let script_text = script.display().to_string();
     let mut command = Command::new(find_python());
@@ -261,17 +308,39 @@ pub fn load_playlist(source: &str, browser: Option<String>) -> Result<PlaylistCa
         .arg(script_text)
         .args(["--source", source.trim(), "--list-playlist", "--no-update"]);
     if let Some(browser) = browser.filter(|value| !value.trim().is_empty()) {
+        let browser = normalize_browser_session_arg(&browser)?;
         command.args(["--browser-session", browser.as_str()]);
+    }
+    if bridge_payload.is_some() {
+        command.arg("--browser-bridge-stdin");
     }
     command
         .current_dir(project_root())
         .env("PYTHONUNBUFFERED", "1")
+        .stdin(if bridge_payload.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     prepare_command(&mut command);
-    let output = command
-        .output()
+    let mut child = command
+        .spawn()
         .map_err(|error| format!("Could not start playlist loading: {error}"))?;
+    if let Some(payload) = bridge_payload {
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| "Could not open the browser bridge handoff.".to_owned())?;
+        if let Err(error) = stdin.write_all(payload.as_bytes()) {
+            terminate_child(&mut child);
+            return Err(format!("Could not send the browser bridge handoff: {error}"));
+        }
+    }
+    let output = child
+        .wait_with_output()
+        .map_err(|error| format!("Could not wait for playlist loading: {error}"))?;
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(if detail.is_empty() {
@@ -304,5 +373,32 @@ mod tests {
         .unwrap();
         assert_eq!(catalog.title, "Songs");
         assert_eq!(catalog.items[0].duration, "03:20");
+    }
+
+    #[test]
+    fn normalizes_display_browser_label_for_python_cli() {
+        let request = ConversionRequest {
+            source: "https://example.com/private-media".into(),
+            output_dir: "out".into(),
+            category: "Video".into(),
+            format: "mp4".into(),
+            bitrate: "original".into(),
+            sample_rate: 48000,
+            resolution: "original".into(),
+            normalize: false,
+            use_gpu: false,
+            save_cover: true,
+            save_metadata: true,
+            retries: 2,
+            playlist_indexes: None,
+            browser_session: Some("Chrome".into()),
+        };
+        let args =
+            build_conversion_args(&request, None).expect("display labels should be accepted");
+        let flag = args
+            .iter()
+            .position(|value| value == "--browser-session")
+            .expect("browser session flag should be forwarded");
+        assert_eq!(args[flag + 1], "chrome");
     }
 }

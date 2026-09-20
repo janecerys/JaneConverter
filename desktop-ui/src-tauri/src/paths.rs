@@ -13,8 +13,15 @@ pub const CREATE_NO_WINDOW: u32 = 0x08000000;
 pub fn project_root() -> PathBuf {
     if let Ok(executable) = std::env::current_exe() {
         if let Some(directory) = executable.parent() {
-            if directory.join("run_converter.py").is_file() && directory.join("engine").is_dir() {
-                return directory.to_path_buf();
+            let candidates = [
+                directory.to_path_buf(),
+                directory.join("resources").join("runtime"),
+                directory.join("resources"),
+            ];
+            for candidate in candidates {
+                if is_runtime_root(&candidate) {
+                    return candidate;
+                }
             }
         }
     }
@@ -23,6 +30,11 @@ pub fn project_root() -> PathBuf {
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn is_runtime_root(directory: &Path) -> bool {
+    (directory.join("run_converter.py").is_file() && directory.join("engine").is_dir())
+        || directory.join("JaneConverterEngine.exe").is_file()
 }
 
 pub fn data_root() -> PathBuf {
@@ -73,6 +85,7 @@ pub fn find_ffmpeg() -> PathBuf {
         root.join("ffmpeg.exe"),
         root.join("bin").join("ffmpeg.exe"),
         root.join("engine").join("ffmpeg.exe"),
+        root.join("resources").join("runtime").join("ffmpeg.exe"),
     ];
     #[cfg(not(target_os = "windows"))]
     let candidates = [
@@ -95,6 +108,7 @@ pub fn find_python() -> PathBuf {
     let root = project_root();
     #[cfg(target_os = "windows")]
     let candidates = [
+        root.join("JaneConverterEngine.exe"),
         root.join(".venv").join("Scripts").join("python.exe"),
         root.join("venv").join("Scripts").join("python.exe"),
     ];
@@ -112,6 +126,13 @@ pub fn find_python() -> PathBuf {
     return PathBuf::from("python.exe");
     #[cfg(not(target_os = "windows"))]
     return PathBuf::from("python3");
+}
+
+pub fn packaged_engine(path: &Path) -> bool {
+    path.file_name()
+        .and_then(|value| value.to_str())
+        .map(|value| value.eq_ignore_ascii_case("JaneConverterEngine.exe"))
+        .unwrap_or(false)
 }
 
 pub fn read_kv() -> HashMap<String, String> {
@@ -134,7 +155,8 @@ fn parse_bool(values: &HashMap<String, String>, key: &str, default: bool) -> boo
 }
 
 pub fn detect_gpu() -> (bool, String) {
-    let output = run_command("ffmpeg", &["-hide_banner", "-encoders"]);
+    let ffmpeg = find_ffmpeg();
+    let output = run_command(ffmpeg.to_str().unwrap_or("ffmpeg"), &["-hide_banner", "-encoders"]);
     let text = output
         .ok()
         .map(|value| String::from_utf8_lossy(&value.stdout).to_ascii_lowercase())

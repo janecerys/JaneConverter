@@ -15,8 +15,9 @@ namespace JaneConverterLauncher
             {
                 string baseDir = AppDomain.CurrentDomain.BaseDirectory;
                 string runtimeDir = ResolveRuntimeDirectory(baseDir);
-                string desktopUiPath = Path.Combine(runtimeDir, "JaneConverterDesktop.exe");
-                string nativeUiPath = Path.Combine(runtimeDir, "JaneConverterNative.exe");
+                string desktopUiPath = ResolveRuntimeFile(runtimeDir, "JaneConverterDesktop.exe", "janeconverter-desktop.exe");
+                string nativeUiPath = ResolveRuntimeFile(runtimeDir, "JaneConverterNative.exe");
+                string packagedPythonUiPath = ResolveRuntimeFile(runtimeDir, "JaneConverterPython.exe");
                 bool forceLegacy = HasArgument(args, "--legacy-python");
                 bool forceTauri = HasArgument(args, "--tauri");
                 bool forceRust = HasArgument(args, "--rust");
@@ -46,6 +47,12 @@ namespace JaneConverterLauncher
                 {
                     StartChild(nativeUiPath, string.Empty, runtimeDir, baseDir);
 
+                    return;
+                }
+
+                if (File.Exists(packagedPythonUiPath) && (forceLegacy || string.Equals(preference, "python", StringComparison.OrdinalIgnoreCase)))
+                {
+                    StartChild(packagedPythonUiPath, string.Empty, runtimeDir, baseDir);
                     return;
                 }
 
@@ -112,6 +119,20 @@ namespace JaneConverterLauncher
 
         static string ResolveRuntimeDirectory(string launcherDir)
         {
+            string[] localCandidates = new string[]
+            {
+                launcherDir,
+                Path.Combine(launcherDir, "resources", "runtime"),
+                Path.Combine(launcherDir, "resources")
+            };
+            foreach (string candidate in localCandidates)
+            {
+                if (HasRuntimeExecutables(candidate))
+                {
+                    return candidate;
+                }
+            }
+
             if (HasRuntimeExecutables(launcherDir))
             {
                 return launcherDir;
@@ -121,13 +142,24 @@ namespace JaneConverterLauncher
             if (Directory.Exists(distDir))
             {
                 string[] candidates = Directory.GetDirectories(distDir, "JaneConverter-*");
-                Array.Sort(candidates, StringComparer.OrdinalIgnoreCase);
-                for (int index = candidates.Length - 1; index >= 0; index--)
+                string newestCandidate = null;
+                DateTime newestWriteTime = DateTime.MinValue;
+                foreach (string candidate in candidates)
                 {
-                    if (HasRuntimeExecutables(candidates[index]))
+                    if (!HasRuntimeExecutables(candidate))
                     {
-                        return candidates[index];
+                        continue;
                     }
+                    DateTime writeTime = Directory.GetLastWriteTimeUtc(candidate);
+                    if (newestCandidate == null || writeTime > newestWriteTime)
+                    {
+                        newestCandidate = candidate;
+                        newestWriteTime = writeTime;
+                    }
+                }
+                if (newestCandidate != null)
+                {
+                    return newestCandidate;
                 }
             }
 
@@ -137,7 +169,32 @@ namespace JaneConverterLauncher
         static bool HasRuntimeExecutables(string directory)
         {
             return File.Exists(Path.Combine(directory, "JaneConverterDesktop.exe")) ||
-                   File.Exists(Path.Combine(directory, "JaneConverterNative.exe"));
+                   File.Exists(Path.Combine(directory, "janeconverter-desktop.exe")) ||
+                   File.Exists(Path.Combine(directory, "JaneConverterNative.exe")) ||
+                   File.Exists(Path.Combine(directory, "JaneConverterPython.exe")) ||
+                   File.Exists(Path.Combine(directory, "JaneConverterEngine.exe"));
+        }
+
+        static string ResolveRuntimeFile(string runtimeDir, params string[] fileNames)
+        {
+            string[] roots = new string[]
+            {
+                runtimeDir,
+                Path.Combine(runtimeDir, "resources", "runtime"),
+                Path.Combine(runtimeDir, "resources")
+            };
+            foreach (string root in roots)
+            {
+                foreach (string fileName in fileNames)
+                {
+                    string candidate = Path.Combine(root, fileName);
+                    if (File.Exists(candidate))
+                    {
+                        return candidate;
+                    }
+                }
+            }
+            return Path.Combine(runtimeDir, fileNames[0]);
         }
         static string SharedDataRoot(string baseDir)
         {

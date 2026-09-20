@@ -27,6 +27,7 @@ foreach ($file in $files) {
 }
 Copy-Item -LiteralPath (Join-Path $scriptDir "engine") -Destination (Join-Path $staging "engine") -Recurse
 Copy-Item -LiteralPath (Join-Path $scriptDir "assets") -Destination (Join-Path $staging "assets") -Recurse
+Copy-Item -LiteralPath (Join-Path $scriptDir "browser-extension") -Destination (Join-Path $staging "browser-extension") -Recurse
 
 # Never ship generated development state. Stale bytecode can mask source
 # changes and cache files make the portable artifact less reproducible.
@@ -114,7 +115,7 @@ if ($csc) {
     Copy-Item -LiteralPath (Join-Path $staging "JaneConverter.exe") -Destination (Join-Path $scriptDir "JaneConverter.exe") -Force
 }
 
-$requiredFiles = @("JaneConverter.exe", "gui.py", "run_converter.py", "update_helper.py", "requirements.txt", "README.md", "LICENSE", "assets\icon.ico", "engine\version.py")
+$requiredFiles = @("JaneConverter.exe", "gui.py", "run_converter.py", "update_helper.py", "requirements.txt", "README.md", "LICENSE", "assets\icon.ico", "engine\version.py", "browser-extension\manifest.json", "browser-extension\popup.html", "browser-extension\popup.js")
 if (-not $AllowPythonFallback) { $requiredFiles += "JaneConverterNative.exe"; $requiredFiles += "JaneConverterDesktop.exe" }
 foreach ($requiredFile in $requiredFiles) {
     if (-not (Test-Path -LiteralPath (Join-Path $staging $requiredFile) -PathType Leaf)) {

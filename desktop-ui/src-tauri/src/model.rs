@@ -81,6 +81,7 @@ pub struct AccessStatus {
     pub active: bool,
     pub link: String,
     pub browser: String,
+    pub bridge_connected: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]

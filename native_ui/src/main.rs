@@ -2,6 +2,7 @@
 
 use eframe::egui::{self, Color32, RichText, Stroke, Vec2};
 use rand::{distributions::Alphanumeric, Rng};
+use serde_json::Value;
 use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::{self, BufRead, BufReader, Read, Write};
@@ -58,6 +59,7 @@ struct AccessEvent {
 struct AccessServer {
     link: String,
     stop: Arc<AtomicBool>,
+    bridge_payload: Arc<Mutex<Option<String>>>,
 }
 
 #[derive(Clone)]
@@ -93,7 +95,11 @@ impl AccessServer {
             .collect();
         let link = format!("http://127.0.0.1:{port}/access/{token}");
         let stop = Arc::new(AtomicBool::new(false));
+        let confirmed = Arc::new(AtomicBool::new(false));
+        let bridge_payload = Arc::new(Mutex::new(None));
         let stop_thread = Arc::clone(&stop);
+        let confirmed_thread = Arc::clone(&confirmed);
+        let bridge_payload_thread = Arc::clone(&bridge_payload);
         let source = source.to_owned();
         let token_thread = token.clone();
         thread::Builder::new()
@@ -108,6 +114,8 @@ impl AccessServer {
                             generation,
                             &events,
                             &stop_thread,
+                            &confirmed_thread,
+                            &bridge_payload_thread,
                         ),
                         Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                             thread::sleep(Duration::from_millis(40))
@@ -116,7 +124,11 @@ impl AccessServer {
                     }
                 }
             })?;
-        Ok(Self { link, stop })
+        Ok(Self {
+            link,
+            stop,
+            bridge_payload,
+        })
     }
 }
 
@@ -133,19 +145,58 @@ fn handle_access_request(
     generation: u64,
     events: &mpsc::Sender<AccessEvent>,
     stop: &AtomicBool,
+    confirmed: &AtomicBool,
+    bridge_payload: &Arc<Mutex<Option<String>>>,
 ) {
     let _ = stream.set_read_timeout(Some(Duration::from_secs(2)));
-    let mut bytes = [0u8; 8192];
-    let count = match stream.read(&mut bytes) {
-        Ok(count) => count,
-        Err(_) => return,
-    };
-    let request = String::from_utf8_lossy(&bytes[..count]);
+    let mut request_bytes = Vec::new();
+    let mut header_end = None;
+    let mut content_length = 0usize;
+    loop {
+        let mut chunk = [0u8; 8192];
+        let count = match stream.read(&mut chunk) {
+            Ok(count) => count,
+            Err(_) => return,
+        };
+        if count == 0 {
+            return;
+        }
+        request_bytes.extend_from_slice(&chunk[..count]);
+        if request_bytes.len() > 272 * 1024 {
+            send_json(stream, 413, "{\"error\":\"The browser bridge request is too large.\"}");
+            return;
+        }
+        if header_end.is_none() {
+            if let Some(position) = request_bytes.windows(4).position(|window| window == b"\r\n\r\n") {
+                let end = position + 4;
+                let headers = String::from_utf8_lossy(&request_bytes[..position]);
+                content_length = headers.lines().find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    name.trim().eq_ignore_ascii_case("content-length")
+                        .then(|| value.trim().parse::<usize>().ok())
+                        .flatten()
+                }).unwrap_or(0);
+                if content_length > 256 * 1024 {
+                    send_json(stream, 413, "{\"error\":\"The browser bridge payload is too large.\"}");
+                    return;
+                }
+                header_end = Some(end);
+            }
+        }
+        if let Some(end) = header_end {
+            if request_bytes.len() >= end + content_length {
+                break;
+            }
+        }
+    }
+    let end = header_end.unwrap_or(0);
+    let request = String::from_utf8_lossy(&request_bytes[..end - 4]);
+    let body = &request_bytes[end..end + content_length];
     let mut lines = request.lines();
-    let path = lines
-        .next()
-        .and_then(|line| line.split_whitespace().nth(1))
-        .unwrap_or("");
+    let request_line = lines.next().unwrap_or("");
+    let mut request_fields = request_line.split_whitespace();
+    let method = request_fields.next().unwrap_or("");
+    let path = request_fields.next().unwrap_or("");
     let mut user_agent = String::new();
     let mut client_hints = String::new();
     for line in lines {
@@ -165,21 +216,52 @@ fn handle_access_request(
     }
     let detection = detect_browser(&user_agent, &client_hints);
     let base = format!("/access/{token}");
-    if path == base {
+    if method == "OPTIONS" && path.starts_with(&format!("{base}/bridge")) {
+        send_json(stream, 200, "{\"ok\":true}");
+    } else if path == base {
         send_html(stream, 200, &landing_page(source, &detection, token));
     } else if path == format!("{base}/ready") {
-        if stop.swap(true, Ordering::Relaxed) {
+        let first_confirmation = !confirmed.swap(true, Ordering::Relaxed);
+        if stop.load(Ordering::Relaxed) {
             send_html(stream, 410, &error_page("This access link has expired."));
             return;
         }
         send_html(stream, 200, &ready_page(&detection));
-        let _ = events.send(AccessEvent {
-            generation,
-            browser: detection,
-        });
+        if first_confirmation {
+            let _ = events.send(AccessEvent { generation, browser: detection });
+        }
+    } else if path == format!("{base}/bridge/challenge") {
+        if !confirmed.load(Ordering::Relaxed) || stop.load(Ordering::Relaxed) {
+            send_json(stream, 409, "{\"error\":\"Confirm account access in the browser first.\"}");
+        } else {
+            send_json(stream, 200, &format!("{{\"sourceUrl\":{},\"confirmed\":true}}", json_string(source)));
+        }
+    } else if path == format!("{base}/bridge") {
+        if !confirmed.load(Ordering::Relaxed) || stop.load(Ordering::Relaxed) {
+            send_json(stream, 409, "{\"error\":\"Confirm account access in the browser first.\"}");
+        } else if body.len() > 256 * 1024 {
+            send_json(stream, 413, "{\"error\":\"The browser bridge payload is too large.\"}");
+        } else if serde_json::from_slice::<Value>(body)
+            .ok()
+            .and_then(|value| value.get("cookies").and_then(Value::as_array).map(|cookies| !cookies.is_empty()))
+            != Some(true)
+        {
+            send_json(stream, 400, "{\"error\":\"The browser bridge payload was invalid.\"}");
+        } else if let Ok(payload) = String::from_utf8(body.to_vec()) {
+            if let Ok(mut value) = bridge_payload.lock() {
+                *value = Some(payload);
+            }
+            send_json(stream, 200, "{\"ok\":true}");
+        } else {
+            send_json(stream, 400, "{\"error\":\"The browser bridge payload was not UTF-8.\"}");
+        }
     } else {
         send_html(stream, 404, &error_page("This access link is not valid."));
     }
+}
+
+fn json_string(value: &str) -> String {
+    serde_json::to_string(value).unwrap_or_else(|_| "\"\"".to_owned())
 }
 
 fn detect_browser(user_agent: &str, client_hints: &str) -> BrowserDetection {
@@ -219,7 +301,7 @@ fn detect_browser(user_agent: &str, client_hints: &str) -> BrowserDetection {
 }
 
 fn landing_page(source: &str, detection: &BrowserDetection, token: &str) -> String {
-    page("Account access", &format!("<h1>JaneConverter account access</h1><p>Use this temporary page in the browser whose session you want to use. JaneConverter never receives your password or cookies.</p><ol><li>Open the source link below.</li><li>Sign in normally if needed.</li><li>Return here and confirm access.</li></ol><p><a class=\"primary\" href=\"{}\" target=\"_blank\" rel=\"noreferrer\" referrerpolicy=\"no-referrer\">Open source link</a></p><p><a class=\"confirm\" href=\"/access/{token}/ready\">I’m signed in — confirm access</a></p><p class=\"note\">Browser detected: <strong>{}</strong>. The link expires after confirmation or when JaneConverter closes.</p>", html_escape(source), html_escape(&detection.label)))
+    page("Account access", &format!("<h1>JaneConverter account access</h1><p>Use this temporary page in the browser whose session you want to use. The link only identifies that browser; JaneConverter never asks for or stores your password or copies or uploads your cookies.</p><ol><li>Open the source page below.</li><li>Sign in normally if needed.</li><li>Return here and confirm access.</li></ol><p><a class=\"primary\" href=\"{}\" target=\"_blank\" rel=\"noreferrer\" referrerpolicy=\"no-referrer\">Open source link</a></p><p><a class=\"confirm\" href=\"/access/{token}/ready\">I’m signed in — confirm access</a></p><p class=\"note\">Browser detected: <strong>{}</strong>. After confirmation, the JaneConverter Browser Bridge extension can connect this source without closing the browser.</p>", html_escape(source), html_escape(&detection.label)))
 }
 
 fn is_supported_source_url(source: &str) -> bool {
@@ -270,7 +352,7 @@ fn parse_playlist_listing(output: &str) -> Result<(String, Vec<PlaylistItem>), S
 }
 
 fn ready_page(detection: &BrowserDetection) -> String {
-    page("Access ready", &format!("<h1>Access confirmed</h1><p>Browser detected: <strong>{}</strong>.</p><p>Return to JaneConverter. The session will be used for the current app session only.</p>", html_escape(&detection.label)))
+    page("Access ready", &format!("<h1>Access confirmed</h1><p>Browser detected: <strong>{}</strong>.</p><p>Return to JaneConverter. If the JaneConverter Browser Bridge extension is installed, click its toolbar button and choose <strong>Connect</strong>. The browser can remain open for this app session.</p>", html_escape(&detection.label)))
 }
 fn error_page(message: &str) -> String {
     page(
@@ -301,6 +383,20 @@ fn send_html(stream: &mut TcpStream, status: u16, body: &str) {
         "Gone"
     };
     let response = format!("HTTP/1.1 {status} {reason}\r\nContent-Type: text/html; charset=utf-8\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; style-src 'unsafe-inline'\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
+    let _ = stream.write_all(response.as_bytes());
+}
+
+fn send_json(stream: &mut TcpStream, status: u16, body: &str) {
+    let reason = if status == 200 {
+        "OK"
+    } else if status == 400 {
+        "Bad Request"
+    } else if status == 409 {
+        "Conflict"
+    } else {
+        "Payload Too Large"
+    };
+    let response = format!("HTTP/1.1 {status} {reason}\r\nContent-Type: application/json; charset=utf-8\r\nCache-Control: no-store\r\nAccess-Control-Allow-Origin: *\r\nAccess-Control-Allow-Headers: content-type\r\nAccess-Control-Allow-Methods: GET, POST, OPTIONS\r\nX-Content-Type-Options: nosniff\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", body.len(), body);
     let _ = stream.write_all(response.as_bytes());
 }
 
@@ -564,10 +660,8 @@ impl JaneConverterApp {
             }
             self.auth_browser = event.browser.session_browser;
             self.auth_label = Some(event.browser.label.clone());
-            self.access_server = None;
-            self.access_link = None;
             self.status = if self.auth_browser.is_some() {
-                format!("Account access confirmed through {}", event.browser.label)
+                format!("Account access confirmed through {} — click the Browser Bridge extension to keep it open", event.browser.label)
             } else {
                 format!(
                     "{} detected, but its session cannot be read automatically",
@@ -613,6 +707,16 @@ impl JaneConverterApp {
         }
     }
 
+    fn active_bridge_payload(&self) -> Option<String> {
+        self.access_server.as_ref().and_then(|server| {
+            server
+                .bridge_payload
+                .lock()
+                .ok()
+                .and_then(|value| value.clone())
+        })
+    }
+
     fn paste_clipboard(&mut self) {
         match arboard::Clipboard::new().and_then(|mut clipboard| clipboard.get_text()) {
             Ok(text) => {
@@ -647,6 +751,7 @@ impl JaneConverterApp {
         let generation = self.playlist_generation;
         let python = find_python(&self.root);
         let root = self.root.clone();
+        let bridge_payload = self.active_bridge_payload();
         let mut args = vec![
             self.root.join("run_converter.py").display().to_string(),
             "--source".to_owned(),
@@ -657,6 +762,9 @@ impl JaneConverterApp {
         if let Some(browser) = &self.auth_browser {
             args.extend(["--browser-session".to_owned(), browser.clone()]);
         }
+        if bridge_payload.is_some() {
+            args.push("--browser-bridge-stdin".to_owned());
+        }
         let (tx, rx) = mpsc::sync_channel(4);
         self.events = Some(rx);
         self.playlist_loading = true;
@@ -666,10 +774,38 @@ impl JaneConverterApp {
         self.status = "Loading playlist tracks...".to_owned();
         thread::spawn(move || {
             let mut command = Command::new(python);
-            command.args(args).current_dir(root);
+            command
+                .args(args)
+                .current_dir(root)
+                .stdin(if bridge_payload.is_some() {
+                    Stdio::piped()
+                } else {
+                    Stdio::null()
+                });
             #[cfg(target_os = "windows")]
             command.creation_flags(0x08000000);
-            match command.output() {
+            let mut child = match command.spawn() {
+                Ok(child) => child,
+                Err(error) => {
+                    let _ = tx.send(Event::PlaylistLoadFailed(
+                        generation,
+                        format!("Could not start playlist loader: {error}"),
+                    ));
+                    return;
+                }
+            };
+            if let Some(payload) = bridge_payload {
+                if let Some(mut stdin) = child.stdin.take() {
+                    if let Err(error) = stdin.write_all(payload.as_bytes()) {
+                        let _ = tx.send(Event::PlaylistLoadFailed(
+                            generation,
+                            format!("Could not send the browser bridge handoff: {error}"),
+                        ));
+                        return;
+                    }
+                }
+            }
+            match child.wait_with_output() {
                 Ok(output) if output.status.success() => {
                     match parse_playlist_listing(&String::from_utf8_lossy(&output.stdout)) {
                         Ok((title, items)) if !items.is_empty() => {
@@ -751,6 +887,7 @@ impl JaneConverterApp {
         self.save_settings();
         let python = find_python(&self.root);
         let root = self.root.clone();
+        let bridge_payload = self.active_bridge_payload();
         let mut args = vec![
             self.root.join("run_converter.py").display().to_string(),
             "--source".to_owned(),
@@ -784,6 +921,9 @@ impl JaneConverterApp {
         if let Some(browser) = &self.auth_browser {
             args.extend(["--browser-session".to_owned(), browser.clone()]);
         }
+        if bridge_payload.is_some() {
+            args.push("--browser-bridge-stdin".to_owned());
+        }
         if let Some(indexes) = &self.selected_playlist_indexes {
             args.extend([
                 "--playlist".to_owned(),
@@ -801,6 +941,11 @@ impl JaneConverterApp {
             command
                 .args(&args)
                 .current_dir(root)
+                .stdin(if bridge_payload.is_some() {
+                    Stdio::piped()
+                } else {
+                    Stdio::null()
+                })
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
             #[cfg(target_os = "windows")]
@@ -815,6 +960,18 @@ impl JaneConverterApp {
                     return;
                 }
             };
+            if let Some(payload) = bridge_payload {
+                if let Some(mut stdin) = child.stdin.take() {
+                    if let Err(error) = stdin.write_all(payload.as_bytes()) {
+                        let _ = tx.send(Event::Output(format!(
+                            "Could not send the browser bridge handoff: {error}"
+                        )));
+                        terminate_process_tree(&mut child);
+                        let _ = tx.send(Event::ConversionFinished(1));
+                        return;
+                    }
+                }
+            }
             if let Some(stdout) = child.stdout.take() {
                 spawn_reader(stdout, tx.clone());
             }
@@ -884,9 +1041,11 @@ impl JaneConverterApp {
         self.events = Some(rx);
         self.update_checking = true;
         thread::spawn(move || {
-            let script = "import json; from engine.updater import check_for_engine_updates, check_for_repo_updates; print(json.dumps({'engine': check_for_engine_updates(), 'repo': check_for_repo_updates()}))";
-            let mut command = Command::new(python);
-            command.arg("-c").arg(script).current_dir(root);
+            let mut command = Command::new(&python);
+            if !packaged_engine(&python) {
+                command.arg(root.join("run_converter.py"));
+            }
+            command.arg("--check-updates").current_dir(root);
             #[cfg(target_os = "windows")]
             command.creation_flags(0x08000000);
             match command.output() {
@@ -1982,6 +2141,9 @@ fn spawn_reader<R: Read + Send + 'static>(reader: R, tx: EventSender) {
 fn find_python(root: &Path) -> String {
     #[cfg(target_os = "windows")]
     for candidate in [
+        root.join("JaneConverterEngine.exe"),
+        root.join("resources/runtime/JaneConverterEngine.exe"),
+        root.join("resources/JaneConverterEngine.exe"),
         root.join(".venv/Scripts/python.exe"),
         root.join("venv/Scripts/python.exe"),
     ] {
@@ -2006,6 +2168,14 @@ fn find_python(root: &Path) -> String {
     {
         "python3".to_owned()
     }
+}
+
+fn packaged_engine(path: &str) -> bool {
+    Path::new(path)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .map(|value| value.eq_ignore_ascii_case("JaneConverterEngine.exe"))
+        .unwrap_or(false)
 }
 
 fn read_native_settings(root: &Path) -> HashMap<String, String> {
@@ -2100,7 +2270,10 @@ fn write_frontend_preference(root: &Path, preference: &str) -> io::Result<PathBu
 fn app_root() -> PathBuf {
     let exe = std::env::current_exe().unwrap_or_else(|_| PathBuf::from("."));
     if let Some(parent) = exe.parent() {
-        if parent.join("run_converter.py").exists() {
+        if parent.join("run_converter.py").exists()
+            || parent.join("JaneConverterEngine.exe").exists()
+            || parent.join("resources/runtime/JaneConverterEngine.exe").exists()
+        {
             return parent.to_owned();
         }
     }

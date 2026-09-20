@@ -78,7 +78,8 @@ For each media link or local file, JaneConverter:
 
 Windows is the officially packaged and validated release platform. macOS and Linux are experimental/community validation targets until clean-machine testing and signed distribution packages are available.
 
-You need:
+For the consumer Windows installer, the private runtime is bundled. The source and
+portable paths have the prerequisites below:
 
 - A 64-bit computer running **Windows 10/11**, **macOS 12 or newer**, or a modern 64-bit Linux distribution.
 - **Python 3.10 or newer**. Windows setup can install it; macOS/Linux setup expects `python3` to already be installed.
@@ -95,7 +96,28 @@ Node.js is optional but recommended when fetching YouTube media, as it enables t
 
 ## Installation & Setup
 
-### 1-Click Automated Setup (Recommended)
+### Consumer installer (Windows, recommended)
+
+Run `dist\JaneConverter-Setup.exe` from a release download. It installs one
+consumer-facing JaneConverter entry point with the Main UI selected by default,
+while keeping Legacy Rust and Legacy Python available from the launch preference
+setting. The installer bundles the conversion engine, FFmpeg/ffprobe, and the
+browser-bridge files, so consumers do not need to install Python, pip, Rust, Node.js,
+or FFmpeg separately.
+
+The browser bridge remains consent-based because Chromium browsers do not permit a
+normal application installer to silently install extensions. The installer includes
+the extension files; if the consumer declines the optional browser setup, use the
+manual **Load unpacked** instructions below.
+
+### Portable/developer safety net
+
+The `JaneConverter-1.2.0-windows.zip` package is the source-visible recovery path.
+It keeps `setup.bat`, the Python engine, the legacy interfaces, diagnostics, and
+the project-local data layout available for developers or troubleshooting. Extract
+it, then run `setup.bat` from the extracted folder.
+
+### 1-Click Automated Setup (Portable path)
 
 Clone this repository or extract the downloaded ZIP folder, open PowerShell or Command Prompt in the `JaneConverter` folder, and run:
 
@@ -198,7 +220,18 @@ When pasting a playlist or album URL (YouTube playlist, Spotify album or playlis
 
 Some services require an active account session for private playlists, age-restricted media, or other content the signed-in user is allowed to view. In the Converter tab, click **Create Access Link**. JaneConverter starts a temporary localhost page, copies the link, and opens it in the host's default browser. You may paste that link into any other browser, open the source link there, sign in normally if needed, then click **I'm signed in — confirm access**.
 
-After confirmation, JaneConverter passes that browser's existing session directly to yt-dlp for the current app session. The localhost server and access link expire when confirmed or when JaneConverter closes. JaneConverter does not request your password, export a cookies file, or upload session data. Browser sessions do not bypass privacy settings, permissions, DRM, or expired content; if the account cannot access the media, JaneConverter will stop and explain the failure. The account-access link cannot make unsupported browsers or services work automatically.
+After confirmation, the recommended path is the **JaneConverter Browser Bridge** extension in `browser-extension/`. Load that folder as an unpacked extension in Vivaldi or another Chromium browser, click its toolbar button, and choose **Connect**. The extension asks for permission for the current source origin only, reads the already-authorized session through the browser's cookies API, and sends a source-scoped payload to JaneConverter's loopback server. The browser can stay open, and the payload is kept in memory for the current app session only. No password is requested, no cookies file is exported, and no session data is uploaded.
+
+If the extension is not installed or cannot be used, JaneConverter retains the regular read-only in-memory browser fallback and yt-dlp database fallback. For Chromium browsers, it automatically retries the read-only path for a few seconds. If Windows blocks both paths, fully exit the browser—not just the visible window—so the fallback can run. In Vivaldi on Windows, use **File > Exit** or the full quit shortcut; background browser processes can keep the database locked. Browser sessions do not bypass privacy settings, permissions, DRM, or expired content; if the account cannot access the media, JaneConverter will stop and explain the failure.
+
+#### Installing the Browser Bridge extension
+
+1. Open `vivaldi://extensions` (or the equivalent extensions page in your Chromium browser) and enable **Developer mode**.
+2. Choose **Load unpacked** and select JaneConverter's `browser-extension` folder.
+3. In JaneConverter, create and confirm the access link, then open the extension from the browser toolbar and click **Connect**.
+4. Approve the permission for the source site only. Return to JaneConverter; the account-access status will change to **Bridge connected**.
+
+The extension is intentionally local and source-scoped. It does not run continuously, store cookies, or make the browser session available to other sites.
 
 ## Updates, releases, and uninstalling
 
@@ -313,6 +346,10 @@ If FFmpeg is not detected in your system PATH, install it with your operating sy
 ### Python runtime was not found
 
 Run `.\setup.bat` in the JaneConverter folder on Windows, or `./install.sh` on macOS/Linux. Alternatively, install Python 3.10+ from [python.org](https://www.python.org/downloads/) or your operating system package manager.
+
+### Windows setup finds Python but `.venv\Scripts\python.exe` is missing
+
+This means setup found a system Python, but the private JaneConverter environment did not finish creating. The current installer checks every `python.exe` and `python3.exe` on PATH, the Windows Python launcher, and registered Python installations, then resolves the actual interpreter path. It also repairs a partial `.venv` before installing dependencies. Re-run the current `setup.bat`; it will not modify your global Python packages.
 
 ### Stream extraction fails or YouTube throttles
 

@@ -6,8 +6,8 @@ mod process;
 
 use model::{AccessStatus, ConversionRequest, LibraryEntry, RuntimeInfo};
 use paths::{
-    command_available, data_root, detect_gpu, find_python, prepare_command, project_root,
-    read_preference, settings_get_internal, write_preference, write_settings,
+    command_available, data_root, detect_gpu, find_python, packaged_engine, prepare_command,
+    project_root, read_preference, settings_get_internal, write_preference, write_settings,
 };
 use process::{
     load_playlist as load_playlist_engine, start_conversion as start_engine_conversion,
@@ -46,6 +46,14 @@ fn active_browser(state: &AppState) -> Option<String> {
             let status = server.status();
             (!status.browser.trim().is_empty()).then_some(status.browser)
         })
+    })
+}
+
+fn active_bridge_payload(state: &AppState, source: &str) -> Option<String> {
+    state.access.lock().ok().and_then(|value| {
+        value
+            .as_ref()
+            .and_then(|server| server.bridge_payload_for(source))
     })
 }
 
@@ -180,11 +188,13 @@ fn start_conversion(
     let child_slot_for_worker = Arc::clone(&child_slot);
     let cancel_slot_for_worker = Arc::clone(&cancel_slot);
     let browser = active_browser(&state);
+    let bridge_payload = active_bridge_payload(&state, &request.source);
     start_engine_conversion(
         app,
         job_id.clone(),
         request,
         browser,
+        bridge_payload,
         child_slot,
         cancel_slot,
         move |_code, _cancelled| {
@@ -231,7 +241,8 @@ fn load_playlist(
     state: State<'_, AppState>,
     source: String,
 ) -> Result<model::PlaylistCatalog, String> {
-    load_playlist_engine(&source, active_browser(&state))
+    let bridge_payload = active_bridge_payload(&state, &source);
+    load_playlist_engine(&source, active_browser(&state), bridge_payload)
 }
 
 #[tauri::command]
@@ -295,6 +306,7 @@ fn access_status(state: State<'_, AppState>) -> AccessStatus {
             active: false,
             link: String::new(),
             browser: String::new(),
+            bridge_connected: false,
         })
 }
 
@@ -411,10 +423,13 @@ fn format_update_summary(stdout: &str) -> String {
 }
 #[tauri::command]
 fn check_updates() -> Result<String, String> {
-    let script = "import json; from engine.updater import check_for_engine_updates, check_for_repo_updates; print(json.dumps({'engine': check_for_engine_updates(), 'repo': check_for_repo_updates()}))";
-    let mut command = Command::new(find_python());
+    let engine = find_python();
+    let mut command = Command::new(&engine);
+    if !packaged_engine(&engine) {
+        command.arg(project_root().join("run_converter.py"));
+    }
     command
-        .args(["-c", script])
+        .arg("--check-updates")
         .current_dir(project_root())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

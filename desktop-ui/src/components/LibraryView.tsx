@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  AlertTriangle,
   ArrowLeft,
   ExternalLink,
   FileAudio,
@@ -46,6 +47,10 @@ function joinPath(parent: string, name: string) {
   return parent.replace(/[\\/]+$/, "") + "\\" + name;
 }
 
+type PendingAction =
+  | { kind: "move"; destination: string }
+  | { kind: "delete"; entry: LibraryEntry };
+
 function mediaIcon(entry: LibraryEntry) {
   if (entry.extension === "MP4" || entry.extension === "MKV" || entry.extension === "WEBM" || entry.extension === "MOV" || entry.extension === "GIF") {
     return <Video size={17} />;
@@ -68,7 +73,19 @@ export function LibraryView({
   const [previews, setPreviews] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [moving, setMoving] = useState(false);
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
   const refreshSequence = useRef(0);
+  const cancelConfirmRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!pendingAction) return;
+    cancelConfirmRef.current?.focus();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPendingAction(null);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [pendingAction]);
 
   async function loadPreviews(scanned: LibraryEntry[], libraryRoot: string, token: number) {
     const candidates = scanned.slice(0, 24);
@@ -146,32 +163,63 @@ export function LibraryView({
       onStatus("The new library location cannot be inside the current library.");
       return;
     }
-    if (!window.confirm("Move the converted library to " + destination + "? JaneConverter will keep the same library folder name.")) return;
-
-    setMoving(true);
-    try {
-      const movedTo = await bridge.moveLibrary(root, destinationParent);
-      const nextSettings = { ...settings, outputDir: movedTo };
-      onSettings(nextSettings);
-      onStatus("Library moved to " + movedTo + ".");
-    } catch (error) {
-      onStatus(error instanceof Error ? error.message : String(error));
-    } finally {
-      setMoving(false);
-    }
+    setPendingAction({ kind: "move", destination });
   }
 
-  async function remove(entry: LibraryEntry) {
-    if (!window.confirm("Delete " + entry.name + "? This cannot be undone.")) return;
+  async function confirmPendingAction() {
+    const action = pendingAction;
+    if (!action) return;
+    setPendingAction(null);
+
+    if (action.kind === "move") {
+      setMoving(true);
+      try {
+        const movedTo = await bridge.moveLibrary(root, parentPath(action.destination));
+        const nextSettings = { ...settings, outputDir: movedTo };
+        onSettings(nextSettings);
+        onStatus("Library moved to " + movedTo + ".");
+      } catch (error) {
+        onStatus(error instanceof Error ? error.message : String(error));
+      } finally {
+        setMoving(false);
+      }
+      return;
+    }
+
     try {
-      await bridge.deleteLibraryEntry(root, entry.path);
-      onStatus(entry.name + " deleted.");
+      await bridge.deleteLibraryEntry(root, action.entry.path);
+      onStatus(action.entry.name + " deleted.");
       await refresh(currentPath);
     } catch (error) {
       onStatus(error instanceof Error ? error.message : String(error));
     }
   }
 
+  function remove(entry: LibraryEntry) {
+    setPendingAction({ kind: "delete", entry });
+  }
+
+  /*
+   * Keep confirmation inside the Tauri surface so it matches the design
+   * system instead of looking like a browser-owned localhost dialog.
+   */
+  function pendingActionCopy() {
+    if (!pendingAction) return null;
+    if (pendingAction.kind === "delete") {
+      return {
+        title: "Delete media?",
+        message: "Delete " + pendingAction.entry.name + "? This cannot be undone.",
+        confirm: "Delete file",
+      };
+    }
+    return {
+      title: "Move converted library?",
+      message: "Move the converted library to " + pendingAction.destination + "? JaneConverter will keep the same library folder name.",
+      confirm: "Move library",
+    };
+  }
+
+  const confirmation = pendingActionCopy();
   const atRoot = pathKey(currentPath) === pathKey(root);
 
   return (
@@ -245,7 +293,7 @@ export function LibraryView({
               ) : (
                 <button type="button" onClick={() => void openPath(entry.path)} className="subtle-button px-3 py-2 text-xs">Show file</button>
               )}
-              <button type="button" onClick={() => void remove(entry)} className="grid size-8 place-items-center rounded-lg text-zinc-600 transition-colors hover:bg-red-500/10 hover:text-red-300" aria-label={"Delete " + entry.name}>
+              <button type="button" onClick={() => remove(entry)} className="grid size-8 place-items-center rounded-lg text-zinc-600 transition-colors hover:bg-red-500/10 hover:text-red-300" aria-label={"Delete " + entry.name}>
                 <Trash2 size={14} />
               </button>
             </motion.div>
@@ -258,6 +306,47 @@ export function LibraryView({
           </div>
         )}
       </section>
+
+      {pendingAction && confirmation && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="fixed inset-0 z-[80] grid place-items-center bg-black/70 p-4 backdrop-blur-sm"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setPendingAction(null);
+          }}
+        >
+          <motion.div
+            initial={{ opacity: 0, y: 8, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="library-confirm-title"
+            aria-describedby="library-confirm-description"
+            className="panel w-full max-w-md border border-white/[0.10] bg-[#090812]/95 p-5 shadow-2xl shadow-black/60"
+            onMouseDown={(event) => event.stopPropagation()}
+          >
+            <div className="flex items-start gap-3">
+              <div className={"grid size-10 shrink-0 place-items-center rounded-xl border " + (pendingAction.kind === "delete" ? "border-red-400/20 bg-red-400/10 text-red-300" : "border-[#d75b88]/20 bg-[#d75b88]/10 text-[#e68aae]")}>
+                {pendingAction.kind === "delete" ? <Trash2 size={17} /> : <AlertTriangle size={17} />}
+              </div>
+              <div className="min-w-0">
+                <h2 id="library-confirm-title" className="text-base font-medium text-white">{confirmation.title}</h2>
+                <p id="library-confirm-description" className="mt-2 break-words text-sm leading-6 text-zinc-400">{confirmation.message}</p>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end gap-2">
+              <button ref={cancelConfirmRef} type="button" onClick={() => setPendingAction(null)} className="subtle-button px-3 py-2 text-xs">
+                Cancel
+              </button>
+              <button type="button" onClick={() => void confirmPendingAction()} className={"rounded-lg border px-3 py-2 text-xs transition-colors " + (pendingAction.kind === "delete" ? "border-red-400/25 bg-red-400/10 text-red-200 hover:bg-red-400/20" : "border-[#d75b88]/25 bg-[#d75b88]/10 text-[#f0b0c8] hover:bg-[#d75b88]/20")}>
+                {confirmation.confirm}
+              </button>
+            </div>
+          </motion.div>
+        </motion.div>
+      )}
     </div>
   );
 }

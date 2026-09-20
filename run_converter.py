@@ -32,10 +32,15 @@ from engine.converter import (
     SUPPORTED_VIDEO_FORMATS,
     get_best_hardware_encoder
 )
-from engine.updater import check_for_engine_updates
+from engine.updater import check_for_engine_updates, check_for_repo_updates
 from engine.version import __version__
 from engine.paths import DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR
 from engine.auth import normalize_browser_session
+from engine.browser_bridge import (
+    CookieBridgeError,
+    read_cookie_jar_from_stdin,
+    set_active_browser_cookie_jar,
+)
 
 MIN_FREE_DISK_BYTES = 256 * 1024 * 1024  # keep a reasonable minimum without rejecting small conversions
 
@@ -760,7 +765,7 @@ def validate_cli_args(args, parser: argparse.ArgumentParser):
 
 def main():
     parser = argparse.ArgumentParser(description="JaneConverter: Universal Media Downloader & Converter")
-    parser.add_argument("--source", "-s", required=True, help="Media URL (YouTube, Spotify, Apple Music, SoundCloud, TikTok, Twitter, etc.) or local file path")
+    parser.add_argument("--source", "-s", help="Media URL (YouTube, Spotify, Apple Music, SoundCloud, TikTok, Twitter, etc.) or local file path")
     parser.add_argument("--format", "-f", default="mp3", help=f"Target output format ({', '.join(CLI_FORMATS)})")
     parser.add_argument("--output", "-o", default=DEFAULT_CONVERTED_DIR, help="Destination directory for converted files")
     parser.add_argument("--bitrate", "-b", default="320k", help="Audio bitrate, lossless bit depth, OGG quality, or video quality (best, high, balanced, small)")
@@ -788,10 +793,29 @@ def main():
         default="none",
         help="Use an existing logged-in browser session for authorized content; no password or cookie file is stored.",
     )
+    parser.add_argument(
+        "--browser-bridge-stdin",
+        action="store_true",
+        help="Read one consented, source-scoped browser session payload from stdin; never writes a cookie file.",
+    )
     parser.add_argument("--no-update", action="store_true", help="Skip the read-only yt-dlp update availability check on startup")
+    parser.add_argument("--check-updates", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--version", action="version", version=f"JaneConverter {__version__}")
 
     args = parser.parse_args()
+    if args.check_updates:
+        print(json.dumps({
+            "engine": check_for_engine_updates(),
+            "repo": check_for_repo_updates(),
+        }))
+        return
+    if not args.source:
+        parser.error("the following arguments are required: --source/-s")
+    if args.browser_bridge_stdin:
+        try:
+            set_active_browser_cookie_jar(read_cookie_jar_from_stdin(sys.stdin.buffer, args.source))
+        except CookieBridgeError as error:
+            parser.error(str(error))
     args.format, args.bitrate = validate_cli_args(args, parser)
 
     if args.list_playlist and not is_url(args.source):

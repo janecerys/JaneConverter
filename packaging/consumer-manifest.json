@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "engine": "JaneConverterEngine.exe",
+  "legacy_python": "JaneConverterPython.exe",
+  "ffmpeg": [
+    "ffmpeg.exe",
+    "ffprobe.exe"
+  ],
+  "portable_fallback": "build_release.ps1",
+  "installer": "JaneConverter-Setup.exe"
+}

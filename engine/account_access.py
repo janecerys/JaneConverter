@@ -1,13 +1,14 @@
 """Ephemeral localhost account-access handoff for JaneConverter.
 
 This module deliberately does not implement credential capture, cookie export,
-or token collection. It provides a one-time local page that lets a user open
-the source in a chosen browser, sign in there, and confirm the handoff. The
-extractor then reads that browser's existing session through yt-dlp when a
-compatible browser backend exists.
+or token collection. It provides a short-lived local page that lets a user open
+the source in a chosen browser, sign in there, and confirm the handoff. An
+optional unpacked browser extension can then pass a source-scoped session to
+the extractor in memory while the browser remains open.
 """
 
 from html import escape
+import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Optional
@@ -15,6 +16,9 @@ from urllib.parse import urlparse
 import secrets
 
 from engine.auth import BrowserDetection, detect_browser_from_headers
+
+
+MAX_BRIDGE_PAYLOAD_BYTES = 256 * 1024
 
 
 class AccountAccessServer:
@@ -31,7 +35,9 @@ class AccountAccessServer:
         self._thread = None
         self._lock = threading.Lock()
         self._consumed = False
+        self._confirmed = False
         self._detected_browser = None
+        self._bridge_payload = None
 
     @property
     def access_link(self) -> Optional[str]:
@@ -45,6 +51,16 @@ class AccountAccessServer:
     def is_active(self) -> bool:
         with self._lock:
             return self._server is not None and not self._consumed
+
+    @property
+    def bridge_connected(self) -> bool:
+        with self._lock:
+            return self._bridge_payload is not None
+
+    @property
+    def bridge_payload(self) -> Optional[str]:
+        with self._lock:
+            return self._bridge_payload
 
     @property
     def detected_browser(self) -> Optional[BrowserDetection]:
@@ -70,7 +86,34 @@ class AccountAccessServer:
                     if parsed.path == f"{base_path}/ready":
                         owner._confirm(self)
                         return
+                    if parsed.path == f"{base_path}/bridge/challenge":
+                        owner._send_bridge_challenge(self)
+                        return
                     owner._send_response(self, owner._error_page("This access link is not valid."), 404)
+
+                def do_OPTIONS(self):  # noqa: N802 - required by BaseHTTPRequestHandler
+                    parsed = urlparse(self.path)
+                    base_path = f"/access/{owner._token}"
+                    if parsed.path.startswith(f"{base_path}/bridge"):
+                        owner._send_json(self, {"ok": True})
+                    else:
+                        owner._send_response(self, "", 404)
+
+                def do_POST(self):  # noqa: N802 - required by BaseHTTPRequestHandler
+                    parsed = urlparse(self.path)
+                    base_path = f"/access/{owner._token}"
+                    if parsed.path != f"{base_path}/bridge":
+                        owner._send_json(self, {"error": "This access link is not valid."}, status=404)
+                        return
+                    try:
+                        content_length = int(self.headers.get("Content-Length", "0"))
+                    except ValueError:
+                        content_length = 0
+                    if content_length <= 0 or content_length > MAX_BRIDGE_PAYLOAD_BYTES:
+                        owner._send_json(self, {"error": "The browser bridge payload is too large or empty."}, status=413)
+                        return
+                    body = self.rfile.read(content_length)
+                    owner._receive_bridge_payload(self, body)
 
                 def log_message(self, _format, *_args):
                     # Never log URLs containing the one-time access token.
@@ -104,17 +147,45 @@ class AccountAccessServer:
             if self._consumed or self._server is None:
                 self._send_response(handler, self._error_page("This access link has expired."), 410)
                 return
-            self._consumed = True
             detected_browser = self._detected_browser or BrowserDetection("Unrecognized browser", None)
+            first_confirmation = not self._confirmed
+            self._confirmed = True
 
         self._send_response(handler, self._ready_page(detected_browser))
-        if self.on_ready:
+        if first_confirmation and self.on_ready:
             try:
                 self.on_ready(detected_browser)
             except Exception:
                 # A UI callback must never break the local HTTP response.
                 pass
-        threading.Thread(target=self.stop, name="account-access-shutdown", daemon=True).start()
+
+    def _send_bridge_challenge(self, handler):
+        with self._lock:
+            confirmed = self._confirmed and not self._consumed and self._server is not None
+        if not confirmed:
+            self._send_json(handler, {"error": "Confirm account access in the browser first."}, status=409)
+            return
+        self._send_json(handler, {"sourceUrl": self.source_url, "confirmed": True})
+
+    def _receive_bridge_payload(self, handler, body: bytes):
+        with self._lock:
+            confirmed = self._confirmed and not self._consumed and self._server is not None
+        if not confirmed:
+            self._send_json(handler, {"error": "Confirm account access in the browser first."}, status=409)
+            return
+        try:
+            from engine.browser_bridge import cookie_jar_from_payload
+
+            cookie_jar_from_payload(body, self.source_url)
+            parsed = json.loads(body.decode("utf-8"))
+            if not isinstance(parsed, dict) or not isinstance(parsed.get("cookies"), list):
+                raise ValueError("The browser bridge payload has an invalid shape.")
+        except Exception as error:
+            self._send_json(handler, {"error": str(error)}, status=400)
+            return
+        with self._lock:
+            self._bridge_payload = body.decode("utf-8")
+        self._send_json(handler, {"ok": True})
 
     def _record_browser(self, headers):
         detection = detect_browser_from_headers(headers)
@@ -131,8 +202,9 @@ class AccountAccessServer:
             "Account access",
             f"""
             <h1>JaneConverter account access</h1>
-            <p>Use this temporary page in your default browser. JaneConverter
-            does not receive your password or cookies.</p>
+            <p>Use this temporary page in the browser whose session you want to use.
+            The link only identifies that browser; JaneConverter does not receive
+            your password or copy or upload your cookies.</p>
             <ol>
               <li>Open the source link below.</li>
               <li>Sign in normally if the service asks you to.</li>
@@ -152,7 +224,10 @@ class AccountAccessServer:
             f"""
             <h1>Access confirmed</h1>
             <p>Browser detected: <strong>{escape(detected_browser.label)}</strong>.</p>
-            <p>Return to JaneConverter. Your browser session will be used for the next job only.</p>
+            <p>Return to JaneConverter. If the JaneConverter Browser Bridge extension
+            is installed, click its toolbar button and choose <strong>Connect</strong>.
+            This lets the browser stay open while the current app session uses the
+            source-scoped session. No cookie file is created or uploaded.</p>
             """,
         )
 
@@ -185,3 +260,19 @@ h1 {{ color:#f1f5f9; }} a {{ color:#93c5fd; }} .primary,.confirm {{ display:inli
         handler.send_header("Connection", "close")
         handler.end_headers()
         handler.wfile.write(payload)
+
+    @staticmethod
+    def _send_json(handler, payload: dict, status: int = 200):
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        handler.send_response(status)
+        handler.send_header("Content-Type", "application/json; charset=utf-8")
+        handler.send_header("Content-Length", str(len(body)))
+        handler.send_header("Cache-Control", "no-store")
+        handler.send_header("Access-Control-Allow-Origin", "*")
+        handler.send_header("Access-Control-Allow-Headers", "content-type")
+        handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        handler.send_header("X-Content-Type-Options", "nosniff")
+        handler.send_header("Connection", "close")
+        handler.end_headers()
+        if status != 204:
+            handler.wfile.write(body)

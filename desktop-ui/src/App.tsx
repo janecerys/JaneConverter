@@ -27,7 +27,7 @@ export default function App() {
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
   const [settings, setSettings] = useState<ConverterSettings>(defaultSettings);
   const [events, setEvents] = useState<ConverterEvent[]>([]);
-  const [access, setAccess] = useState<AccessStatus>({ active: false, link: "", browser: "" });
+  const [access, setAccess] = useState<AccessStatus>({ active: false, link: "", browser: "", bridgeConnected: false });
   const [jobId, setJobId] = useState("");
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState("Ready. Paste a link or choose a file to begin.");
@@ -89,20 +89,30 @@ export default function App() {
     catch (error) { statusMessage(error instanceof Error ? error.message : String(error)); }
   }
 
-  async function createAccess(source: string) {
+  async function createAccess(source: string): Promise<AccessStatus> {
     try {
       const nextAccess = await bridge.createAccessLink(source);
       setAccess(nextAccess);
       await bridge.openUrl(nextAccess.link);
       statusMessage("Temporary access link opened in your browser.");
+      return nextAccess;
     } catch (error) {
-      statusMessage(error instanceof Error ? error.message : String(error));
+      const message = error instanceof Error ? error.message : String(error);
+      statusMessage(message);
+      throw error;
     }
   }
 
   async function clearAccess() {
-    try { await bridge.clearAccessLink(); setAccess({ active: false, link: "", browser: "" }); statusMessage("Account access cleared. Public-only extraction is active."); }
-    catch (error) { statusMessage(error instanceof Error ? error.message : String(error)); }
+    try {
+      await bridge.clearAccessLink();
+      setAccess({ active: false, link: "", browser: "", bridgeConnected: false });
+      statusMessage("Account access cleared. Public-only extraction is active.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      statusMessage(message);
+      throw error;
+    }
   }
 
   const content = activeView === "converter"

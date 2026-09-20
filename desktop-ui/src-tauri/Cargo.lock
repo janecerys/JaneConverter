@@ -1799,11 +1799,14 @@ name = "janeconverter-desktop"
 version = "1.2.0"
 dependencies = [
  "base64 0.22.1",
+ "rand",
  "rfd",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
+ "url",
+ "winreg",
 ]
 
 [[package]]

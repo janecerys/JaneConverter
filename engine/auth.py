@@ -56,6 +56,16 @@ _BROWSER_SIGNAL_MARKERS = (
     ("opera", "opera"),
 )
 
+_BROWSER_PROCESS_NAMES = {
+    "chrome": {"chrome"},
+    "edge": {"msedge", "microsoft edge"},
+    "firefox": {"firefox"},
+    "brave": {"brave", "brave browser"},
+    "vivaldi": {"vivaldi"},
+    "opera": {"opera"},
+    "chromium": {"chromium"},
+}
+
 
 @dataclass(frozen=True)
 class BrowserDetection:
@@ -129,6 +139,97 @@ def yt_dlp_cookie_option(selection: Optional[str]) -> Optional[Tuple[str, None, 
     # yt-dlp accepts (browser, profile, keyring, container). Leaving the
     # optional values empty lets it select the user's default profile.
     return (browser, None, None, None)
+
+
+def browser_process_is_running(selection: Optional[str]) -> Optional[bool]:
+    """Check whether the selected browser still has a live process.
+
+    This is deliberately limited to process names. It never opens a browser
+    profile, reads cookies, or changes process state. ``None`` means the
+    browser cannot be checked reliably on this host.
+    """
+    browser = normalize_browser_session(selection)
+    if browser is None:
+        return False
+    process_names = _BROWSER_PROCESS_NAMES.get(browser)
+    if not process_names:
+        return None
+
+    try:
+        import psutil
+    except ImportError:
+        return None
+
+    try:
+        processes = psutil.process_iter(["name"])
+        for process in processes:
+            try:
+                name = str(process.info.get("name") or "").strip().lower()
+                if name.endswith(".exe"):
+                    name = name[:-4]
+            except (OSError, psutil.Error):
+                continue
+            if name in process_names:
+                return True
+    except (OSError, psutil.Error):
+        return None
+    return False
+
+
+def normalize_browser_error_message(message: object) -> str:
+    """Use Chromium terminology for yt-dlp's Chromium-family errors."""
+    return str(message or "").replace("Chrome cookie database", "Chromium cookie database")
+
+
+def describe_authenticated_extraction_failure(
+    selection: Optional[str],
+    error: BaseException,
+    subject: str = "stream",
+) -> str:
+    """Turn browser-cookie extraction failures into safe, actionable guidance."""
+    browser = browser_session_label(selection)
+    subject = "playlist" if subject == "playlist" else "stream"
+    detail = normalize_browser_error_message(error)
+    lowered = detail.lower()
+    if "dpapi" in lowered and "decrypt" in lowered:
+        return (
+            f"Windows could not decrypt the {browser} browser session with DPAPI. "
+            f"Make sure JaneConverter and {browser} are running under the same Windows account, "
+            f"close {browser} completely, reopen JaneConverter, and create a new access link in {browser}. "
+            "If you use a non-default browser profile, sign in to the default browser profile or switch Account access back to Public only. "
+            "JaneConverter does not copy or save your cookies."
+        )
+    if "could not copy" in lowered and "cookie database" in lowered:
+        process_running = browser_process_is_running(selection)
+        if process_running is True:
+            process_guidance = (
+                f"{browser} is still running after its windows were closed; a background process is keeping its cookie database locked. "
+                f"JaneConverter already retried the safe live-session read, and the current yt-dlp path cannot safely force access to this locked profile. "
+                f"Use {browser}'s File > Exit (or its full quit shortcut), wait a few seconds, and retry."
+            )
+        elif process_running is False:
+            process_guidance = (
+                f"Windows reports no {browser} process, so this points to a {browser} profile or Windows permission problem "
+                "rather than a browser-lock problem."
+            )
+        else:
+            process_guidance = (
+                f"JaneConverter could not determine whether {browser} is still running. "
+                f"Use {browser}'s full File > Exit command before retrying."
+            )
+        return (
+            f"{browser} was detected, but yt-dlp could not copy the Chromium cookie database. "
+            "JaneConverter automatically retried the read-only in-memory browser path before falling back to yt-dlp. "
+            f"{process_guidance} Then retry the conversion; create a fresh access link only if you changed browser profiles or signed in again. "
+            f"Use the default {browser} profile and make sure JaneConverter and {browser} run under the same Windows account. "
+            "JaneConverter does not copy or save your cookies. If it still fails, switch Account access back to Public only."
+        )
+    return (
+        f"Authenticated {subject} extraction failed using your {browser} browser session. "
+        "The session may be expired, locked, or unable to access this content. "
+        "JaneConverter does not save your cookies. Try opening the link in that browser first, "
+        "then retry, or switch Account access back to Public only."
+    )
 
 
 def detect_default_browser_session() -> Optional[str]:

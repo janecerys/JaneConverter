@@ -3,6 +3,16 @@
 All notable changes to JaneConverter are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Fixed
+- Windows setup now discovers all usable Python executables on PATH, the Python launcher, and registered install locations instead of assuming one standard directory.
+- Windows setup now repairs incomplete private `.venv` directories and stops with a useful diagnostic before attempting pip when the venv interpreter was not created.
+
+### Added
+- Added a self-contained Windows consumer installer that bundles the Main UI, all three launcher paths, the conversion engine, FFmpeg/ffprobe, and the Browser Bridge files.
+- Preserved the source-visible portable ZIP as a developer and recovery safety net, with SHA-256 checksums for both distribution paths.
+
 ## [1.2.0] - 2026-09-20
 
 ### Added
@@ -11,6 +21,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Added immediate Relaunch controls to the Main UI, Legacy Rust, and Legacy Python interfaces so the saved launcher preference can be applied without manual restarts.
 - Added Apple Music catalog resolution for public song and album links, album track listing, matching-source search, and source troubleshooting guidance.
 - Added stale-download protection and Unix frontend preference handling so older native binaries are not silently reused after installation.
+- Added the optional local Browser Bridge extension, allowing all three launchers to use a confirmed source-scoped browser session without closing Vivaldi or another Chromium browser.
 
 ### Changed
 - Made the universal launcher the single entry point for all three interfaces while preserving the legacy launchers as recovery paths.
@@ -24,6 +35,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Windows setup now builds the Rust frontend when Cargo is available and moves stale native binaries aside when it is not.
 - Windows setup now uses non-interactive winget installs and visible pip progress, so setup should not require Enter to continue.
 - Removed the setup wrapper's hidden PAUSE prompt; failed setup runs now preserve the error code and close automatically after a short message.
+- Account access now tries a source-scoped, read-only in-memory Chromium session before yt-dlp's normal cookie-database path, so supported Chromium browsers can remain open during conversion.
+- Account access now keeps the confirmed localhost handoff alive until the current session is cleared, so the Browser Bridge can connect after confirmation and pass the session to Python over stdin without creating a cookie file.
+- Removed the rejected exported-cookie fallback; browser-session authentication never creates or stores a cookie file.
 
 ## [1.1.0] - 2026-09-11
 

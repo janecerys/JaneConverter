@@ -62,6 +62,7 @@ export interface AccessStatus {
   active: boolean;
   link: string;
   browser: string;
+  bridgeConnected: boolean;
 }
 
 export interface LibraryEntry {
@@ -130,8 +131,8 @@ const demoBridge: JaneBridge = {
   async getThumbnail() { return null; },
   async moveLibrary(source) { return source; },
   async deleteLibraryEntry() {},
-  async createAccessLink() { return { active: true, link: "Preview mode", browser: "" }; },
-  async accessStatus() { return { active: false, link: "", browser: "" }; },
+  async createAccessLink() { return { active: true, link: "Preview mode", browser: "", bridgeConnected: false }; },
+  async accessStatus() { return { active: false, link: "", browser: "", bridgeConnected: false }; },
   async clearAccessLink() {},
   async setFrontendPreference() {},
   async relaunch() {},

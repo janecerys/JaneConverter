@@ -12,7 +12,49 @@ from typing import Optional, Dict, Any, Callable
 import json
 import requests
 import yt_dlp
-from engine.auth import normalize_browser_session, yt_dlp_cookie_option
+from engine.auth import (
+    browser_session_label,
+    describe_authenticated_extraction_failure,
+    normalize_browser_session,
+    normalize_browser_error_message,
+    yt_dlp_cookie_option,
+)
+from engine.browser_cookies import load_browser_cookies_read_only
+from engine.browser_bridge import get_active_browser_cookie_jar
+
+
+class _AuthenticatedYtdlpLogger:
+    """Keep browser-session errors useful without exposing yt-dlp's Chrome label."""
+
+    def __init__(self, progress_callback: Optional[Callable[[float, str], None]]):
+        self.progress_callback = progress_callback
+        self._seen_errors = set()
+
+    def debug(self, _message: object):
+        return None
+
+    def info(self, _message: object):
+        return None
+
+    def warning(self, _message: object):
+        return None
+
+    def error(self, message: object):
+        normalized = normalize_browser_error_message(message)
+        if normalized in self._seen_errors:
+            return None
+        self._seen_errors.add(normalized)
+        if self.progress_callback and normalized:
+            self.progress_callback(0.15, normalized)
+        return None
+
+
+def _apply_browser_cookie_jar(ydl: Any, cookie_jar: Any) -> None:
+    """Attach a temporary browser jar to yt-dlp without creating a file."""
+    if not cookie_jar:
+        return
+    for cookie in cookie_jar:
+        ydl.cookiejar.set_cookie(cookie)
 
 def is_url(path_or_url: str) -> bool:
     """Checks if input string is a valid HTTP/HTTPS URL."""
@@ -559,13 +601,21 @@ def fetch_media_stream(
         "progress_hooks": [progress_hook]
     }
     cookie_option = yt_dlp_cookie_option(auth_browser)
-    if cookie_option:
+    browser_cookie_jar = get_active_browser_cookie_jar() if auth_browser else None
+    if auth_browser:
+        if browser_cookie_jar is None:
+            browser_cookie_jar = load_browser_cookies_read_only(auth_browser, source)
+        if browser_cookie_jar and progress_callback:
+            report(0.15, f"Read the {browser_session_label(auth_browser)} session in memory; the browser can remain open.", force=True)
+    if cookie_option and browser_cookie_jar is None:
         ydl_opts["cookiesfrombrowser"] = cookie_option
+        ydl_opts["logger"] = _AuthenticatedYtdlpLogger(progress_callback)
 
     try:
         info = None
         last_error = None
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            _apply_browser_cookie_jar(ydl, browser_cookie_jar)
             for query_item in candidates:
                 if abort_event and abort_event.is_set():
                     raise KeyboardInterrupt("Stream extraction aborted by user.")
@@ -655,12 +705,7 @@ def fetch_media_stream(
             }
     except Exception as e:
         if auth_browser:
-            raise RuntimeError(
-                f"Authenticated stream extraction failed using your {auth_browser.title()} browser session. "
-                "The session may be expired, locked, or unable to access this content. "
-                "JaneConverter does not save your cookies. Try opening the link in that browser first, "
-                "then retry, or switch Account access back to Public only."
-            ) from e
+            raise RuntimeError(describe_authenticated_extraction_failure(auth_browser, e)) from e
         raise RuntimeError(f"Stream extraction failed: {str(e)}") from e
 
 def fetch_playlist_entries(
@@ -768,11 +813,17 @@ def fetch_playlist_entries(
         "remote_components": ["ejs:github"]
     }
     cookie_option = yt_dlp_cookie_option(auth_browser)
-    if cookie_option:
+    browser_cookie_jar = get_active_browser_cookie_jar() if auth_browser else None
+    if auth_browser:
+        if browser_cookie_jar is None:
+            browser_cookie_jar = load_browser_cookies_read_only(auth_browser, clean_url)
+    if cookie_option and browser_cookie_jar is None:
         ydl_opts["cookiesfrombrowser"] = cookie_option
+        ydl_opts["logger"] = _AuthenticatedYtdlpLogger(progress_callback)
 
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            _apply_browser_cookie_jar(ydl, browser_cookie_jar)
             report(0.3, "Extracting playlist index and track listings...")
             info = ydl.extract_info(clean_url, download=False)
             if not info:
@@ -828,9 +879,6 @@ def fetch_playlist_entries(
     except Exception as e:
         if auth_browser:
             raise RuntimeError(
-                f"Authenticated playlist extraction failed using your {auth_browser.title()} browser session. "
-                "The session may be expired, locked, or unable to access this playlist. "
-                "JaneConverter does not save your cookies. Try opening the playlist in that browser first, "
-                "then retry, or switch Account access back to Public only."
+                describe_authenticated_extraction_failure(auth_browser, e, subject="playlist")
             ) from e
         raise RuntimeError(f"Playlist extraction failed: {str(e)}") from e

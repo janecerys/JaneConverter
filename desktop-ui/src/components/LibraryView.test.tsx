@@ -100,7 +100,6 @@ describe("Converted library", () => {
     const onStatus = vi.fn();
     fakeBridge.chooseFolder.mockResolvedValue("E:\\Media");
     fakeBridge.moveLibrary.mockResolvedValue("E:\\Media\\converted");
-    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
     const container = document.createElement("div");
     document.body.appendChild(container);
     const root = createRoot(container);
@@ -113,10 +112,20 @@ describe("Converted library", () => {
       await Promise.resolve();
     });
 
+    expect(container.textContent).toContain("Move converted library?");
+    expect(fakeBridge.moveLibrary).not.toHaveBeenCalled();
+    const confirmButton = Array.from(container.querySelectorAll("button"))
+      .filter((button) => button.textContent?.trim() === "Move library")
+      .pop();
+    expect(confirmButton).toBeDefined();
+    await act(async () => {
+      confirmButton?.click();
+      await Promise.resolve();
+    });
+
     expect(fakeBridge.moveLibrary).toHaveBeenCalledWith(settings.outputDir, "E:\\Media");
     expect(onSettings).toHaveBeenCalledWith({ ...settings, outputDir: "E:\\Media\\converted" });
     expect(onStatus).toHaveBeenCalledWith(expect.stringContaining("Library moved"));
-    confirmSpy.mockRestore();
     await act(async () => { root.unmount(); });
     container.remove();
   });

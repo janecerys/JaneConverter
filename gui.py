@@ -74,6 +74,7 @@ from engine.auth import (
     BrowserDetection,
 )
 from engine.account_access import AccountAccessServer
+from engine.browser_bridge import clear_active_browser_cookie_jar, cookie_jar_from_payload, set_active_browser_cookie_jar
 from engine.diagnostics import format_diagnostics
 from engine.staged_update import apply_pending_update
 from run_converter import process_conversion, process_playlist_conversion
@@ -1940,6 +1941,16 @@ Local files and conversion
         """Return the in-memory browser session approved for this app session."""
         return self.account_access_browser
 
+    def _activate_account_bridge(self, source: str) -> bool:
+        """Install the extension's source-scoped session in this process only."""
+        access_server = self.account_access_server
+        payload = access_server.bridge_payload if access_server else None
+        if payload and self.account_access_source == source:
+            set_active_browser_cookie_jar(cookie_jar_from_payload(payload, source))
+            return True
+        clear_active_browser_cookie_jar()
+        return False
+
     def _create_account_access_link(self):
         if self.is_converting:
             return
@@ -1999,17 +2010,15 @@ Local files and conversion
 
         browser = detection.session_browser
         self.account_access_browser = browser
-        self.account_access_server = None
-        self.account_access_link = None
         self.account_access_link_label.configure(text="Access confirmed for this session", text_color=THEME["success"])
         self.account_access_copy_btn.configure(state="disabled")
         self.account_access_btn.configure(text="🔒 Clear Account Access", command=self._clear_account_access)
         if browser:
             self.account_access_status_label.configure(
-                text=f"Connected ({detection.label}) — current session only",
+                text=f"Connected ({detection.label}) — install Bridge to keep browser open",
                 text_color=THEME["success"],
             )
-            self.status_label.configure(text=f"Account access confirmed through {detection.label}.")
+            self.status_label.configure(text=f"Account access confirmed through {detection.label}. Click the JaneConverter Browser Bridge extension to keep it open during conversion.")
         else:
             self.account_access_status_label.configure(
                 text=f"Detected {detection.label}; session unavailable",
@@ -2024,6 +2033,7 @@ Local files and conversion
         self.account_access_link = None
         self.account_access_source = None
         self.account_access_browser = None
+        clear_active_browser_cookie_jar()
         if access_server:
             access_server.stop()
         if silent or not hasattr(self, "account_access_btn"):
@@ -2375,6 +2385,7 @@ Local files and conversion
 
         def worker():
             try:
+                self._activate_account_bridge(source)
                 pdata = fetch_playlist_entries(
                     url=source,
                     progress_callback=self._post_progress,
@@ -2529,6 +2540,7 @@ Local files and conversion
 
     def _run_playlist_worker(self, playlist_title, selected_entries, output_dir, settings):
         try:
+            self._activate_account_bridge(self.account_access_source or "")
             summary = process_playlist_conversion(
                 playlist_title=playlist_title,
                 selected_entries=selected_entries,
@@ -2630,6 +2642,9 @@ Local files and conversion
 
     def _run_conversion_worker(self, source, output_dir, settings):
         try:
+            bridge_connected = self._activate_account_bridge(source)
+            if bridge_connected:
+                self._post_ui(lambda: self.status_label.configure(text="Browser bridge connected. Converting with the browser kept open."), priority=True)
             result_path = process_conversion(
                 source=source,
                 output_dir=output_dir,

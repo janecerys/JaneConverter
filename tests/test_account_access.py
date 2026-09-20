@@ -1,6 +1,7 @@
 """Tests for the temporary localhost account-access handoff."""
 
 from threading import Event
+import json
 from urllib.request import Request, urlopen
 
 from engine.account_access import AccountAccessServer
@@ -17,7 +18,8 @@ def test_account_access_link_is_local_and_confirms_once():
     assert link.startswith("http://127.0.0.1:")
     landing = urlopen(link, timeout=2).read().decode("utf-8")
     assert "https://example.com/private-media" in landing
-    assert "does not receive your password or cookies" in landing
+    assert "does not receive" in landing
+    assert "copy or upload your cookies" in landing
 
     confirmation = urlopen(
         f"{link}/ready",
@@ -52,4 +54,42 @@ def test_account_access_confirms_the_browser_that_opened_the_link():
     assert ready.wait(2)
     assert detected[0].label == "Vivaldi"
     assert detected[0].session_browser == "vivaldi"
+    server.stop()
+
+
+def test_account_access_bridge_accepts_confirmed_source_scoped_payload():
+    server = AccountAccessServer("https://example.com/private-media")
+    link = server.start()
+
+    confirmation = urlopen(f"{link}/ready", timeout=2).read().decode("utf-8")
+    assert "Browser Bridge" in confirmation
+
+    challenge = json.loads(urlopen(f"{link}/bridge/challenge", timeout=2).read().decode("utf-8"))
+    assert challenge == {"sourceUrl": "https://example.com/private-media", "confirmed": True}
+
+    payload = json.dumps(
+        {
+            "cookies": [
+                {
+                    "name": "session",
+                    "value": "authorized",
+                    "domain": ".example.com",
+                    "path": "/",
+                    "secure": True,
+                }
+            ]
+        }
+    ).encode("utf-8")
+    response = urlopen(
+        Request(
+            f"{link}/bridge",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        ),
+        timeout=2,
+    )
+    assert json.loads(response.read().decode("utf-8")) == {"ok": True}
+    assert server.bridge_connected
+    assert server.bridge_payload == payload.decode("utf-8")
     server.stop()
