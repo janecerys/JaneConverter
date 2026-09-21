@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, FileAudio, FileImage, FileVideo, FolderOpen, Inbox, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowRight, FileAudio, FileImage, FileVideo, FolderOpen, Inbox, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
 import type { AccessStatus, ConverterSettings, FetchedMedia } from "../bridge";
 import { bridge } from "../bridge";
 
@@ -16,6 +16,31 @@ function MediaIcon({ kind }: { kind: FetchedMedia["mediaKind"] }) {
   return <FileVideo className="size-5 text-[#d75b88]" />;
 }
 
+function pathKey(value: string) {
+  return value.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+}
+
+function parentPath(value: string) {
+  const index = Math.max(value.lastIndexOf("\\"), value.lastIndexOf("/"));
+  return index > 0 ? value.slice(0, index) : value;
+}
+
+function baseName(value: string) {
+  const trimmed = value.replace(/[\\/]+$/, "");
+  const index = Math.max(trimmed.lastIndexOf("\\"), trimmed.lastIndexOf("/"));
+  return index >= 0 ? trimmed.slice(index + 1) : trimmed;
+}
+
+function joinPath(parent: string, name: string) {
+  return parent.replace(/[\\/]+$/, "") + "\\" + name;
+}
+
+function isInside(root: string, candidate: string) {
+  const rootKey = pathKey(root);
+  const candidateKey = pathKey(candidate);
+  return candidateKey === rootKey || candidateKey.startsWith(rootKey + "\\");
+}
+
 export function FetchedMediaView({ access, settings, onSettings, onSelect, onDiscard, onStatus }: {
   access: AccessStatus;
   settings: ConverterSettings;
@@ -27,8 +52,19 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
   const [items, setItems] = useState<FetchedMedia[]>([]);
   const [thumbnails, setThumbnails] = useState<Record<string, string>>({});
   const [discarding, setDiscarding] = useState<string | null>(null);
+  const [moving, setMoving] = useState(false);
+  const [pendingMove, setPendingMove] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const thumbnailPaths = useRef(new Set<string>());
+
+  useEffect(() => {
+    if (!pendingMove) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPendingMove(null);
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [pendingMove]);
 
   useEffect(() => {
     let mounted = true;
@@ -73,6 +109,36 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
     return () => { mounted = false; window.clearInterval(timer); };
   }, [access.active, access.captureCount]);
 
+  async function chooseMoveFolder() {
+    const destinationParent = await bridge.chooseFolder();
+    if (!destinationParent) return;
+    if (pathKey(destinationParent) === pathKey(parentPath(settings.fetchedDir))) {
+      onStatus("Choose a different parent folder for the fetched media folder.");
+      return;
+    }
+    if (isInside(settings.fetchedDir, destinationParent)) {
+      onStatus("The new fetched media location cannot be inside the current folder.");
+      return;
+    }
+    setPendingMove(destinationParent);
+  }
+
+  async function confirmMove() {
+    const destinationParent = pendingMove;
+    if (!destinationParent) return;
+    setPendingMove(null);
+    setMoving(true);
+    try {
+      const movedTo = await bridge.moveFetchedFolder(settings.fetchedDir, destinationParent);
+      onSettings({ ...settings, fetchedDir: movedTo });
+      onStatus("Fetched media folder moved to " + movedTo + ".");
+    } catch (error) {
+      onStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      setMoving(false);
+    }
+  }
+
   const discard = async (item: FetchedMedia) => {
     setDiscarding(item.path);
     try {
@@ -98,7 +164,7 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="mono-label">BROWSER CAPTURE INBOX</div>
-          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white">Fetched Media</h1>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white">Fetched media</h1>
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-500">Captured media is saved in the folder below. The browser session controls what can be fetched; the files remain here until you open, convert, or discard them.</p>
         </div>
         <div className="flex items-center gap-2 text-xs text-zinc-500">
@@ -125,6 +191,7 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
           <input aria-label="Fetched media folder" value={settings.fetchedDir} onChange={(event) => onSettings({ ...settings, fetchedDir: event.target.value })} className="field min-w-0 flex-1 px-3 py-2.5 text-sm" />
           <button type="button" className="subtle-button px-3 text-xs" onClick={async () => { const path = await bridge.chooseFolder(); if (path) onSettings({ ...settings, fetchedDir: path }); }}>Browse</button>
           <button type="button" className="subtle-button flex items-center gap-2 px-3 text-xs" onClick={() => void bridge.openPath(settings.fetchedDir)}><FolderOpen className="size-3.5" /> Open folder</button>
+          <button type="button" disabled={moving || access.active} title={access.active ? "Clear browser access before moving this folder" : "Move the fetched media folder"} className="subtle-button flex items-center gap-2 px-3 text-xs disabled:cursor-not-allowed disabled:opacity-50" onClick={() => void chooseMoveFolder()}><FolderOpen className={"size-3.5 " + (moving ? "animate-pulse" : "")} /> {moving ? "Moving folder..." : "Move fetched folder"}</button>
         </div>
       </div>
       {!items.length ? (
@@ -152,6 +219,23 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
               </div>
             </div>
           ))}
+        </div>
+      )}
+      {pendingMove && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/60 p-6" role="presentation">
+          <div className="panel w-full max-w-md p-5" role="dialog" aria-modal="true" aria-labelledby="fetched-folder-move-title" aria-describedby="fetched-folder-move-description">
+            <div className="flex items-start gap-3">
+              <div className="grid size-10 shrink-0 place-items-center rounded-xl border border-[#d75b88]/20 bg-[#d75b88]/10 text-[#e68aae]"><AlertTriangle size={17} /></div>
+              <div>
+                <h2 id="fetched-folder-move-title" className="text-base font-medium text-white">Move fetched media folder?</h2>
+                <p id="fetched-folder-move-description" className="mt-2 break-words text-sm leading-6 text-zinc-400">Move this folder to {joinPath(pendingMove, baseName(settings.fetchedDir))}? New captures will use the new location.</p>
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" className="subtle-button px-3 py-2 text-xs" onClick={() => setPendingMove(null)}>Cancel</button>
+              <button type="button" disabled={moving} className="primary-button px-3 py-2 text-xs disabled:cursor-wait disabled:opacity-60" onClick={() => void confirmMove()}>{moving ? "Moving..." : "Move folder"}</button>
+            </div>
+          </div>
         </div>
       )}
     </section>

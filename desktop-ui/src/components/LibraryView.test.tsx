@@ -178,7 +178,7 @@ describe("Converted library", () => {
       root.render(<LibraryView settings={settings} onSettings={vi.fn()} onStatus={vi.fn()} />);
     });
     await act(async () => {
-      Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Recent Conversions")?.click();
+      Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Recents")?.click();
       await Promise.resolve();
     });
 

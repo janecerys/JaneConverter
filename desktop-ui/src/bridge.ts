@@ -98,6 +98,7 @@ export interface JaneBridge {
   runtimeInfo(): Promise<RuntimeInfo>;
   settingsGet(): Promise<ConverterSettings>;
   settingsSave(settings: ConverterSettings): Promise<void>;
+  setDataRoot(path: string): Promise<string>;
   chooseFile(): Promise<string | null>;
   chooseFolder(): Promise<string | null>;
   openPath(path: string): Promise<void>;
@@ -111,6 +112,7 @@ export interface JaneBridge {
   recentConversions(path: string, limit: number): Promise<LibraryEntry[]>;
   getThumbnail(root: string, path: string): Promise<string | null>;
   moveLibrary(source: string, destinationParent: string): Promise<string>;
+  moveFetchedFolder(source: string, destinationParent: string): Promise<string>;
   deleteLibraryEntry(root: string, path: string): Promise<void>;
   createAccessLink(source: string): Promise<AccessStatus>;
   accessStatus(): Promise<AccessStatus>;
@@ -144,6 +146,7 @@ const demoBridge: JaneBridge = {
   },
   async settingsGet() { return { ...demoSettings }; },
   async settingsSave() {},
+  async setDataRoot(path) { return path; },
   async chooseFile() { return null; },
   async chooseFolder() { return null; },
   async openPath() {},
@@ -157,6 +160,7 @@ const demoBridge: JaneBridge = {
   async recentConversions() { return []; },
   async getThumbnail() { return null; },
   async moveLibrary(source) { return source; },
+  async moveFetchedFolder(source) { return source; },
   async deleteLibraryEntry() {},
   async createAccessLink() { return { active: true, link: "Preview mode", browser: "", bridgeConnected: false }; },
   async accessStatus() { return { active: false, link: "", browser: "", bridgeConnected: false }; },
@@ -175,6 +179,7 @@ const tauriBridge: JaneBridge = {
   runtimeInfo: () => invoke<RuntimeInfo>("runtime_info"),
   settingsGet: () => invoke<ConverterSettings>("settings_get"),
   settingsSave: (settings) => invoke<void>("settings_save", { settings }),
+  setDataRoot: (path) => invoke<string>("set_data_root_path", { path }),
   chooseFile: () => invoke<string | null>("choose_file"),
   chooseFolder: () => invoke<string | null>("choose_folder"),
   openPath: (path) => invoke<void>("open_path", { path }),
@@ -188,6 +193,7 @@ const tauriBridge: JaneBridge = {
   recentConversions: (path, limit) => invoke<LibraryEntry[]>("recent_conversions", { path, limit }),
   getThumbnail: (root, path) => invoke<string | null>("get_thumbnail", { root, path }),
   moveLibrary: (source, destinationParent) => invoke<string>("move_library", { source, destinationParent }),
+  moveFetchedFolder: (source, destinationParent) => invoke<string>("move_fetched_folder", { source, destinationParent }),
   deleteLibraryEntry: (root, path) => invoke<void>("delete_library_entry", { root, path }),
   createAccessLink: (source) => invoke<AccessStatus>("create_access_link", { source }),
   accessStatus: () => invoke<AccessStatus>("access_status"),

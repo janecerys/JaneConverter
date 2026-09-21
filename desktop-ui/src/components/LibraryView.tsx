@@ -293,7 +293,7 @@ export function LibraryView({
               onClick={() => setSection("explorer")}
               className={"rounded-lg px-3 py-2 text-xs transition-colors " + (section === "explorer" ? "bg-white/[0.09] text-white" : "text-zinc-500 hover:text-zinc-300")}
             >
-              Library Explorer
+              Library
             </button>
             <button
               type="button"
@@ -301,7 +301,7 @@ export function LibraryView({
               onClick={() => setSection("recent")}
               className={"rounded-lg px-3 py-2 text-xs transition-colors " + (section === "recent" ? "bg-white/[0.09] text-white" : "text-zinc-500 hover:text-zinc-300")}
             >
-              Recent Conversions
+              Recents
             </button>
           </div>
         </div>

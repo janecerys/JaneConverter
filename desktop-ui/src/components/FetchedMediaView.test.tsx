@@ -11,6 +11,7 @@ const bridge = vi.hoisted(() => ({
   openFile: vi.fn(),
   openPath: vi.fn(),
   chooseFolder: vi.fn(),
+  moveFetchedFolder: vi.fn(),
   discardFetchedMedia: vi.fn(),
 }));
 
@@ -64,6 +65,55 @@ describe("FetchedMediaView", () => {
     expect(bridge.discardFetchedMedia).toHaveBeenCalledWith(item.path);
     expect(container.textContent).not.toContain("story-one.jpg");
 
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+
+  it("moves the fetched media folder through the native bridge", async () => {
+    const onSettings = vi.fn();
+    const onStatus = vi.fn();
+    bridge.chooseFolder.mockResolvedValue("E:/Media");
+    bridge.moveFetchedFolder.mockResolvedValue("E:/Media/fetched");
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <FetchedMediaView
+          access={{ active: false, link: "", browser: "", bridgeConnected: false }}
+          settings={{ outputDir: "converted", fetchedDir: "C:/JaneConverter/fetched", category: "Music", format: "mp3", bitrate: "320k", sampleRate: 48000, resolution: "original", normalize: false, useGpu: false, saveCover: true, saveMetadata: true, retries: 2 }}
+          onSettings={onSettings}
+          onSelect={vi.fn()}
+          onDiscard={vi.fn()}
+          onStatus={onStatus}
+        />,
+      );
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Move fetched folder"))?.click();
+      await Promise.resolve();
+    });
+
+    expect(container.textContent).toContain("Move fetched media folder?");
+
+    const confirmButton = Array.from(container.querySelectorAll("button"))
+      .find((button) => button.textContent?.trim() === "Move folder");
+    expect(confirmButton).toBeDefined();
+
+    await act(async () => {
+      confirmButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(bridge.moveFetchedFolder).toHaveBeenCalledWith("C:/JaneConverter/fetched", "E:/Media");
+    expect(onSettings).toHaveBeenCalledWith(expect.objectContaining({ fetchedDir: "E:/Media/fetched" }));
+    expect(onStatus).toHaveBeenCalledWith(expect.stringContaining("Fetched media folder moved"));
 
     await act(async () => { root.unmount(); });
     container.remove();

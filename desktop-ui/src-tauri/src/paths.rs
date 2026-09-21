@@ -39,6 +39,7 @@ fn is_runtime_root(directory: &Path) -> bool {
             .join("engine")
             .join(packaged_engine_name())
             .is_file()
+        || directory.join("bin").join(ffmpeg_name()).is_file()
 }
 
 fn is_source_checkout(directory: &Path) -> bool {
@@ -56,6 +57,14 @@ fn packaged_engine_name() -> &'static str {
         "JaneConverterEngine.exe"
     } else {
         "JaneConverterEngine"
+    }
+}
+
+fn ffmpeg_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "ffmpeg.exe"
+    } else {
+        "ffmpeg"
     }
 }
 
@@ -81,8 +90,21 @@ fn user_data_root() -> PathBuf {
     std::env::temp_dir().join("JaneConverter")
 }
 
+fn data_root_override_path() -> PathBuf {
+    user_data_root()
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("JaneConverter.data-root")
+}
+
 pub fn data_root() -> PathBuf {
     if let Some(configured) = std::env::var_os("JANECONVERTER_DATA_DIR") {
+        if !configured.is_empty() {
+            return PathBuf::from(configured);
+        }
+    }
+    if let Ok(configured) = fs::read_to_string(data_root_override_path()) {
+        let configured = configured.trim();
         if !configured.is_empty() {
             return PathBuf::from(configured);
         }
@@ -93,6 +115,21 @@ pub fn data_root() -> PathBuf {
     } else {
         user_data_root()
     }
+}
+
+pub fn set_data_root(path: &Path) -> io::Result<PathBuf> {
+    let target = fs::canonicalize(path)?;
+    if !target.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "The data root must be a folder.",
+        ));
+    }
+    if let Some(parent) = data_root_override_path().parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(data_root_override_path(), target.to_string_lossy().as_bytes())?;
+    Ok(target)
 }
 
 pub fn settings_path() -> PathBuf {
@@ -115,9 +152,12 @@ pub fn now_stamp() -> u128 {
 }
 
 pub fn prepare_command(command: &mut Command) {
-    let runtime_bin = project_root().join("bin");
-    if runtime_bin.is_dir() {
-        let mut paths = vec![runtime_bin];
+    let runtime_bins = runtime_bin_candidates()
+        .into_iter()
+        .filter(|path| path.is_dir())
+        .collect::<Vec<_>>();
+    if !runtime_bins.is_empty() {
+        let mut paths = runtime_bins;
         if let Some(existing) = std::env::var_os("PATH") {
             paths.extend(std::env::split_paths(&existing));
         }
@@ -128,6 +168,21 @@ pub fn prepare_command(command: &mut Command) {
     command.env("JANECONVERTER_DATA_DIR", data_root());
     #[cfg(target_os = "windows")]
     command.creation_flags(CREATE_NO_WINDOW);
+}
+
+fn runtime_bin_candidates() -> Vec<PathBuf> {
+    let mut candidates = vec![project_root().join("bin")];
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(directory) = executable.parent() {
+            candidates.extend([
+                directory.join("bin"),
+                directory.join("resources").join("runtime").join("bin"),
+                directory.join("runtime").join("bin"),
+                directory.join("resources").join("bin"),
+            ]);
+        }
+    }
+    candidates
 }
 
 pub fn run_command(program: &str, args: &[&str]) -> io::Result<Output> {
@@ -145,19 +200,31 @@ pub fn command_available(program: &str) -> bool {
 
 pub fn find_ffmpeg() -> PathBuf {
     let root = project_root();
-    #[cfg(target_os = "windows")]
-    let candidates = [root.join("bin").join("ffmpeg.exe"), root.join("ffmpeg.exe")];
-    #[cfg(not(target_os = "windows"))]
-    let candidates = [root.join("bin").join("ffmpeg"), root.join("ffmpeg")];
+    let mut candidates = vec![
+        root.join("bin").join(ffmpeg_name()),
+        root.join(ffmpeg_name()),
+    ];
+    if let Ok(executable) = std::env::current_exe() {
+        if let Some(directory) = executable.parent() {
+            candidates.extend([
+                directory.join(ffmpeg_name()),
+                directory.join("bin").join(ffmpeg_name()),
+                directory
+                    .join("resources")
+                    .join("runtime")
+                    .join("bin")
+                    .join(ffmpeg_name()),
+                directory.join("runtime").join("bin").join(ffmpeg_name()),
+                directory.join("resources").join("bin").join(ffmpeg_name()),
+            ]);
+        }
+    }
     for candidate in candidates {
         if candidate.is_file() {
             return candidate;
         }
     }
-    #[cfg(target_os = "windows")]
-    return PathBuf::from("ffmpeg.exe");
-    #[cfg(not(target_os = "windows"))]
-    PathBuf::from("ffmpeg")
+    PathBuf::from(ffmpeg_name())
 }
 
 pub fn find_python() -> PathBuf {

@@ -9,7 +9,7 @@ use model::{
 };
 use paths::{
     command_available, data_root, detect_gpu, find_ffmpeg, find_python, packaged_engine,
-    prepare_command, project_root, settings_get_internal, write_settings,
+    prepare_command, project_root, set_data_root, settings_get_internal, write_settings,
 };
 use process::{
     load_playlist as load_playlist_engine, start_conversion as start_engine_conversion,
@@ -99,6 +99,13 @@ fn settings_get() -> model::ConverterSettings {
 #[tauri::command]
 fn settings_save(settings: model::ConverterSettings) -> Result<(), String> {
     write_settings(&settings).map_err(|error| format!("Could not save settings: {error}"))
+}
+
+#[tauri::command]
+fn set_data_root_path(path: String) -> Result<String, String> {
+    set_data_root(PathBuf::from(path.trim()).as_path())
+        .map(|value| value.display().to_string())
+        .map_err(|error| format!("Could not change the data root: {error}"))
 }
 
 #[tauri::command]
@@ -356,6 +363,39 @@ fn move_library(source: String, destination_parent: String) -> Result<String, St
     write_settings(&settings).map_err(|error| {
         format!(
             "The library moved to {destination}, but JaneConverter could not save the new location: {error}"
+        )
+    })?;
+    Ok(destination)
+}
+
+#[tauri::command]
+fn move_fetched_folder(
+    state: State<'_, AppState>,
+    source: String,
+    destination_parent: String,
+) -> Result<String, String> {
+    if state
+        .access
+        .lock()
+        .map_err(|_| "The access registry is unavailable.")?
+        .is_some()
+    {
+        return Err("Clear browser access before moving the fetched media folder.".into());
+    }
+
+    let mut settings = settings_get_internal();
+    let configured = fs::canonicalize(settings.fetched_dir.trim())
+        .map_err(|error| format!("The configured fetched media folder is unavailable: {error}"))?;
+    let requested = fs::canonicalize(source.trim())
+        .map_err(|error| format!("The current fetched media folder is unavailable: {error}"))?;
+    if configured != requested {
+        return Err("For safety, only the active fetched media folder can be moved.".into());
+    }
+    let destination = library::move_directory(&source, &destination_parent)?;
+    settings.fetched_dir = destination.clone();
+    write_settings(&settings).map_err(|error| {
+        format!(
+            "The fetched media folder moved to {destination}, but JaneConverter could not save the new location: {error}"
         )
     })?;
     Ok(destination)
@@ -627,6 +667,7 @@ pub fn run() {
             runtime_info,
             settings_get,
             settings_save,
+            set_data_root_path,
             choose_file,
             choose_folder,
             open_path,
@@ -639,6 +680,7 @@ pub fn run() {
             recent_conversions,
             get_thumbnail,
             move_library,
+            move_fetched_folder,
             delete_library_entry,
             create_access_link,
             access_status,

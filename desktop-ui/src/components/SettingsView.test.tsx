@@ -7,11 +7,15 @@ import { SettingsView } from "./SettingsView";
 
 const updateCheck = vi.hoisted(() => ({ run: vi.fn() }));
 const relaunch = vi.hoisted(() => ({ run: vi.fn() }));
+const chooseFolder = vi.hoisted(() => ({ run: vi.fn() }));
+const setDataRoot = vi.hoisted(() => ({ run: vi.fn() }));
 const sourceRuntime = { mode: "tauri", pythonReady: true, ffmpegReady: true, pythonPath: ".venv/bin/python3", dataRoot: ".", projectRoot: ".", gpuAvailable: false, gpuLabel: "CPU mode", packaged: false } as const;
 vi.mock("../bridge", () => ({
   bridge: {
     checkUpdates: updateCheck.run,
     relaunch: relaunch.run,
+    chooseFolder: chooseFolder.run,
+    setDataRoot: setDataRoot.run,
   },
 }));
 
@@ -20,6 +24,8 @@ describe("Settings updates", () => {
     updateCheck.run.mockReset();
     updateCheck.run.mockResolvedValue("Update check complete. JaneConverter is up to date.");
     relaunch.run.mockResolvedValue(undefined);
+    chooseFolder.run.mockReset();
+    setDataRoot.run.mockReset();
   });
 
   it("shows the update result inside Settings", async () => {
@@ -61,6 +67,37 @@ describe("Settings updates", () => {
     });
 
     expect(relaunch.run).toHaveBeenCalled();
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+
+  it("changes the application data root and relaunches", async () => {
+    chooseFolder.run.mockResolvedValue("E:/JaneConverterData");
+    setDataRoot.run.mockResolvedValue("E:/JaneConverterData");
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<SettingsView runtime={{ ...sourceRuntime, dataRoot: "C:/Users/User/AppData/Local/JaneConverter" }} onStatus={vi.fn()} />);
+    });
+
+    await act(async () => {
+      Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Browse")?.click();
+      await Promise.resolve();
+    });
+    expect(chooseFolder.run).toHaveBeenCalled();
+
+    await act(async () => {
+      Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Apply and relaunch"))?.click();
+      await Promise.resolve();
+    });
+
+    expect(setDataRoot.run).toHaveBeenCalledWith("E:/JaneConverterData");
+    expect(relaunch.run).toHaveBeenCalled();
+    expect(container.textContent).toContain("Data root changed to E:/JaneConverterData.");
 
     await act(async () => { root.unmount(); });
     container.remove();

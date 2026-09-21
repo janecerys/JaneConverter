@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { CheckCircle2, ExternalLink, HardDrive, RefreshCw, RotateCw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { CheckCircle2, ExternalLink, FolderOpen, HardDrive, RefreshCw, RotateCw } from "lucide-react";
 import type { RuntimeInfo } from "../bridge";
 import { bridge } from "../bridge";
 
@@ -7,6 +7,41 @@ export function SettingsView({ runtime, onStatus }: { runtime: RuntimeInfo | nul
   const [checking, setChecking] = useState(false);
   const [relaunching, setRelaunching] = useState(false);
   const [message, setMessage] = useState("");
+  const [dataRootPath, setDataRootPath] = useState(runtime?.dataRoot ?? "");
+  const [changingDataRoot, setChangingDataRoot] = useState(false);
+
+  useEffect(() => {
+    setDataRootPath(runtime?.dataRoot ?? "");
+  }, [runtime?.dataRoot]);
+
+  async function chooseDataRoot() {
+    const path = await bridge.chooseFolder();
+    if (path) setDataRootPath(path);
+  }
+
+  async function changeDataRoot() {
+    const path = dataRootPath.trim();
+    if (!path) {
+      const nextMessage = "Choose a data root folder first.";
+      setMessage(nextMessage);
+      onStatus(nextMessage);
+      return;
+    }
+    setChangingDataRoot(true);
+    setMessage("Saving the data root and relaunching JaneConverter...");
+    try {
+      const saved = await bridge.setDataRoot(path);
+      await bridge.relaunch();
+      setMessage("Data root changed to " + saved + ".");
+      onStatus("Data root changed to " + saved + ".");
+    } catch (error) {
+      const nextMessage = error instanceof Error ? error.message : String(error);
+      setMessage(nextMessage);
+      onStatus(nextMessage);
+    } finally {
+      setChangingDataRoot(false);
+    }
+  }
 
   async function relaunch() {
     setRelaunching(true);
@@ -41,6 +76,15 @@ export function SettingsView({ runtime, onStatus }: { runtime: RuntimeInfo | nul
     <div className="mx-auto max-w-[980px] space-y-5 pb-10">
       <div><div className="mono-label">Runtime and updates</div><h1 className="mt-2 text-3xl font-semibold tracking-[-.04em] text-white">Keep control of the application.</h1><p className="mt-2 text-sm text-zinc-500">{runtime?.packaged ? "Running from a production package." : "Running from a source checkout."}</p></div>
       <section className="panel p-5"><div className="flex items-center gap-2 text-sm text-zinc-200"><HardDrive size={16} className="text-zinc-500" /> Runtime readiness</div><div className="mt-4 grid gap-2 md:grid-cols-2">{[["Python", runtime?.pythonReady, runtime?.pythonPath], ["FFmpeg", runtime?.ffmpegReady, "Required by conversion and media probing"], ["GPU", runtime?.gpuAvailable, runtime?.gpuLabel], ["Data root", true, runtime?.dataRoot]].map(([label, ready, detail]) => <div key={String(label)} className="rounded-xl border border-white/[0.06] bg-black/10 px-3 py-3"><div className="flex items-center gap-2 text-xs text-zinc-300">{ready ? <CheckCircle2 className="size-3.5 text-emerald-400" /> : <span className="size-3.5 rounded-full border border-amber-400/50" />}{label}</div><div className="mt-1 truncate font-mono text-[10px] text-zinc-700">{String(detail ?? "Checking...")}</div></div>)}</div></section>
+      <section className="panel p-5">
+        <div className="flex items-center gap-2 text-sm text-zinc-200"><FolderOpen size={16} className="text-zinc-500" /> Application data folder</div>
+        <p className="mt-2 text-xs leading-relaxed text-zinc-600">Choose where JaneConverter keeps its settings, fetched media, and converted-library defaults. Existing files stay where they are; the application will relaunch after you apply the new location.</p>
+        <div className="mt-3 flex gap-2">
+          <input aria-label="Application data folder" value={dataRootPath} onChange={(event) => setDataRootPath(event.target.value)} className="field min-w-0 flex-1 px-3 py-2.5 text-sm" />
+          <button type="button" className="subtle-button px-3 text-xs" onClick={() => void chooseDataRoot()}>Browse</button>
+          <button type="button" disabled={changingDataRoot} className="primary-button flex items-center gap-2 px-3 text-xs disabled:cursor-wait disabled:opacity-60" onClick={() => void changeDataRoot()}><FolderOpen className={"size-3.5 " + (changingDataRoot ? "animate-pulse" : "")} /> {changingDataRoot ? "Applying..." : "Apply and relaunch"}</button>
+        </div>
+      </section>
       <section className="panel flex flex-wrap items-center justify-between gap-4 p-5"><div><div className="text-sm text-zinc-200">Relaunch JaneConverter</div><div className="mt-1 text-xs text-zinc-600">Close this window and start the current desktop application again.</div></div><button type="button" disabled={relaunching} onClick={() => void relaunch()} className="subtle-button flex items-center gap-2 px-4 py-2 text-xs disabled:cursor-wait disabled:opacity-60"><RotateCw className={"size-3.5 " + (relaunching ? "animate-spin" : "")} /> {relaunching ? "Relaunching..." : "Relaunch now"}</button></section>
       <section className="panel flex flex-wrap items-center justify-between gap-4 p-5"><div><div className="text-sm text-zinc-200">Check for updates</div><div className="mt-1 text-xs text-zinc-600">Checks the latest published JaneConverter release on GitHub and the extractor service. Nothing is installed silently.</div></div><button type="button" disabled={checking} onClick={() => void updates()} className="subtle-button flex items-center gap-2 px-4 py-2 text-xs"><RefreshCw className={`size-3.5 ${checking ? "animate-spin" : ""}`} /> {checking ? "Checking..." : "Check now"}</button></section>
       <div className={`rounded-lg border px-3 py-2 text-[11px] ${message ? "border-[#3b82f6]/15 bg-[#3b82f6]/[0.04] text-zinc-300" : "border-transparent text-zinc-600"}`} role="status" aria-live="polite">{message || "Update and relaunch results appear here."}</div>
