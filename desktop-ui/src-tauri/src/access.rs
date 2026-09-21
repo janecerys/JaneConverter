@@ -78,7 +78,13 @@ struct CaptureState {
 }
 
 fn media_descriptor(path: &Path) -> Option<(&'static str, &'static str)> {
-    match path.extension().and_then(|value| value.to_str()).unwrap_or_default().to_ascii_lowercase().as_str() {
+    match path
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "mp4" => Some(("video", "video/mp4")),
         "mkv" => Some(("video", "video/x-matroska")),
         "webm" => Some(("video", "video/webm")),
@@ -123,7 +129,11 @@ pub fn scan_fetched_media(root: &Path) -> Vec<FetchedMedia> {
             })
         })
         .collect::<Vec<_>>();
-    items.sort_by(|left, right| left.name.to_ascii_lowercase().cmp(&right.name.to_ascii_lowercase()));
+    items.sort_by(|left, right| {
+        left.name
+            .to_ascii_lowercase()
+            .cmp(&right.name.to_ascii_lowercase())
+    });
     items
 }
 
@@ -153,9 +163,21 @@ impl AccessServer {
                 .and_then(|value| value.clone())
                 .unwrap_or_default(),
             source: self.source.lock().ok().and_then(|value| value.clone()),
-            bridge_connected: self.capture_state.lock().map(|value| !value.paths.is_empty()).unwrap_or(false),
-            capture_count: self.capture_state.lock().map(|value| value.fetched.len()).unwrap_or(0),
-            captured_media_kind: self.capture_state.lock().ok().and_then(|value| value.fetched.last().map(|item| item.media_kind.clone())),
+            bridge_connected: self
+                .capture_state
+                .lock()
+                .map(|value| !value.paths.is_empty())
+                .unwrap_or(false),
+            capture_count: self
+                .capture_state
+                .lock()
+                .map(|value| value.fetched.len())
+                .unwrap_or(0),
+            captured_media_kind: self
+                .capture_state
+                .lock()
+                .ok()
+                .and_then(|value| value.fetched.last().map(|item| item.media_kind.clone())),
         }
     }
 
@@ -172,7 +194,10 @@ impl AccessServer {
     }
 
     pub fn diagnostics(&self) -> Vec<AccessDiagnostic> {
-        self.capture_state.lock().map(|value| value.diagnostics.clone()).unwrap_or_default()
+        self.capture_state
+            .lock()
+            .map(|value| value.diagnostics.clone())
+            .unwrap_or_default()
     }
 
     fn validated_capture_path(&self, requested: &str) -> Result<PathBuf, String> {
@@ -201,15 +226,28 @@ impl AccessServer {
             Err(error) if error.kind() == io::ErrorKind::NotFound => {}
             Err(error) => return Err(format!("Could not discard the fetched media: {error}")),
         }
-        let mut state = self.capture_state.lock().map_err(|_| "The capture registry is unavailable.".to_owned())?;
-        state.paths.retain(|candidate| fs::canonicalize(candidate).ok().as_ref() != Some(&target));
-        if let Some(item_index) = state.fetched.iter().position(|item| item.path == path.trim() || item.path == target.to_string_lossy()) {
+        let mut state = self
+            .capture_state
+            .lock()
+            .map_err(|_| "The capture registry is unavailable.".to_owned())?;
+        state
+            .paths
+            .retain(|candidate| fs::canonicalize(candidate).ok().as_ref() != Some(&target));
+        if let Some(item_index) = state
+            .fetched
+            .iter()
+            .position(|item| item.path == path.trim() || item.path == target.to_string_lossy())
+        {
             let item = state.fetched.remove(item_index);
             state.total_bytes = state.total_bytes.saturating_sub(item.size);
         }
         Ok(())
     }
-    pub fn captured_media_path(&self, source: &str, requested_path: Option<&str>) -> Option<PathBuf> {
+    pub fn captured_media_path(
+        &self,
+        source: &str,
+        requested_path: Option<&str>,
+    ) -> Option<PathBuf> {
         if let Ok(bound_source) = self.source.lock() {
             if let Some(bound_source) = bound_source.as_deref() {
                 if !source.trim().is_empty() && bound_source.trim() != source.trim() {
@@ -217,11 +255,20 @@ impl AccessServer {
                 }
             }
         }
-        self.capture_state.lock().ok().and_then(|value| {
-            requested_path
-                .and_then(|requested| value.paths.iter().find(|path| path.to_string_lossy() == requested).cloned())
-                .or_else(|| value.paths.last().cloned())
-        })
+        self.capture_state
+            .lock()
+            .ok()
+            .and_then(|value| {
+                requested_path
+                    .and_then(|requested| {
+                        value
+                            .paths
+                            .iter()
+                            .find(|path| path.to_string_lossy() == requested)
+                            .cloned()
+                    })
+                    .or_else(|| value.paths.last().cloned())
+            })
             .filter(|path| path.is_file())
     }
 }
@@ -386,7 +433,11 @@ fn diagnostic_value(value: Option<&str>, label: &str, max_len: usize) -> Result<
     let value = value.unwrap_or_default().trim().to_ascii_lowercase();
     if value.is_empty()
         || value.len() > max_len
-        || !value.chars().all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || matches!(character, '.' | '-'))
+        || !value.chars().all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || matches!(character, '.' | '-')
+        })
     {
         return Err(format!("The browser diagnostic {label} was invalid."));
     }
@@ -397,7 +448,11 @@ fn diagnostic_reason(value: Option<&str>) -> Result<String, String> {
     let value = value.unwrap_or_default().trim().to_ascii_lowercase();
     if value.is_empty()
         || value.len() > 64
-        || !value.chars().all(|character| character.is_ascii_lowercase() || character.is_ascii_digit() || matches!(character, ' ' | '.' | '-'))
+        || !value.chars().all(|character| {
+            character.is_ascii_lowercase()
+                || character.is_ascii_digit()
+                || matches!(character, ' ' | '.' | '-')
+        })
     {
         return Err("The browser diagnostic reason was invalid.".into());
     }
@@ -412,9 +467,18 @@ fn diagnostic_message(payload: &DiagnosticPayload) -> Result<String, String> {
             .then_some(value)
             .ok_or_else(|| "The browser diagnostic media type was invalid.".to_owned())
     };
-    let bytes = || payload.bytes.filter(|value| *value <= MAX_MEDIA_BYTES).ok_or_else(|| "The browser diagnostic size was invalid.".to_owned());
+    let bytes = || {
+        payload
+            .bytes
+            .filter(|value| *value <= MAX_MEDIA_BYTES)
+            .ok_or_else(|| "The browser diagnostic size was invalid.".to_owned())
+    };
     let byte_label = |value: u64| {
-        if value < 1024 * 1024 { format!("{} KB", value / 1024) } else { format!("{:.1} MB", value as f64 / (1024.0 * 1024.0)) }
+        if value < 1024 * 1024 {
+            format!("{} KB", value / 1024)
+        } else {
+            format!("{:.1} MB", value as f64 / (1024.0 * 1024.0))
+        }
     };
     match payload.event.as_str() {
         "session_fetch_started" => {
@@ -455,9 +519,14 @@ fn diagnostic_message(payload: &DiagnosticPayload) -> Result<String, String> {
     }
 }
 
-fn record_diagnostic(capture_state: &Arc<Mutex<CaptureState>>, payload: DiagnosticPayload) -> Result<(), String> {
+fn record_diagnostic(
+    capture_state: &Arc<Mutex<CaptureState>>,
+    payload: DiagnosticPayload,
+) -> Result<(), String> {
     let message = diagnostic_message(&payload)?;
-    let mut state = capture_state.lock().map_err(|_| "The capture registry is unavailable.".to_owned())?;
+    let mut state = capture_state
+        .lock()
+        .map_err(|_| "The capture registry is unavailable.".to_owned())?;
     let id = state.next_diagnostic_id;
     state.next_diagnostic_id = state.next_diagnostic_id.saturating_add(1);
     if state.diagnostics.len() >= 256 {
@@ -542,15 +611,22 @@ fn serve(
                                 .to_string(),
                         );
                     } else {
-                    let count = capture_state.lock().map(|value| value.paths.len()).unwrap_or(0);
-                    let source_url = source.lock().ok().and_then(|value| value.clone()).unwrap_or_default();
-                    let response = json!({
-                        "sourceUrl": source_url,
-                        "confirmed": true,
-                        "connected": count > 0,
-                        "captureCount": count,
-                        "bridgeToken": bridge_nonce.clone()
-                    });
+                        let count = capture_state
+                            .lock()
+                            .map(|value| value.paths.len())
+                            .unwrap_or(0);
+                        let source_url = source
+                            .lock()
+                            .ok()
+                            .and_then(|value| value.clone())
+                            .unwrap_or_default();
+                        let response = json!({
+                            "sourceUrl": source_url,
+                            "confirmed": true,
+                            "connected": count > 0,
+                            "captureCount": count,
+                            "bridgeToken": bridge_nonce.clone()
+                        });
                         send_json_cors_or_plain(
                             &mut stream,
                             200,
@@ -561,30 +637,60 @@ fn serve(
                     }
                     continue;
                 }
-                if request.method == "POST"
-                    && request.path == format!("{base}/bridge/diagnostic")
-                {
+                if request.method == "POST" && request.path == format!("{base}/bridge/diagnostic") {
                     let origin = match bridge_ready(&request.headers, &bridge_nonce, &confirmed) {
                         Ok(origin) => origin,
                         Err((status, error, origin)) => {
-                            send_json_cors_or_plain(&mut stream, status, "Request rejected", origin.as_deref(), &json!({"error": error}).to_string());
+                            send_json_cors_or_plain(
+                                &mut stream,
+                                status,
+                                "Request rejected",
+                                origin.as_deref(),
+                                &json!({"error": error}).to_string(),
+                            );
                             continue;
                         }
                     };
                     if request.body.is_empty() || request.body.len() > MAX_METADATA_BYTES {
-                        send_json_cors_or_plain(&mut stream, 413, "Payload Too Large", origin.as_deref(), &json!({"error": "The browser diagnostic was empty or too large."}).to_string());
+                        send_json_cors_or_plain(
+                            &mut stream,
+                            413,
+                            "Payload Too Large",
+                            origin.as_deref(),
+                            &json!({"error": "The browser diagnostic was empty or too large."})
+                                .to_string(),
+                        );
                         continue;
                     }
                     let payload = match serde_json::from_slice::<DiagnosticPayload>(&request.body) {
                         Ok(payload) => payload,
                         Err(_) => {
-                            send_json_cors_or_plain(&mut stream, 400, "Bad Request", origin.as_deref(), &json!({"error": "The browser diagnostic was not valid JSON."}).to_string());
+                            send_json_cors_or_plain(
+                                &mut stream,
+                                400,
+                                "Bad Request",
+                                origin.as_deref(),
+                                &json!({"error": "The browser diagnostic was not valid JSON."})
+                                    .to_string(),
+                            );
                             continue;
                         }
                     };
                     match record_diagnostic(&capture_state, payload) {
-                        Ok(()) => send_json_cors_or_plain(&mut stream, 200, "OK", origin.as_deref(), "{\"ok\":true}"),
-                        Err(error) => send_json_cors_or_plain(&mut stream, 400, "Bad Request", origin.as_deref(), &json!({"error": error}).to_string()),
+                        Ok(()) => send_json_cors_or_plain(
+                            &mut stream,
+                            200,
+                            "OK",
+                            origin.as_deref(),
+                            "{\"ok\":true}",
+                        ),
+                        Err(error) => send_json_cors_or_plain(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            origin.as_deref(),
+                            &json!({"error": error}).to_string(),
+                        ),
                     }
                     continue;
                 }
@@ -594,22 +700,42 @@ fn serve(
                     let origin = match bridge_ready(&request.headers, &bridge_nonce, &confirmed) {
                         Ok(origin) => origin,
                         Err((status, error, origin)) => {
-                            send_json_cors_or_plain(&mut stream, status, "Request rejected", origin.as_deref(), &json!({"error": error}).to_string());
+                            send_json_cors_or_plain(
+                                &mut stream,
+                                status,
+                                "Request rejected",
+                                origin.as_deref(),
+                                &json!({"error": error}).to_string(),
+                            );
                             continue;
                         }
                     };
                     if request.body.len() > MAX_METADATA_BYTES {
-                        send_json_cors_or_plain(&mut stream, 413, "Payload Too Large", origin.as_deref(), &json!({"error": "The browser capture metadata is too large."}).to_string());
+                        send_json_cors_or_plain(
+                            &mut stream,
+                            413,
+                            "Payload Too Large",
+                            origin.as_deref(),
+                            &json!({"error": "The browser capture metadata is too large."})
+                                .to_string(),
+                        );
                         continue;
                     }
                     let current_source = source.lock().ok().and_then(|value| value.clone());
-                    let metadata = match validate_capture_metadata(&request.body, current_source.as_deref()) {
-                        Ok(metadata) => metadata,
-                        Err(error) => {
-                            send_json_cors_or_plain(&mut stream, 400, "Bad Request", origin.as_deref(), &json!({"error": error}).to_string());
-                            continue;
-                        }
-                    };
+                    let metadata =
+                        match validate_capture_metadata(&request.body, current_source.as_deref()) {
+                            Ok(metadata) => metadata,
+                            Err(error) => {
+                                send_json_cors_or_plain(
+                                    &mut stream,
+                                    400,
+                                    "Bad Request",
+                                    origin.as_deref(),
+                                    &json!({"error": error}).to_string(),
+                                );
+                                continue;
+                            }
+                        };
                     if current_source.is_none() {
                         if let Ok(mut bound_source) = source.lock() {
                             if bound_source.is_none() {
@@ -620,17 +746,33 @@ fn serve(
                     let mut state = match capture_state.lock() {
                         Ok(state) => state,
                         Err(_) => {
-                            send_json_cors_or_plain(&mut stream, 500, "Internal Server Error", origin.as_deref(), &json!({"error": "The capture registry is unavailable."}).to_string());
+                            send_json_cors_or_plain(
+                                &mut stream,
+                                500,
+                                "Internal Server Error",
+                                origin.as_deref(),
+                                &json!({"error": "The capture registry is unavailable."})
+                                    .to_string(),
+                            );
                             continue;
                         }
                     };
-                    if state.paths.len() + usize::from(state.pending.is_some()) >= MAX_CAPTURE_ITEMS || state.pending.is_some() {
+                    if state.paths.len() + usize::from(state.pending.is_some()) >= MAX_CAPTURE_ITEMS
+                        || state.pending.is_some()
+                    {
                         send_json_cors_or_plain(&mut stream, 409, "Conflict", origin.as_deref(), &json!({"error": "Another browser capture is already uploading or the session is full."}).to_string());
                         continue;
                     }
-                    let id: String = rand::rng().sample_iter(&Alphanumeric).take(24).map(char::from).collect();
+                    let id: String = rand::rng()
+                        .sample_iter(&Alphanumeric)
+                        .take(24)
+                        .map(char::from)
+                        .collect();
                     let file_name = PathBuf::from(&metadata.file_name);
-                    let suffix = file_name.extension().and_then(|value| value.to_str()).unwrap_or("bin");
+                    let suffix = file_name
+                        .extension()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("bin");
                     let path = capture_root.join(format!("{id}.{suffix}"));
                     let file = match File::create(&path) {
                         Ok(file) => file,
@@ -651,7 +793,13 @@ fn serve(
                         capture_mode: metadata.capture_mode.clone(),
                         title: metadata.title.clone(),
                     });
-                    send_json_cors_or_plain(&mut stream, 200, "OK", origin.as_deref(), &json!({"captureId": id}).to_string());
+                    send_json_cors_or_plain(
+                        &mut stream,
+                        200,
+                        "OK",
+                        origin.as_deref(),
+                        &json!({"captureId": id}).to_string(),
+                    );
                     continue;
                 }
                 if request.method == "POST"
@@ -660,31 +808,73 @@ fn serve(
                     let origin = match bridge_ready(&request.headers, &bridge_nonce, &confirmed) {
                         Ok(origin) => origin,
                         Err((status, error, origin)) => {
-                            send_json_cors_or_plain(&mut stream, status, "Request rejected", origin.as_deref(), &json!({"error": error}).to_string());
+                            send_json_cors_or_plain(
+                                &mut stream,
+                                status,
+                                "Request rejected",
+                                origin.as_deref(),
+                                &json!({"error": error}).to_string(),
+                            );
                             continue;
                         }
                     };
-                    let capture_id = header_value(&request.headers, CAPTURE_ID_HEADER).unwrap_or_default();
-                    let offset = header_value(&request.headers, CAPTURE_OFFSET_HEADER).and_then(|value| value.parse::<u64>().ok());
+                    let capture_id =
+                        header_value(&request.headers, CAPTURE_ID_HEADER).unwrap_or_default();
+                    let offset = header_value(&request.headers, CAPTURE_OFFSET_HEADER)
+                        .and_then(|value| value.parse::<u64>().ok());
                     let mut state = match capture_state.lock() {
                         Ok(state) => state,
                         Err(_) => {
-                            send_json_cors_or_plain(&mut stream, 500, "Internal Server Error", origin.as_deref(), &json!({"error": "The capture registry is unavailable."}).to_string());
+                            send_json_cors_or_plain(
+                                &mut stream,
+                                500,
+                                "Internal Server Error",
+                                origin.as_deref(),
+                                &json!({"error": "The capture registry is unavailable."})
+                                    .to_string(),
+                            );
                             continue;
                         }
                     };
                     let total_bytes = state.total_bytes;
                     let Some(current) = state.pending.as_mut() else {
-                        send_json_cors_or_plain(&mut stream, 400, "Bad Request", origin.as_deref(), &json!({"error": "The browser capture upload is not active."}).to_string());
+                        send_json_cors_or_plain(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            origin.as_deref(),
+                            &json!({"error": "The browser capture upload is not active."})
+                                .to_string(),
+                        );
                         continue;
                     };
-                    let next_size = current.bytes_written.saturating_add(request.body.len() as u64);
+                    let next_size = current
+                        .bytes_written
+                        .saturating_add(request.body.len() as u64);
                     if capture_id != current.id || offset != Some(current.bytes_written) {
-                        send_json_cors_or_plain(&mut stream, 400, "Bad Request", origin.as_deref(), &json!({"error": "The browser capture chunk offset was out of order."}).to_string());
+                        send_json_cors_or_plain(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            origin.as_deref(),
+                            &json!({"error": "The browser capture chunk offset was out of order."})
+                                .to_string(),
+                        );
                         continue;
                     }
-                    if request.body.is_empty() || request.body.len() > MAX_CHUNK_BYTES || next_size > MAX_MEDIA_BYTES || total_bytes.saturating_add(next_size) > MAX_TOTAL_CAPTURE_BYTES {
-                        send_json_cors_or_plain(&mut stream, 413, "Payload Too Large", origin.as_deref(), &json!({"error": "The browser capture is too large or empty."}).to_string());
+                    if request.body.is_empty()
+                        || request.body.len() > MAX_CHUNK_BYTES
+                        || next_size > MAX_MEDIA_BYTES
+                        || total_bytes.saturating_add(next_size) > MAX_TOTAL_CAPTURE_BYTES
+                    {
+                        send_json_cors_or_plain(
+                            &mut stream,
+                            413,
+                            "Payload Too Large",
+                            origin.as_deref(),
+                            &json!({"error": "The browser capture is too large or empty."})
+                                .to_string(),
+                        );
                         continue;
                     }
                     if let Err(error) = current.file.write_all(&request.body) {
@@ -692,7 +882,13 @@ fn serve(
                         continue;
                     }
                     current.bytes_written = next_size;
-                    send_json_cors_or_plain(&mut stream, 200, "OK", origin.as_deref(), &json!({"ok": true, "offset": next_size}).to_string());
+                    send_json_cors_or_plain(
+                        &mut stream,
+                        200,
+                        "OK",
+                        origin.as_deref(),
+                        &json!({"ok": true, "offset": next_size}).to_string(),
+                    );
                     continue;
                 }
                 if request.method == "POST"
@@ -701,30 +897,67 @@ fn serve(
                     let origin = match bridge_ready(&request.headers, &bridge_nonce, &confirmed) {
                         Ok(origin) => origin,
                         Err((status, error, origin)) => {
-                            send_json_cors_or_plain(&mut stream, status, "Request rejected", origin.as_deref(), &json!({"error": error}).to_string());
+                            send_json_cors_or_plain(
+                                &mut stream,
+                                status,
+                                "Request rejected",
+                                origin.as_deref(),
+                                &json!({"error": error}).to_string(),
+                            );
                             continue;
                         }
                     };
                     let requested_id = serde_json::from_slice::<serde_json::Value>(&request.body)
                         .ok()
-                        .and_then(|value| value.get("captureId").and_then(|value| value.as_str()).map(str::to_owned))
-                        .or_else(|| header_value(&request.headers, CAPTURE_ID_HEADER).map(str::to_owned));
+                        .and_then(|value| {
+                            value
+                                .get("captureId")
+                                .and_then(|value| value.as_str())
+                                .map(str::to_owned)
+                        })
+                        .or_else(|| {
+                            header_value(&request.headers, CAPTURE_ID_HEADER).map(str::to_owned)
+                        });
                     let mut state = match capture_state.lock() {
                         Ok(state) => state,
                         Err(_) => {
-                            send_json_cors_or_plain(&mut stream, 500, "Internal Server Error", origin.as_deref(), &json!({"error": "The capture registry is unavailable."}).to_string());
+                            send_json_cors_or_plain(
+                                &mut stream,
+                                500,
+                                "Internal Server Error",
+                                origin.as_deref(),
+                                &json!({"error": "The capture registry is unavailable."})
+                                    .to_string(),
+                            );
                             continue;
                         }
                     };
                     let Some(mut current) = state.pending.take() else {
-                        send_json_cors_or_plain(&mut stream, 400, "Bad Request", origin.as_deref(), &json!({"error": "The browser capture upload is not active."}).to_string());
+                        send_json_cors_or_plain(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            origin.as_deref(),
+                            &json!({"error": "The browser capture upload is not active."})
+                                .to_string(),
+                        );
                         continue;
                     };
                     if requested_id.as_deref() != Some(current.id.as_str())
-                        || current.expected_bytes.map(|expected| expected != current.bytes_written).unwrap_or(false)
+                        || current
+                            .expected_bytes
+                            .map(|expected| expected != current.bytes_written)
+                            .unwrap_or(false)
                     {
                         let _ = fs::remove_file(&current.path);
-                        send_json_cors_or_plain(&mut stream, 400, "Bad Request", origin.as_deref(), &json!({"error": "The browser capture id or size was invalid."}).to_string());
+                        send_json_cors_or_plain(
+                            &mut stream,
+                            400,
+                            "Bad Request",
+                            origin.as_deref(),
+                            &json!({"error": "The browser capture id or size was invalid."})
+                                .to_string(),
+                        );
                         continue;
                     }
                     let _ = current.file.flush();
@@ -742,7 +975,14 @@ fn serve(
                     });
                     state.total_bytes = state.total_bytes.saturating_add(current.bytes_written);
                     state.paths.push(path);
-                    send_json_cors_or_plain(&mut stream, 200, "OK", origin.as_deref(), &json!({"ok": true, "captureId": capture_id, "captureCount": count}).to_string());
+                    send_json_cors_or_plain(
+                        &mut stream,
+                        200,
+                        "OK",
+                        origin.as_deref(),
+                        &json!({"ok": true, "captureId": capture_id, "captureCount": count})
+                            .to_string(),
+                    );
                     continue;
                 }
                 if request.method == "GET"
@@ -764,7 +1004,12 @@ fn serve(
                             r#"<p>Use this temporary page in the browser whose session you want to use. JaneConverter only receives media you explicitly capture with the Browser Capture extension. It never reads or stores passwords, cookies, cache, or browser profile data.</p><ol><li>Open the media page you want to capture in this browser.</li><li>Sign in normally if needed.</li><li>Return here and confirm access, then use the Browser Capture extension on the media page.</li></ol><p><a class="confirm" href="/access/{token}/ready">I am signed in - confirm access</a></p><p class="note">The first capture binds this temporary session to the media page's site. The link expires when JaneConverter closes or access is cleared.</p>"#
                         )
                     };
-                    send_html(&mut stream, 200, "OK", &access_page("JaneConverter account access", &content));
+                    send_html(
+                        &mut stream,
+                        200,
+                        "OK",
+                        &access_page("JaneConverter account access", &content),
+                    );
                     continue;
                 }
                 send_html(
@@ -786,11 +1031,17 @@ pub fn create(source: &str, stamp: u128) -> Result<AccessServer, String> {
     create_with_root(source, stamp, crate::paths::default_fetched_dir())
 }
 
-pub fn create_with_root(source: &str, _stamp: u128, capture_root: PathBuf) -> Result<AccessServer, String> {
+pub fn create_with_root(
+    source: &str,
+    _stamp: u128,
+    capture_root: PathBuf,
+) -> Result<AccessServer, String> {
     let source = source.trim().to_owned();
     if !source.is_empty() {
-        let parsed_source = Url::parse(&source).map_err(|_| "The source URL is invalid.".to_owned())?;
-        if !matches!(parsed_source.scheme(), "http" | "https") || parsed_source.host_str().is_none() {
+        let parsed_source =
+            Url::parse(&source).map_err(|_| "The source URL is invalid.".to_owned())?;
+        if !matches!(parsed_source.scheme(), "http" | "https") || parsed_source.host_str().is_none()
+        {
             return Err("Account access requires a valid HTTP or HTTPS source URL.".into());
         }
     }
@@ -909,10 +1160,18 @@ fn bridge_ready(
 ) -> Result<Option<String>, (u16, String, Option<String>)> {
     let origin = bridge_origin(headers).map_err(|error| (403, error, None))?;
     if !confirmed.load(Ordering::Acquire) {
-        return Err((409, "Confirm account access in the browser first.".into(), origin));
+        return Err((
+            409,
+            "Confirm account access in the browser first.".into(),
+            origin,
+        ));
     }
     if header_value(headers, BRIDGE_HEADER) != Some(bridge_nonce) {
-        return Err((403, "The browser capture challenge was invalid or expired.".into(), origin));
+        return Err((
+            403,
+            "The browser capture challenge was invalid or expired.".into(),
+            origin,
+        ));
     }
     Ok(origin)
 }
@@ -923,16 +1182,20 @@ fn validate_capture_metadata(body: &[u8], source: Option<&str>) -> Result<Captur
     }
     let metadata: CaptureMetadata = serde_json::from_slice(body)
         .map_err(|_| "The browser capture metadata was not valid JSON.".to_owned())?;
-    let page_url = Url::parse(metadata.page_url.trim()).map_err(|_| "The captured page URL is invalid.".to_owned())?;
+    let page_url = Url::parse(metadata.page_url.trim())
+        .map_err(|_| "The captured page URL is invalid.".to_owned())?;
     let page_host = page_url.host_str().unwrap_or_default().to_ascii_lowercase();
     if !matches!(page_url.scheme(), "http" | "https") || page_url.host_str().is_none() {
         return Err("The captured page is not part of the confirmed source site.".into());
     }
     if let Some(source) = source {
-        let source_url = Url::parse(source.trim()).map_err(|_| "The confirmed source URL is invalid.".to_owned())?;
-        let source_host = source_url.host_str().unwrap_or_default().to_ascii_lowercase();
-        if !matches!(source_url.scheme(), "http" | "https")
-            || !same_site(&source_host, &page_host)
+        let source_url = Url::parse(source.trim())
+            .map_err(|_| "The confirmed source URL is invalid.".to_owned())?;
+        let source_host = source_url
+            .host_str()
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        if !matches!(source_url.scheme(), "http" | "https") || !same_site(&source_host, &page_host)
         {
             return Err("The captured page is not part of the confirmed source site.".into());
         }
@@ -941,13 +1204,19 @@ fn validate_capture_metadata(body: &[u8], source: Option<&str>) -> Result<Captur
         || metadata.file_name.len() > 512
         || metadata.file_name == "."
         || metadata.file_name == ".."
-        || metadata.file_name.chars().any(|value| matches!(value, '/' | '\\' | ':'))
+        || metadata
+            .file_name
+            .chars()
+            .any(|value| matches!(value, '/' | '\\' | ':'))
         || metadata.file_name.chars().any(|value| value.is_control())
     {
         return Err("The browser capture returned an unsafe file name.".into());
     }
     if !matches!(metadata.media_kind.as_str(), "video" | "audio" | "image")
-        || !matches!(metadata.capture_mode.as_str(), "current" | "sequence" | "network")
+        || !matches!(
+            metadata.capture_mode.as_str(),
+            "current" | "sequence" | "network"
+        )
         || !metadata.mime_type.contains('/')
         || metadata.title.is_empty()
     {
@@ -1046,41 +1315,17 @@ fn registered_default_browser() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::TcpStream;
-    use std::time::Duration;
 
     #[test]
-    fn access_server_returns_valid_http_line_endings() {
-        let server =
-            create("https://example.com/video", 42).expect("loopback access server should start");
-        let address = server
-            .link
-            .strip_prefix("http://")
-            .and_then(|value| value.split('/').next())
-            .expect("access link should contain a host and port");
-        let mut stream =
-            TcpStream::connect(address).expect("loopback access server should accept connections");
-        let request_path = server
-            .link
-            .split_once("/access/")
-            .map(|(_, path)| format!("/access/{path}"))
-            .expect("access link should contain a token");
-        stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .expect("test socket should have a bounded read timeout");
-        stream
-            .write_all(
-                format!(
-                    "GET {request_path} HTTP/1.1\r\nHost: {address}\r\nUser-Agent: Mozilla/5.0 Chrome/1.0\r\nConnection: close\r\n\r\n"
-                )
-                .as_bytes(),
-            )
-            .expect("test request should be written");
+    fn http_response_uses_valid_line_endings() {
+        let response = http_response(
+            200,
+            "OK",
+            "text/html; charset=utf-8",
+            &access_page("JaneConverter account access", "<p>Ready.</p>"),
+            None,
+        );
 
-        let mut response = String::new();
-        stream
-            .read_to_string(&mut response)
-            .expect("test response should be readable");
         assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
         assert!(response.contains("\r\n\r\n"));
         assert!(!response.contains(r"\r\n"));
@@ -1125,7 +1370,8 @@ mod tests {
 
     #[test]
     fn scans_saved_fetched_media_without_an_active_session() {
-        let root = std::env::temp_dir().join(format!("janec-fetched-scan-{}", crate::paths::now_stamp()));
+        let root =
+            std::env::temp_dir().join(format!("janec-fetched-scan-{}", crate::paths::now_stamp()));
         fs::create_dir_all(&root).expect("scan root should be writable");
         fs::write(root.join("saved.jpg"), b"image").expect("saved image should be writable");
         fs::write(root.join("ignored.txt"), b"text").expect("ignored file should be writable");
@@ -1149,7 +1395,9 @@ mod tests {
             bytes: Some(1_048_576),
             reason: None,
         };
-        assert!(diagnostic_message(&valid).expect("known diagnostic should be accepted").contains("HTTP 200"));
+        assert!(diagnostic_message(&valid)
+            .expect("known diagnostic should be accepted")
+            .contains("HTTP 200"));
 
         let unsafe_host = DiagnosticPayload {
             event: "session_fetch_started".into(),

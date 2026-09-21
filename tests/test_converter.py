@@ -102,7 +102,8 @@ def test_build_ffmpeg_args_mp4_nvenc():
         output_path="output.mp4",
         target_format="mp4",
         resolution="1080p",
-        use_nvenc=True
+        use_nvenc=True,
+        gpu_codec="h264_nvenc"
     )
     assert "h264_nvenc" in cmd
     assert any("scale=-2:1080" in arg for arg in cmd)

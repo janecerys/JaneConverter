@@ -4,7 +4,9 @@ mod model;
 mod paths;
 mod process;
 
-use model::{AccessDiagnostic, AccessStatus, ConversionRequest, FetchedMedia, LibraryEntry, RuntimeInfo};
+use model::{
+    AccessDiagnostic, AccessStatus, ConversionRequest, FetchedMedia, LibraryEntry, RuntimeInfo,
+};
 use paths::{
     command_available, data_root, detect_gpu, find_ffmpeg, find_python, packaged_engine,
     prepare_command, project_root, settings_get_internal, write_settings,
@@ -42,7 +44,11 @@ impl Default for AppState {
     }
 }
 
-fn active_capture_path(state: &AppState, source: &str, requested_path: Option<&str>) -> Option<PathBuf> {
+fn active_capture_path(
+    state: &AppState,
+    source: &str,
+    requested_path: Option<&str>,
+) -> Option<PathBuf> {
     let captured = state.access.lock().ok().and_then(|value| {
         value
             .as_ref()
@@ -363,7 +369,11 @@ fn delete_library_entry(root: String, path: String) -> Result<(), String> {
 #[tauri::command]
 fn create_access_link(state: State<'_, AppState>, source: String) -> Result<AccessStatus, String> {
     let settings = settings_get_internal();
-    let server = access::create_with_root(&source, paths::now_stamp(), PathBuf::from(settings.fetched_dir))?;
+    let server = access::create_with_root(
+        &source,
+        paths::now_stamp(),
+        PathBuf::from(settings.fetched_dir),
+    )?;
     let status = server.status();
     let mut access = state
         .access

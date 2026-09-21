@@ -127,12 +127,11 @@ pub fn build_conversion_args_with_capture(
     }
     if let Some(path) = browser_media_path {
         if !path.is_file() {
-            return Err("The browser capture file is no longer available. Capture the media again.".into());
+            return Err(
+                "The browser capture file is no longer available. Capture the media again.".into(),
+            );
         }
-        args.extend([
-            "--browser-media-path".into(),
-            path.display().to_string(),
-        ]);
+        args.extend(["--browser-media-path".into(), path.display().to_string()]);
     }
     if let Some(indexes) = &request.playlist_indexes {
         if !indexes.trim().is_empty() {
@@ -298,10 +297,7 @@ pub fn parse_playlist_output(output: &str) -> Result<PlaylistCatalog, String> {
     Ok(PlaylistCatalog { title, items })
 }
 
-pub fn load_playlist(
-    source: &str,
-    browser: Option<String>,
-) -> Result<PlaylistCatalog, String> {
+pub fn load_playlist(source: &str, browser: Option<String>) -> Result<PlaylistCatalog, String> {
     let engine = find_python();
     let mut command = Command::new(&engine);
     if !packaged_engine(&engine) {
@@ -441,7 +437,8 @@ mod tests {
             browser_session: None,
             browser_capture_path: None,
         };
-        let args = build_conversion_args(&request, None).expect("public conversion should be valid");
+        let args =
+            build_conversion_args(&request, None).expect("public conversion should be valid");
         assert!(!args.iter().any(|value| value == "--browser-session"));
     }
 }
