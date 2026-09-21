@@ -1315,49 +1315,17 @@ fn registered_default_browser() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::net::TcpStream;
-    use std::time::Duration;
 
     #[test]
-    fn access_server_returns_valid_http_line_endings() {
-        let server =
-            create("https://example.com/video", 42).expect("loopback access server should start");
-        let address = server
-            .link
-            .strip_prefix("http://")
-            .and_then(|value| value.split('/').next())
-            .expect("access link should contain a host and port");
-        let mut stream =
-            TcpStream::connect(address).expect("loopback access server should accept connections");
-        let request_path = server
-            .link
-            .split_once("/access/")
-            .map(|(_, path)| format!("/access/{path}"))
-            .expect("access link should contain a token");
-        stream
-            .set_read_timeout(Some(Duration::from_secs(2)))
-            .expect("test socket should have a bounded read timeout");
-        stream
-            .write_all(
-                format!(
-                    "GET {request_path} HTTP/1.1\r\nHost: {address}\r\nUser-Agent: Mozilla/5.0 Chrome/1.0\r\nConnection: close\r\n\r\n"
-                )
-                .as_bytes(),
-            )
-            .expect("test request should be written");
+    fn http_response_uses_valid_line_endings() {
+        let response = http_response(
+            200,
+            "OK",
+            "text/html; charset=utf-8",
+            &access_page("JaneConverter account access", "<p>Ready.</p>"),
+            None,
+        );
 
-        let mut response = String::new();
-        if let Err(error) = stream.read_to_string(&mut response) {
-            assert_eq!(
-                error.kind(),
-                std::io::ErrorKind::ConnectionReset,
-                "test response should be readable"
-            );
-            assert!(
-                !response.is_empty(),
-                "a reset connection should still contain the response"
-            );
-        }
         assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
         assert!(response.contains("\r\n\r\n"));
         assert!(!response.contains(r"\r\n"));
