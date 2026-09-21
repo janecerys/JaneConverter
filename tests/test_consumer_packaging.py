@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 import zipfile
 
+from janeconverter.version import __version__
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -76,6 +78,9 @@ def test_tauri_runtime_paths_support_frozen_windows_and_linux_engines():
     assert 'command.env("JANECONVERTER_DATA_DIR"' in paths
     assert 'var_os("XDG_DATA_HOME")' in paths
     assert 'var_os("LOCALAPPDATA")' in paths
+    assert 'join("pyproject.toml")' in paths
+    assert 'join("uv.lock")' in paths
+    assert '"run", "--locked", "janeconverter"' in process
     assert "!packaged_engine(&engine)" in process
 
 
@@ -104,12 +109,11 @@ def test_release_workflow_builds_and_publishes_only_agreed_platforms():
     assert "macos" not in workflow.lower()
 
 
-def test_frozen_engine_entrypoint_keeps_source_cli_compatibility():
+def test_frozen_engine_entrypoint_calls_installed_package_cli():
     entrypoint = read("packaging/engine_entry.py")
 
-    assert "run_converter.py" in entrypoint
-    assert "from run_converter import main" in entrypoint
-    assert "sys.argv" in entrypoint
+    assert "from janeconverter.cli import main" in entrypoint
+    assert "run_converter.py" not in entrypoint
 
 
 def test_browser_bridge_archive_matches_the_source_extension():
@@ -140,4 +144,27 @@ def test_browser_bridge_archive_matches_the_source_extension():
 
 
 def test_engine_has_a_packaged_update_check_mode():
-    assert "--check-updates" in read("run_converter.py")
+    assert "--check-updates" in read("src/janeconverter/cli.py")
+
+
+def test_python_project_exposes_the_supported_console_command():
+    project = read("pyproject.toml")
+
+    assert 'janeconverter = "janeconverter.cli:main"' in project
+    assert 'path = "src/janeconverter/version.py"' in project
+    assert (REPO_ROOT / "src" / "janeconverter" / "__init__.py").is_file()
+
+
+def test_application_versions_are_aligned():
+    package = json.loads(read("desktop-ui/package.json"))
+    tauri = json.loads(read("desktop-ui/src-tauri/tauri.conf.json"))
+    browser_bridge = json.loads(read("browser-extension/manifest.json"))
+    cargo = read("desktop-ui/src-tauri/Cargo.toml")
+    cargo_lock = read("desktop-ui/src-tauri/Cargo.lock")
+
+    assert __version__ == "2.0.0"
+    assert package["version"] == __version__
+    assert tauri["version"] == __version__
+    assert browser_bridge["version"] == __version__
+    assert f'version = "{__version__}"' in cargo
+    assert f'name = "janeconverter-desktop"\nversion = "{__version__}"' in cargo_lock

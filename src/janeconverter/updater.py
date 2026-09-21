@@ -6,14 +6,20 @@ import os
 import re
 import sys
 import subprocess
+from pathlib import Path
 from typing import Optional, Dict, Any, Callable
 from urllib.parse import urlparse
 import requests
 import yt_dlp
 
-from engine.version import __version__
+from .version import __version__
 
-REPO_DIR = os.path.realpath(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+_source_root = Path(__file__).resolve().parents[2]
+REPO_DIR = str(
+    _source_root
+    if (_source_root / "pyproject.toml").is_file()
+    else Path(__file__).resolve().parents[1]
+)
 GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/janecerys/JaneConverter/releases/latest"
 GITHUB_RELEASE_PREFIX = "https://github.com/janecerys/JaneConverter/releases/"
 
@@ -257,7 +263,7 @@ def check_for_repo_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
 def apply_repo_update(status_callback: Optional[Callable[[str], None]] = None,
                       allow_live_update: bool = False) -> Dict[str, Any]:
     """
-    Pulls latest commits from the configured upstream and installs updated dependencies.
+    Pulls latest commits from the configured upstream and syncs locked dependencies.
     """
     def log(msg: str):
         if status_callback:
@@ -286,13 +292,14 @@ def apply_repo_update(status_callback: Optional[Callable[[str], None]] = None,
 
     log("Application code updated successfully.")
 
-    req_file = os.path.join(REPO_DIR, "requirements.txt")
-    if os.path.exists(req_file):
-        log("Verifying and updating Python requirements...")
+    project_file = os.path.join(REPO_DIR, "pyproject.toml")
+    lock_file = os.path.join(REPO_DIR, "uv.lock")
+    if os.path.exists(project_file) and os.path.exists(lock_file):
+        log("Verifying and updating locked Python dependencies...")
         try:
             no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             res = subprocess.run(
-                [sys.executable, "-m", "pip", "install", "-r", "requirements.txt", "--quiet"],
+                ["uv", "sync", "--locked"],
                 cwd=REPO_DIR,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -301,9 +308,9 @@ def apply_repo_update(status_callback: Optional[Callable[[str], None]] = None,
                 creationflags=no_window
             )
             if res.returncode == 0:
-                log("Python requirements verified.")
+                log("Locked Python dependencies verified.")
             else:
-                log(f"Notice: Dependency update failed ({res.stderr.strip() or 'pip returned non-zero code'}).")
+                log(f"Notice: Dependency sync failed ({res.stderr.strip() or 'uv returned non-zero code'}).")
         except Exception as e:
             log(f"Notice: Dependency update skipped ({e}).")
 
@@ -351,7 +358,7 @@ def update_engine(status_callback: Optional[Callable[[str], None]] = None,
                   info: Optional[Dict[str, Any]] = None,
                   allow_install: bool = False) -> bool:
     """
-    Upgrades yt-dlp to the latest release via pip in the background, pinned to the
+    Upgrades yt-dlp to the latest release through uv in the background, pinned to the
     exact version reported by PyPI. Pass a pre-fetched result from
     check_for_engine_updates() via `info` to avoid a duplicate network check.
     Returns True if successfully updated.
@@ -389,7 +396,15 @@ def update_engine(status_callback: Optional[Callable[[str], None]] = None,
     log(f"New engine release detected: v{target_version}. Upgrading now...")
 
     no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-    cmd = [sys.executable, "-m", "pip", "install", f"yt-dlp=={target_version}", "--quiet"]
+    cmd = [
+        "uv",
+        "pip",
+        "install",
+        "--python",
+        sys.executable,
+        f"yt-dlp=={target_version}",
+        "--quiet",
+    ]
 
     try:
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -397,7 +412,7 @@ def update_engine(status_callback: Optional[Callable[[str], None]] = None,
         if res.returncode == 0:
             log(f"Engine successfully updated to v{target_version}.")
             return True
-        log(f"Engine upgrade failed ({res.stderr.strip() or 'pip returned non-zero code'}).")
+        log(f"Engine upgrade failed ({res.stderr.strip() or 'uv returned non-zero code'}).")
         return False
     except Exception as e:
         log(f"Notice: Automatic engine upgrade skipped ({e}).")

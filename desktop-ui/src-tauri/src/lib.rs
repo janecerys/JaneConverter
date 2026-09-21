@@ -591,7 +591,7 @@ fn check_updates() -> Result<String, String> {
     let engine = find_python();
     let mut command = Command::new(&engine);
     if !packaged_engine(&engine) {
-        command.arg(project_root().join("run_converter.py"));
+        command.args(["run", "--locked", "janeconverter"]);
     }
     command
         .arg("--check-updates")
@@ -663,7 +663,11 @@ mod tests {
 
     #[test]
     fn project_root_contains_converter_engine() {
-        assert!(paths::project_root().join("engine").is_dir());
+        assert!(paths::project_root()
+            .join("src")
+            .join("janeconverter")
+            .join("cli.py")
+            .is_file());
     }
 
     #[test]

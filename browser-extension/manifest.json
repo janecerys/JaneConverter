@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "JaneConverter Browser Bridge",
-  "version": "1.4.0",
+  "version": "2.0.0",
   "description": "Captures selected media through an approved browser session without reading or exporting cookies.",
   "action": {
     "default_title": "Capture media for JaneConverter",

@@ -5,21 +5,18 @@ CLI validation, disk-space checks, and hardware encoder argument construction.
 """
 
 import os
-import sys
 import argparse
 
 import pytest
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-import engine.extractor as extractor
-from engine.extractor import (
+import janeconverter.extractor as extractor
+from janeconverter.extractor import (
     sanitize_filename, resolve_spotify_metadata, resolve_apple_music_metadata,
     fetch_playlist_entries, identify_source_type, is_playlist_url, fetch_media_stream
 )
-from engine.converter import build_ffmpeg_args, VAAPI_ENCODER_ARGS
-from engine.version import __version__
-from run_converter import validate_cli_args, ensure_free_disk_space
+from janeconverter.converter import build_ffmpeg_args, VAAPI_ENCODER_ARGS
+from janeconverter.version import __version__
+from janeconverter.cli import validate_cli_args, ensure_free_disk_space
 from conftest import FakeResponse, make_spotify_track_embed_html, make_spotify_entity
 
 

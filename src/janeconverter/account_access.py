@@ -17,15 +17,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Optional
 from urllib.parse import urlparse
 
-from engine.auth import BrowserDetection, detect_browser_from_headers
-from engine.browser_bridge import (
+from .auth import BrowserDetection, detect_browser_from_headers
+from .browser_bridge import (
     BrowserCaptureStore,
     CaptureBridgeError,
     MAX_CHUNK_BYTES,
     MAX_METADATA_BYTES,
     parse_capture_metadata,
 )
-from engine.paths import DEFAULT_TEMP_DIR
+from .paths import DEFAULT_TEMP_DIR
 
 
 BRIDGE_HEADER = "X-JaneConverter-Bridge"

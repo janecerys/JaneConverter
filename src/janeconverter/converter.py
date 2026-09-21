@@ -11,6 +11,7 @@ import time
 import shutil
 import threading
 import subprocess
+from pathlib import Path
 from typing import Optional, Dict, Any, Callable
 
 SUPPORTED_AUDIO_FORMATS = {"mp3", "wav", "flac", "aac", "m4a", "ogg"}
@@ -44,7 +45,12 @@ _encoder_cache: Dict[Optional[str], Dict[str, Any]] = {}
 _encoder_cache_lock = threading.Lock()
 
 ENGINE_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.dirname(ENGINE_DIR)
+_source_root = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = str(
+    _source_root
+    if (_source_root / "pyproject.toml").is_file()
+    else Path(__file__).resolve().parents[1]
+)
 
 def get_ffmpeg_binary() -> str:
     """

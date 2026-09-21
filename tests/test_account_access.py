@@ -7,7 +7,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from engine.account_access import AccountAccessServer
+from janeconverter.account_access import AccountAccessServer
 
 
 EXTENSION_ORIGIN = "chrome-extension://test-extension"

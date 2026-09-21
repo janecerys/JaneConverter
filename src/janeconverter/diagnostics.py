@@ -6,8 +6,8 @@ import shutil
 import subprocess
 from typing import Dict
 
-from engine.paths import APP_DATA_DIR
-from engine.version import __version__
+from .paths import APP_DATA_DIR
+from .version import __version__
 
 
 def _tool_version(executable: str) -> str:

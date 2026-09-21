@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from engine.browser_bridge import (
+from janeconverter.browser_bridge import (
     CaptureBridgeError,
     BrowserCaptureStore,
     parse_capture_metadata,

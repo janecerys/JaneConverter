@@ -1,0 +1,40 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "janeconverter"
+dynamic = ["version"]
+description = "Media download and conversion backend for JaneConverter"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+dependencies = [
+    "packaging>=23,<27",
+    "pillow>=10.0.0,<13",
+    "psutil>=5.9.0,<8",
+    "requests>=2.31.0,<3",
+    "yt-dlp>=2025.1.0,<2027",
+]
+
+[project.scripts]
+janeconverter = "janeconverter.cli:main"
+
+[dependency-groups]
+dev = [
+    "pyflakes>=3.2.0",
+    "pyinstaller>=6.0.0,<7",
+    "pytest>=8.0.0",
+]
+
+[tool.hatch.version]
+path = "src/janeconverter/version.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/janeconverter"]
+
+[tool.pytest.ini_options]
+addopts = '-m "not online"'
+markers = [
+    "online: tests that require a live internet connection (deselected by default)",
+]

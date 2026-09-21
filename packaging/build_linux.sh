@@ -59,7 +59,7 @@ resolve_executable() {
   printf '%s\n' "$resolved"
 }
 
-for command_name in python3 npm cargo tar sha256sum install realpath; do
+for command_name in uv npm cargo tar sha256sum install realpath; do
   require_command "$command_name"
 done
 
@@ -69,13 +69,14 @@ NODE_PATH="$(resolve_executable "$NODE_PATH" node Node.js)"
 "$FFMPEG_PATH" -version >/dev/null
 "$FFPROBE_PATH" -version >/dev/null
 "$NODE_PATH" --version >/dev/null
-python3 -m PyInstaller --version >/dev/null
 cargo --version >/dev/null
 
 cd -- "$REPO_ROOT"
-VERSION="$(python3 -c 'import pathlib,re; text=pathlib.Path("engine/version.py").read_text(); match=re.search(r"__version__\s*=\s*\"([^\"]+)\"", text); print(match.group(1) if match else "")' 2>/dev/null)"
+uv sync --locked --python 3.12
+uv run --locked pyinstaller --version >/dev/null
+VERSION="$(uv run --locked python -c 'from janeconverter.version import __version__; print(__version__)' 2>/dev/null)"
 if [[ -z "$VERSION" ]]; then
-  echo "Could not determine the version from engine/version.py." >&2
+  echo "Could not determine the version from src/janeconverter/version.py." >&2
   exit 1
 fi
 
@@ -94,9 +95,9 @@ rm -f -- "$ARCHIVE" "$ARCHIVE.sha256"
 mkdir -p -- "$RUNTIME_ENGINE" "$RUNTIME_BIN" "$PYINSTALLER_ROOT/spec"
 
 echo "Building the frozen engine (onedir)..."
-python3 -m PyInstaller --noconfirm --clean --onedir --contents-directory _internal \
+uv run --locked pyinstaller --noconfirm --clean --onedir --contents-directory _internal \
   --name JaneConverterEngine \
-  --paths "$REPO_ROOT" \
+  --paths "$REPO_ROOT/src" \
   --distpath "$PYINSTALLER_ROOT/dist" \
   --workpath "$PYINSTALLER_ROOT/work" \
   --specpath "$PYINSTALLER_ROOT/spec" \
@@ -125,7 +126,7 @@ fi
 TAURI_CONFIG="$BUILD_ROOT/tauri.release.json"
 export JANECONVERTER_RELEASE_VERSION="$VERSION"
 export JANECONVERTER_TAURI_CONFIG="$TAURI_CONFIG"
-python3 - <<'PY'
+uv run --locked python - <<'PY'
 import json
 import os
 from pathlib import Path

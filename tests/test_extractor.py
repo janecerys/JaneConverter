@@ -1,14 +1,9 @@
 """
-Unit tests for engine/extractor.py
+Unit tests for the extractor module.
 """
 
 import pytest
-import sys
-import os
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-from engine.extractor import is_url, identify_source_type, sanitize_filename, resolve_spotify_metadata, resolve_apple_music_metadata, build_search_candidates
+from janeconverter.extractor import is_url, identify_source_type, sanitize_filename, resolve_spotify_metadata, resolve_apple_music_metadata, build_search_candidates
 
 def test_is_url():
     assert is_url("https://www.youtube.com/watch?v=dQw4w9WgXcQ") is True
@@ -69,4 +64,3 @@ def test_build_search_candidates():
         clean_part = c.replace("ytsearch1:", "").replace("scsearch1:", "")
         assert ":" not in clean_part
         assert "?" not in clean_part
-

@@ -13,7 +13,7 @@ from typing import Optional, Dict, Any, Callable
 import json
 import requests
 import yt_dlp
-from engine.auth import (
+from .auth import (
     describe_authenticated_extraction_failure,
     normalize_browser_session,
     normalize_browser_error_message,

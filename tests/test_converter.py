@@ -1,20 +1,17 @@
 """
-Unit tests for engine/converter.py and engine/updater.py
+Unit tests for the converter and updater modules.
 """
 
 import os
-import sys
 import pytest
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-from engine.converter import (
+from janeconverter.converter import (
     build_ffmpeg_args,
     get_unique_target_path,
     get_host_gpus,
     get_best_hardware_encoder
 )
-from engine.updater import (
+from janeconverter.updater import (
     get_current_engine_version,
     check_for_engine_updates,
     is_git_repo,

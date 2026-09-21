@@ -3,15 +3,12 @@ Unit tests for cover art extraction, credits file generation, and metadata embed
 """
 
 import os
-import sys
 import pytest
 from PIL import Image
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-from engine.extractor import download_and_convert_thumbnail, resolve_spotify_metadata
-from engine.converter import build_ffmpeg_args
-from run_converter import write_credits_file
+from janeconverter.extractor import download_and_convert_thumbnail, resolve_spotify_metadata
+from janeconverter.converter import build_ffmpeg_args
+from janeconverter.cli import write_credits_file
 
 def test_download_and_convert_thumbnail_local(tmp_path):
     src_img_path = os.path.join(str(tmp_path), "source_art.png")

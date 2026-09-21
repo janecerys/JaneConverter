@@ -56,16 +56,13 @@ Browser-captured files appear in the **Fetched Media** tab and are saved in the 
 
 ## Command line
 
-Source use requires Python 3.10+, FFmpeg with FFprobe, and Node.js:
+Source use requires [uv](https://docs.astral.sh/uv/), Python 3.10+, FFmpeg with FFprobe, and Node.js:
 
 ```bash
-python -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python run_converter.py --source "https://example.com/media" --format mp3
-.venv/bin/python run_converter.py --help
+uv sync
+uv run janeconverter --source "https://example.com/media" --format mp3
+uv run janeconverter --help
 ```
-
-On Windows, replace `.venv/bin/python` with `.\.venv\Scripts\python.exe`.
 
 ## Development
 
@@ -80,12 +77,14 @@ npm run tauri:dev
 Run the test suites:
 
 ```bash
-python -m pip install -r requirements-dev.txt
-python -m pytest tests/ -v
+uv sync --locked
+uv run pytest tests/ -v
 cd desktop-ui
 npm test -- --run
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
+
+The Python backend uses the `src/janeconverter/` package. Its supported entry point is the `janeconverter` console command.
 
 ## Release builds
 
