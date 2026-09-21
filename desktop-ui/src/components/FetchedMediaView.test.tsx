@@ -1,6 +1,6 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { FetchedMediaView } from "./FetchedMediaView";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -28,6 +28,7 @@ const item = {
 };
 
 describe("FetchedMediaView", () => {
+  beforeEach(() => { vi.clearAllMocks(); });
   it("renders fetched thumbnails and discards the selected item", async () => {
     bridge.fetchedMedia.mockResolvedValue([item]);
     bridge.fetchedMediaThumbnail.mockResolvedValue("data:image/jpeg;base64,preview");
@@ -118,4 +119,40 @@ describe("FetchedMediaView", () => {
     await act(async () => { root.unmount(); });
     container.remove();
   });
-});
+
+it("provides a quiet, clickable manual refresh control", async () => {
+    bridge.fetchedMedia.mockResolvedValue([]);
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <FetchedMediaView
+          access={{ active: false, link: "", browser: "", bridgeConnected: false }}
+          settings={{ outputDir: "converted", fetchedDir: "fetched", category: "Music", format: "mp3", bitrate: "320k", sampleRate: 48000, resolution: "original", normalize: false, useGpu: false, saveCover: true, saveMetadata: true, retries: 2 }}
+          onSettings={vi.fn()}
+          onSelect={vi.fn()}
+          onDiscard={vi.fn()}
+          onStatus={vi.fn()}
+        />,
+      );
+      await Promise.resolve();
+    });
+
+    const refresh = container.querySelector<HTMLButtonElement>('button[aria-label="Refresh fetched media"]');
+    expect(refresh).not.toBeNull();
+    expect(refresh?.querySelector("svg")?.getAttribute("class") ?? "").not.toContain("animate-spin");
+    const callsBefore = bridge.fetchedMedia.mock.calls.length;
+
+    await act(async () => {
+      refresh?.click();
+      await Promise.resolve();
+    });
+
+    expect(bridge.fetchedMedia.mock.calls.length).toBeGreaterThan(callsBefore);
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });});

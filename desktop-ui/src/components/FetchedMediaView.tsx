@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, ArrowRight, FileAudio, FileImage, FileVideo, FolderOpen, Inbox, LoaderCircle, RefreshCw, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowRight, FileAudio, FileImage, FileVideo, FolderOpen, Inbox, RefreshCw, Trash2 } from "lucide-react";
 import type { AccessStatus, ConverterSettings, FetchedMedia } from "../bridge";
 import { bridge } from "../bridge";
 
@@ -54,7 +54,9 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
   const [discarding, setDiscarding] = useState<string | null>(null);
   const [moving, setMoving] = useState(false);
   const [pendingMove, setPendingMove] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+  const refreshInFlight = useRef(false);
+  const mountedRef = useRef(true);
   const thumbnailPaths = useRef(new Set<string>());
 
   useEffect(() => {
@@ -66,47 +68,51 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [pendingMove]);
 
-  useEffect(() => {
-    let mounted = true;
-    const refresh = async () => {
-      setLoading(true);
-      try {
-        const next = await bridge.fetchedMedia();
-        if (!mounted) return;
-        setItems(next);
-        setThumbnails((current) => Object.fromEntries(
-          Object.entries(current).filter(([path]) => next.some((item) => item.path === path)),
-        ));
-        for (const path of Array.from(thumbnailPaths.current)) {
-          if (!next.some((item) => item.path === path)) thumbnailPaths.current.delete(path);
-        }
-        const pending = next.filter((item) => !thumbnailPaths.current.has(item.path));
-        const previews = await Promise.all(pending.map(async (item) => {
-          try {
-            return [item.path, await bridge.fetchedMediaThumbnail(item.path)] as const;
-          } catch (_) {
-            return [item.path, null] as const;
-          }
-        }));
-        if (mounted) {
-          setThumbnails((current) => {
-            const updated = { ...current };
-            for (const [path, preview] of previews) {
-              thumbnailPaths.current.add(path);
-              if (preview) updated[path] = preview;
-            }
-            return updated;
-          });
-        }
-      } catch (error) {
-        if (mounted) onStatus(error instanceof Error ? error.message : String(error));
-      } finally {
-        if (mounted) setLoading(false);
+  const refresh = async (manual = false) => {
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
+    if (manual) setRefreshing(true);
+    try {
+      const next = await bridge.fetchedMedia();
+      if (!mountedRef.current) return;
+      setItems(next);
+      setThumbnails((current) => Object.fromEntries(
+        Object.entries(current).filter(([path]) => next.some((item) => item.path === path)),
+      ));
+      for (const path of Array.from(thumbnailPaths.current)) {
+        if (!next.some((item) => item.path === path)) thumbnailPaths.current.delete(path);
       }
-    };
+      const pending = next.filter((item) => !thumbnailPaths.current.has(item.path));
+      const previews = await Promise.all(pending.map(async (item) => {
+        try {
+          return [item.path, await bridge.fetchedMediaThumbnail(item.path)] as const;
+        } catch (_) {
+          return [item.path, null] as const;
+        }
+      }));
+      if (mountedRef.current) {
+        setThumbnails((current) => {
+          const updated = { ...current };
+          for (const [path, preview] of previews) {
+            thumbnailPaths.current.add(path);
+            if (preview) updated[path] = preview;
+          }
+          return updated;
+        });
+      }
+    } catch (error) {
+      if (mountedRef.current) onStatus(error instanceof Error ? error.message : String(error));
+    } finally {
+      refreshInFlight.current = false;
+      if (mountedRef.current && manual) setRefreshing(false);
+    }
+  };
+
+  useEffect(() => {
+    mountedRef.current = true;
     void refresh();
     const timer = window.setInterval(() => { void refresh(); }, 1000);
-    return () => { mounted = false; window.clearInterval(timer); };
+    return () => { mountedRef.current = false; window.clearInterval(timer); };
   }, [access.active, access.captureCount]);
 
   async function chooseMoveFolder() {
@@ -168,8 +174,7 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-500">Captured media is saved in the folder below. The browser session controls what can be fetched; the files remain here until you open, convert, or discard them.</p>
         </div>
         <div className="flex items-center gap-2 text-xs text-zinc-500">
-          {loading && <LoaderCircle className="size-3.5 animate-spin" />}
-          <RefreshCw className="size-3.5" />
+          <button type="button" aria-label="Refresh fetched media" title="Refresh fetched media" disabled={refreshing} onClick={() => void refresh(true)} className="subtle-button grid size-7 place-items-center rounded-full disabled:cursor-wait disabled:opacity-60"><RefreshCw className={"size-3.5 " + (refreshing ? "animate-spin" : "")} /></button>
           {items.length + (access.active ? " item" : " saved item") + (items.length === 1 ? "" : "s")}
         </div>
       </div>
