@@ -182,4 +182,28 @@ describe("Converter account access feedback", () => {
     await act(async () => { view.root.unmount(); });
     view.container.remove();
   });
+
+  it("handles dropped web links and files into the converter", async () => {
+    const view = renderView();
+    const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
+    expect(input).not.toBeNull();
+
+    // Test dropping a web URL
+    await act(async () => {
+      const dropEvent = new Event("drop", { bubbles: true, cancelable: true });
+      Object.defineProperty(dropEvent, "dataTransfer", {
+        value: {
+          files: [],
+          getData: (format: string) => (format === "text/uri-list" ? "https://youtube.com/watch?v=12345" : ""),
+        },
+      });
+      input.dispatchEvent(dropEvent);
+      await Promise.resolve();
+    });
+
+    expect(input.value).toBe("https://youtube.com/watch?v=12345");
+
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
 });

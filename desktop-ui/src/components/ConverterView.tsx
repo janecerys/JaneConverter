@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
+  ArrowDownToLine,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -158,6 +159,7 @@ export function ConverterView({
   const activeQueueIndexRef = useRef<number>(-1);
   const [completedItem, setCompletedItem] = useState<{ name: string; path?: string } | null>(null);
   const [copiedCompleted, setCopiedCompleted] = useState(false);
+  const [isDraggingOver, setIsDraggingOver] = useState(false);
 
   const capturedCategory = selectedCapture?.mediaKind
     ? selectedCapture.mediaKind === "image"
@@ -342,6 +344,116 @@ export function ConverterView({
     }
   }
 
+  function handleSingleSource(rawInput: string) {
+    let clean = rawInput.trim();
+    if (clean.startsWith("file://")) {
+      try {
+        clean = decodeURIComponent(clean.replace(/^file:\/\/\/?/, ""));
+        if (/^[a-zA-Z]:/.test(clean)) {
+          clean = clean.replace(/\//g, "\\");
+        }
+      } catch {}
+    }
+    handleSourceInput(clean);
+    onStatus(`Source set to: ${clean.replace(/^.*[\\/]/, "") || clean}`);
+  }
+
+  function handleDroppedPaths(paths: string[]) {
+    if (!paths || paths.length === 0) return;
+    if (paths.length === 1) {
+      handleSingleSource(paths[0]);
+    } else {
+      const newItems: QueueItem[] = paths.map((p, idx) => {
+        let clean = p.trim().replace(/^file:\/\/\/?/, "");
+        if (/^[a-zA-Z]:/.test(clean)) clean = clean.replace(/\//g, "\\");
+        return {
+          id: `${Date.now()}-${idx}`,
+          source: clean,
+          name: clean.replace(/^.*[\\/]/, "") || clean,
+          category: detectCategoryFromPath(clean) || activeCategory,
+          status: "queued",
+          progress: 0,
+        };
+      });
+      setQueue((curr) => [...curr, ...newItems]);
+      onStatus(`Added ${paths.length} dropped items to conversion queue.`);
+    }
+  }
+
+  function handleDragOver(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(true);
+  }
+
+  function handleDragLeave(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+    setIsDraggingOver(false);
+  }
+
+  function handleDropEvent(e: React.DragEvent) {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDraggingOver(false);
+
+    // 1. Files dropped via browser/webview
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const fileList = Array.from(e.dataTransfer.files);
+      const filePaths = fileList
+        .map((f) => (f as any).path || (f as any).webkitRelativePath || f.name)
+        .filter(Boolean);
+      if (filePaths.length > 0) {
+        handleDroppedPaths(filePaths);
+        return;
+      }
+    }
+
+    // 2. URLs or plain text dragged from browser
+    const uriList = e.dataTransfer.getData("text/uri-list");
+    const plainText = e.dataTransfer.getData("text/plain") || e.dataTransfer.getData("text");
+    const droppedText = (uriList || plainText || "").trim();
+
+    if (droppedText) {
+      const lines = droppedText.split(/[\r\n]+/).map((l) => l.trim()).filter(Boolean);
+      if (lines.length > 1) {
+        handleDroppedPaths(lines);
+      } else {
+        handleSingleSource(lines[0]);
+      }
+    }
+  }
+
+  // Native Tauri drag-and-drop listener
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    if (typeof window !== "undefined" && "__TAURI_INTERNALS__" in window) {
+      void import("@tauri-apps/api/webview")
+        .then(({ getCurrentWebview }) => {
+          return getCurrentWebview().onDragDropEvent((event) => {
+            if (event.payload.type === "over" || event.payload.type === "enter") {
+              setIsDraggingOver(true);
+            } else if (event.payload.type === "leave") {
+              setIsDraggingOver(false);
+            } else if (event.payload.type === "drop") {
+              setIsDraggingOver(false);
+              if (event.payload.paths && event.payload.paths.length > 0) {
+                handleDroppedPaths(event.payload.paths);
+              }
+            }
+          });
+        })
+        .then((fn) => {
+          unlisten = fn;
+        })
+        .catch(() => {});
+    }
+    return () => {
+      unlisten?.();
+    };
+  }, [activeCategory]);
+
   async function browseOutput() {
     const path = await bridge.chooseFolder();
     if (path) update({ outputDir: path });
@@ -465,20 +577,39 @@ export function ConverterView({
       </motion.div>
 
       {/* Source Input Section */}
-      <section className="panel p-5">
+      <section
+        onDragOver={handleDragOver}
+        onDragEnter={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDropEvent}
+        className={`panel p-5 relative transition-all duration-200 ${
+          isDraggingOver
+            ? "border-[#c52b68] bg-[#c52b68]/[0.08] shadow-[0_0_30px_rgba(197,43,104,0.22)] ring-1 ring-[#c52b68]"
+            : ""
+        }`}
+      >
+        {isDraggingOver && (
+          <div className="pointer-events-none absolute inset-0 z-20 flex flex-col items-center justify-center rounded-2xl border-2 border-dashed border-[#c52b68] bg-black/65 backdrop-blur-sm">
+            <ArrowDownToLine className="size-8 animate-bounce text-pink-400" />
+            <div className="mt-2 text-sm font-semibold text-white">Drop media or web links here</div>
+            <div className="mt-0.5 text-xs text-pink-300">Drop a file or URL to set source, or multiple files for batch queue</div>
+          </div>
+        )}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="text-sm font-medium text-zinc-200">Source media</div>
-            <div className="mt-1 text-xs text-zinc-600">Paste a public URL, choose a file, or queue a batch.</div>
+            <div className="mt-1 text-xs text-zinc-600">Paste or drag a public URL, choose or drop files, or queue a batch.</div>
           </div>
-          <span className="text-[11px] text-zinc-600">{queue.length > 0 ? `${queue.length} items queued` : source ? "Source provided" : "Ready for URL or path"}</span>
+          <span className="text-[11px] text-zinc-600">{queue.length > 0 ? `${queue.length} items queued` : source ? "Source provided" : "Ready for URL, drop, or path"}</span>
         </div>
         <div className="mt-4 flex gap-2">
           <input
             aria-label="Source media URL or local path"
             value={source}
             onChange={(event) => handleSourceInput(event.target.value)}
-            placeholder="YouTube, Spotify, Apple Music, SoundCloud, TikTok, X, or a local path..."
+            onDragOver={handleDragOver}
+            onDrop={handleDropEvent}
+            placeholder="Paste or drag YouTube, Spotify, SoundCloud link, or drop local files..."
             className="field min-w-0 flex-1 px-3.5 py-3 text-sm placeholder:text-zinc-700"
           />
           <button type="button" onClick={() => void paste()} className="subtle-button flex items-center gap-2 px-3 text-xs">
