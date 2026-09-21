@@ -5,28 +5,36 @@
 </p>
 
 <p align="center">
-  <strong>Universal Media Downloader & High-Fidelity Transcode Studio</strong>
+  <strong>Universal Media Downloader & High-Fidelity Audio / Video / Image Transcode Studio</strong>
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/badge/Platform-Windows%2010%2F11%20%7C%20Linux%20%7C%20macOS-blue?style=flat-square" alt="Platform" />
   <img src="https://img.shields.io/badge/Python-3.10%2B-blueviolet?style=flat-square" alt="Python" />
   <img src="https://img.shields.io/badge/Acceleration-NVENC%20%7C%20AMF%20%7C%20QSV%20%7C%20VAAPI-success?style=flat-square" alt="Hardware Acceleration" />
-  <img src="https://img.shields.io/badge/Audio-WAV%20%7C%20FLAC%20%7C%20MP3-orange?style=flat-square" alt="Audio" />
+  <br />
+  <img src="https://img.shields.io/badge/Audio-WAV%20%7C%20FLAC%20%7C%20MP3%20%7C%20AAC%20%7C%20OGG-orange?style=flat-square" alt="Audio Formats" />
+  <img src="https://img.shields.io/badge/Video-MP4%20%7C%20MKV%20%7C%20WebM%20%7C%20MOV%20%7C%20GIF-red?style=flat-square" alt="Video Formats" />
+  <img src="https://img.shields.io/badge/Image-PNG%20%7C%20JPG%20%7C%20WebP-green?style=flat-square" alt="Image Formats" />
 </p>
 
-JaneConverter downloads and converts media through a Tauri desktop app or Python CLI. It supports playlists, metadata and artwork, loudness normalization, and hardware-accelerated video encoding.
+JaneConverter downloads and converts media through a sleek Tauri desktop app or high-speed Python CLI. It supports audio, video, and image processing with studio-grade SoX resampling, zero-loss stream copy remuxing (`-c copy`), EBU R128 loudness normalization, and hardware-accelerated GPU encoding.
 
 [Latest release](https://github.com/janecerys/JaneConverter/releases/latest) · [Changelog](CHANGELOG.md)
 
 ## Features
 
-- MP3, WAV, FLAC, AAC/M4A, OGG, MP4, MKV, WEBM, MOV, and GIF output
-- Playlist selection and organized media libraries
-- Metadata, cover art, credits, and EBU R128 normalization
-- NVIDIA NVENC, AMD AMF, Intel QSV, and Linux VAAPI acceleration with CPU fallback
-- Public Spotify and Apple Music metadata matching
-- Authorized browser-session support without exported cookie files
+- **Comprehensive Multi-Format Processing**:
+  - **Audio**: WAV (16/24/32-bit linear PCM), FLAC (lossless archive), MP3 (up to 320 kbps), AAC/M4A, and OGG/Opus.
+  - **Video**: MP4, MKV, WebM, MOV, and high-framerate GIF with zero-loss stream copying or hardware GPU transcoding.
+  - **Image**: Lossless PNG, high-efficiency WebP, and JPG optimization.
+- **Audiophile-Grade Sound Engine**: 64-bit float SoX resampler (`soxr`, precision 28, cutoff 0.99), EBU R128 loudness normalization (`-14 LUFS`), and post-conversion `ffprobe` stream validation to prevent corrupt, 0-byte completions.
+- **Instant Stream Copy Remuxing**: Zero-loss container conversion (`-c copy`) when underlying codecs match, with automatic safety fallback to transcode when audio normalization or filters are requested.
+- **Drag-and-Drop & Batch Queue**: Drag local media files or web links directly into the converter. Dropping multiple files automatically populates the sequential batch queue with live per-item progress, cancel, and retry controls.
+- **1-Click Intent Presets**: Goal-oriented presets including *Studio Master (24-bit WAV)*, *Universal Music (320k MP3)*, *Lossless FLAC*, *Universal Video (1080p MP4)*, *Lossless Image (PNG)*, and *Web Image (WebP)*.
+- **Hardware Acceleration**: NVIDIA NVENC, AMD AMF, Intel QSV, and Linux VAAPI with multi-core CPU fallback.
+- **Online Extraction**: Smart playlist selection, public Spotify & Apple Music metadata matching, and 4x parallel fragment downloading with anti-throttling heuristics.
+- **Air-Gapped Browser Bridge**: Optional local companion extension to capture active media from authenticated browser pages without ever exporting or reading cookies, session tokens, or passwords.
 
 ## Install
 
@@ -50,13 +58,41 @@ Application data is stored in the OS user-data directory. Set `JANECONVERTER_DAT
 
 ## Usage
 
-Paste a supported URL or choose a local file, select the output settings, then start the conversion. The desktop app includes playlist selection, a converted-library browser, live logs, diagnostics, and abort controls.
+Paste a supported URL or choose a local file (or drag and drop files / links directly into the source box), select your desired output settings or 1-click preset, then start the conversion. The desktop app includes playlist selection, a sequential batch queue, a converted-library browser, live logs, diagnostics, and instant abort controls.
 
-Spotify and Apple Music links provide public catalog metadata. JaneConverter does not download protected subscription audio directly.
+Spotify and Apple Music links provide public catalog metadata matching. JaneConverter does not download protected DRM-subscription audio directly.
 
-Use **Create Access Link** only for media your signed-in account is authorized to access. The optional [Browser Bridge](browser-extension/README.md) is available to source-checkout users and is not bundled in production packages.
+Browser-captured files appear in the **Fetched Media.** tab and are saved in the configured fetched-media folder. The default is a `fetched` folder beside the converted library; clearing access ends the browser session without deleting those files. Each item supports **Open file**, **Open path**, **Use for conversion**, and **Discard**.
 
-Browser-captured files appear in the **Fetched Media** tab and are saved in the configured fetched-media folder. The default is a etched folder beside the converted library; clearing access ends the browser session without deleting those files. Each item supports **Open file**, **Open path**, **Use for conversion**, and **Discard**. **Capture story sequence** remains experimental because story viewers can change their media identifiers and expose unrelated page assets.
+## Browser Extension (Local Installation Guide)
+
+The **JaneConverter Browser Bridge** is an optional companion extension that lets you capture active audio and video streams from browser tabs directly into the JaneConverter desktop inbox.
+
+> [!NOTE]
+> **Privacy First & Air-Gapped**: The extension is strictly local and runs entirely on your machine. It **never** reads, exports, or stores your cookies, login tokens, browsing history, or passwords. It only forwards direct media stream URLs to your local JaneConverter instance via an authenticated local loopback token.
+
+Because the extension is a local power-user tool and not distributed through the Chrome Web Store or Firefox Add-ons, install it manually in **under 60 seconds**:
+
+### Chromium-Based Browsers (Google Chrome, Microsoft Edge, Brave, Vivaldi, Opera)
+
+1. **Locate the Extension Folder**:
+   - In the JaneConverter repository or release package, locate the `browser-extension` folder.
+2. **Open Extensions Page**:
+   - **Google Chrome**: Navigate to `chrome://extensions`
+   - **Microsoft Edge**: Navigate to `edge://extensions`
+   - **Brave**: Navigate to `brave://extensions`
+   - **Vivaldi**: Navigate to `vivaldi://extensions`
+   - **Opera**: Navigate to `opera://extensions`
+3. **Enable Developer Mode**:
+   - Toggle the **Developer mode** switch (usually in the top-right corner).
+4. **Load the Extension**:
+   - Click the **Load unpacked** button (top-left).
+   - Select the `browser-extension` folder from Step 1.
+5. **Pin & Connect**:
+   - Pin the JaneConverter icon to your browser extensions toolbar.
+   - In the JaneConverter desktop app, click **Create Access Link** on the **Fetched Media.** tab (or go to **Settings** > **Browser Bridge**) to generate a pairing token.
+   - Click the extension icon in your browser to complete one-click pairing.
+   - Any video or audio stream captured in your browser can now be sent straight to your desktop queue!
 
 ## Command line
 
