@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { bridge, type AccessStatus, type ConverterEvent, type ConverterSettings, type FetchedMedia, type RuntimeInfo } from "./bridge";
 import { Sidebar, type ViewKey } from "./components/Sidebar";
-import { Topbar } from "./components/Topbar";
 import { ConverterView } from "./components/ConverterView";
 import { LibraryView } from "./components/LibraryView";
 import { ConsoleView } from "./components/ConsoleView";
@@ -188,13 +187,31 @@ export default function App() {
         : <SettingsView runtime={runtime} theme={theme} onToggleTheme={setTheme} onStatus={statusMessage} />;
 
   return (
-    <div data-theme={theme} onContextMenu={(event) => event.preventDefault()} className={`app-shell relative flex min-h-screen overflow-hidden ${theme === "light" ? "bg-[#fdf7fa] text-[#1f1222]" : "bg-[#02000a] text-zinc-200"}`}>
+    <div
+      data-theme={theme}
+      onContextMenu={(event) => event.preventDefault()}
+      className={`app-shell relative flex h-screen max-h-screen w-screen overflow-hidden ${
+        theme === "light" ? "bg-[#fdf7fa] text-[#1f1222]" : "bg-[#02000a] text-zinc-200"
+      }`}
+    >
       <div className="pointer-events-none absolute -left-32 -top-24 size-[460px] rounded-full bg-[#c52b68]/[0.055] blur-3xl ambient-orb" />
       <div className="pointer-events-none absolute -right-28 -top-36 h-[390px] w-[700px] rounded-full top-right-glow ambient-orb" style={{ animationDelay: "-6s" }} />
       <div className="pointer-events-none absolute right-0 top-16 h-px w-[58%] top-right-glow-line" />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,rgba(255,255,255,.018),transparent_35%)]" />
       <Sidebar activeView={activeView} onChange={setActiveView} />
-      <div className="relative flex min-w-0 flex-1 flex-col"><Topbar runtime={runtime} /><main className="min-h-0 flex-1 overflow-y-auto px-8 py-8"><motion.div key={activeView} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .25 }}>{content}</motion.div></main></div>
+      <div className="relative flex min-w-0 flex-1 flex-col h-full overflow-hidden">
+        <main className={`min-h-0 flex-1 px-8 py-6 ${activeView === "console" ? "flex flex-col overflow-hidden" : "overflow-y-auto"}`}>
+          <motion.div
+            key={activeView}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.2 }}
+            className={activeView === "console" ? "flex flex-col flex-1 min-h-0 h-full" : ""}
+          >
+            {content}
+          </motion.div>
+        </main>
+      </div>
     </div>
   );
 }

@@ -9,11 +9,44 @@
 }
 
 * { box-sizing: border-box; }
-html, body, #root { margin: 0; min-width: 1080px; min-height: 100vh; }
-body { overflow-x: hidden; background: #02000a; }
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  min-width: 960px;
+  overflow: hidden;
+}
+body {
+  overflow: hidden;
+  background: #02000a;
+  user-select: none;
+}
 button, input, select { font: inherit; }
 button { cursor: pointer; }
 ::selection { background: rgba(232, 44, 117, .28); color: #fff; }
+
+/* Custom sleek scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
+  border-radius: 9999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(197, 43, 104, 0.6);
+}
+[data-theme="light"] ::-webkit-scrollbar-thumb {
+  background: rgba(197, 43, 104, 0.25);
+}
+[data-theme="light"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(197, 43, 104, 0.65);
+}
 
 @keyframes ambient-drift {
   0%, 100% { transform: translate3d(0, 0, 0) scale(1); opacity: .28; }
