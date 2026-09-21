@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, ExternalLink, FolderOpen, HardDrive, Moon, Paintbrush, Palette, Pipette, RefreshCw, RotateCcw, RotateCw, Sun } from "lucide-react";
-import type { RuntimeInfo } from "../bridge";
+import { CheckCircle2, ExternalLink, FolderOpen, HardDrive, Paintbrush, Palette, Pipette, RefreshCw, RotateCcw, RotateCw } from "lucide-react";
+import type { RuntimeInfo, UpdateCheckResult } from "../bridge";
 import { bridge } from "../bridge";
 
 const ACCENT_PRESETS = [
@@ -27,26 +27,25 @@ const BG_PRESETS = [
 
 export function SettingsView({
   runtime,
-  theme = "dark",
   accentColor = "#c52b68",
   bgColor = "#02000a",
-  onToggleTheme,
   onAccentColorChange,
   onBgColorChange,
   onResetColors,
   onStatus,
 }: {
   runtime: RuntimeInfo | null;
-  theme?: "dark" | "light";
   accentColor?: string;
   bgColor?: string;
-  onToggleTheme?: (next: "dark" | "light") => void;
   onAccentColorChange?: (color: string) => void;
   onBgColorChange?: (color: string) => void;
   onResetColors?: () => void;
   onStatus: (message: string) => void;
 }) {
   const [checking, setChecking] = useState(false);
+  const [installing, setInstalling] = useState(false);
+  const [updateResult, setUpdateResult] = useState<UpdateCheckResult | null>(null);
+  const [updateDismissed, setUpdateDismissed] = useState(false);
   const [relaunching, setRelaunching] = useState(false);
   const [message, setMessage] = useState("");
   const [dataRootPath, setDataRootPath] = useState(runtime?.dataRoot ?? "");
@@ -102,15 +101,46 @@ export function SettingsView({
     setChecking(true);
     setMessage("Checking for updates...");
     try {
-      const nextMessage = await bridge.checkUpdates();
-      setMessage(nextMessage);
-      onStatus(nextMessage);
+      const result = await bridge.checkUpdates();
+      setUpdateResult(result);
+      setUpdateDismissed(false);
+      setMessage(result.message);
+      onStatus(result.message);
     } catch (error) {
       const nextMessage = error instanceof Error ? error.message : String(error);
       setMessage(nextMessage);
       onStatus(nextMessage);
     } finally {
       setChecking(false);
+    }
+  }
+
+  async function installUpdate() {
+    const repo = updateResult?.repo;
+    if (!repo?.has_update || !repo.installer_available || !repo.installer_url || !repo.installer_checksum_url || !repo.latest_version) {
+      const nextMessage = "This update cannot be installed automatically here. Open the published release to update manually.";
+      setMessage(nextMessage);
+      onStatus(nextMessage);
+      return;
+    }
+    setInstalling(true);
+    const nextMessage = `Downloading and verifying JaneConverter v${repo.latest_version}...`;
+    setMessage(nextMessage);
+    onStatus(nextMessage);
+    try {
+      await bridge.installUpdate({
+        installerUrl: repo.installer_url,
+        checksumUrl: repo.installer_checksum_url,
+        version: repo.latest_version,
+      });
+      setMessage("The update is ready. JaneConverter will close and reopen to finish installing it.");
+      onStatus("The JaneConverter update is being installed.");
+    } catch (error) {
+      const failure = error instanceof Error ? error.message : String(error);
+      setMessage(`The update could not be installed: ${failure}`);
+      onStatus(`The update could not be installed: ${failure}`);
+    } finally {
+      setInstalling(false);
     }
   }
 
@@ -141,18 +171,6 @@ export function SettingsView({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                const next = theme === "dark" ? "light" : "dark";
-                onToggleTheme?.(next);
-                onStatus(`Theme changed to ${next === "light" ? "White Pink" : "Dark Pink"}.`);
-              }}
-              className="subtle-button flex items-center gap-2 px-3.5 py-2 text-xs"
-            >
-              {theme === "light" ? <Moon className="size-3.5 text-zinc-600" /> : <Sun className="size-3.5 text-amber-400" />}
-              Switch to {theme === "light" ? "Dark Pink Theme" : "White Pink Theme"}
-            </button>
             <button
               type="button"
               onClick={() => {
@@ -242,7 +260,28 @@ export function SettingsView({
         </div>
       </section>
       <section className="panel flex flex-wrap items-center justify-between gap-4 p-5"><div><div className="text-sm text-zinc-200">Relaunch JaneConverter</div><div className="mt-1 text-xs text-zinc-600">Close this window and start the current desktop application again.</div></div><button type="button" disabled={relaunching} onClick={() => void relaunch()} className="subtle-button flex items-center gap-2 px-4 py-2 text-xs disabled:cursor-wait disabled:opacity-60"><RotateCw className={"size-3.5 " + (relaunching ? "animate-spin" : "")} /> {relaunching ? "Relaunching..." : "Relaunch now"}</button></section>
-      <section className="panel flex flex-wrap items-center justify-between gap-4 p-5"><div><div className="text-sm text-zinc-200">Check for updates</div><div className="mt-1 text-xs text-zinc-600">Checks the latest published JaneConverter release on GitHub and the extractor service. Nothing is installed silently.</div></div><button type="button" disabled={checking} onClick={() => void updates()} className="subtle-button flex items-center gap-2 px-4 py-2 text-xs"><RefreshCw className={`size-3.5 ${checking ? "animate-spin" : ""}`} /> {checking ? "Checking..." : "Check now"}</button></section>
+      <section className="panel space-y-4 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div><div className="text-sm text-zinc-200">Check for updates</div><div className="mt-1 text-xs text-zinc-600">Checks the latest published JaneConverter release on GitHub and the extractor service. Nothing is installed until you choose Update now.</div></div>
+          <button type="button" disabled={checking || installing} onClick={() => void updates()} className="subtle-button flex items-center gap-2 px-4 py-2 text-xs disabled:cursor-wait disabled:opacity-60"><RefreshCw className={`size-3.5 ${checking ? "animate-spin" : ""}`} /> {checking ? "Checking..." : "Check now"}</button>
+        </div>
+        {updateResult?.repo?.has_update && !updateDismissed && (
+          <div className="rounded-xl border border-[var(--accent-color,#c52b68)]/30 bg-[var(--accent-color,#c52b68)]/[0.06] p-4" role="region" aria-label="JaneConverter application update">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0">
+                <div className="text-sm font-medium text-zinc-100">JaneConverter v{updateResult.repo.latest_version} is available</div>
+                <p className="mt-1 max-w-xl text-xs leading-relaxed text-zinc-400">Download and verify the update, then JaneConverter will restart to finish installing it. Your files and settings stay in place.</p>
+                {!updateResult.repo.installer_available && <p className="mt-2 text-xs text-amber-300">An automatic installer is not available for this package. Open the published release to update manually.</p>}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {updateResult.repo.installer_available ? <button type="button" disabled={installing} onClick={() => void installUpdate()} className="primary-button flex items-center gap-2 px-3 py-2 text-xs disabled:cursor-wait disabled:opacity-60"><RefreshCw className={`size-3.5 ${installing ? "animate-spin" : ""}`} /> {installing ? "Installing..." : "Update now"}</button> : null}
+                {updateResult.repo.release_url ? <button type="button" onClick={() => void bridge.openUrl(updateResult.repo?.release_url ?? "")} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs"><ExternalLink className="size-3.5" /> Open release</button> : null}
+                <button type="button" disabled={installing} onClick={() => { setUpdateDismissed(true); setMessage("Update dismissed. You can check again anytime."); }} className="subtle-button px-3 py-2 text-xs disabled:opacity-60">Not now</button>
+              </div>
+            </div>
+          </div>
+        )}
+      </section>
       <div className={`rounded-lg border px-3 py-2 text-[11px] ${message ? "border-[#3b82f6]/15 bg-[#3b82f6]/[0.04] text-zinc-300" : "border-transparent text-zinc-600"}`} role="status" aria-live="polite">{message || "Update and relaunch results appear here."}</div>
       <div className="flex items-center gap-2 text-[11px] text-zinc-700"><ExternalLink size={12} /> {runtime?.packaged ? "Application data uses your OS user-data directory." : "Project-local storage is the default."} User-selected folders are always respected.</div>
     </div>

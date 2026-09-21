@@ -131,6 +131,47 @@ def test_published_release_check_finds_newer_github_version_and_installer(monkey
     assert requested["kwargs"]["headers"]["User-Agent"].startswith("JaneConverter/")
 
 
+def test_application_update_downloads_and_verifies_the_installer(monkeypatch, tmp_path):
+    installer_bytes = b"trusted installer bytes"
+    checksum = __import__("hashlib").sha256(installer_bytes).hexdigest()
+
+    class FakeResponse:
+        def __init__(self, body):
+            self.status_code = 200
+            self.body = body
+
+        def iter_content(self, chunk_size=65536):
+            del chunk_size
+            yield self.body
+
+        @property
+        def text(self):
+            return self.body.decode("utf-8")
+
+        @property
+        def content(self):
+            return self.body
+
+    def fake_get(url, **kwargs):
+        del kwargs
+        if url.endswith(".sha256"):
+            return FakeResponse(f"{checksum}  JaneConverter-2.3.0-windows-x64-setup.exe\n".encode())
+        return FakeResponse(installer_bytes)
+
+    monkeypatch.setattr(updater.requests, "get", fake_get)
+    monkeypatch.setattr(updater.tempfile, "mkdtemp", lambda prefix: str(tmp_path))
+
+    result = updater.download_application_update({
+        "has_update": True,
+        "latest_version": "2.3.0",
+        "installer_url": "https://github.com/janecerys/JaneConverter/releases/download/v2.3.0/JaneConverter-2.3.0-windows-x64-setup.exe",
+        "installer_checksum_url": "https://github.com/janecerys/JaneConverter/releases/download/v2.3.0/JaneConverter-2.3.0-windows-x64-setup.exe.sha256",
+    })
+
+    assert result["success"] is True
+    assert Path(result["installer_path"]).read_bytes() == installer_bytes
+
+
 def test_non_git_snapshot_uses_published_release_check(monkeypatch):
     monkeypatch.setattr(updater, "is_git_repo", lambda: False)
     monkeypatch.setattr(updater, "check_for_release_updates", lambda **_: {

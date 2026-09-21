@@ -6,6 +6,7 @@ import { SettingsView } from "./SettingsView";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 const updateCheck = vi.hoisted(() => ({ run: vi.fn() }));
+const installUpdate = vi.hoisted(() => ({ run: vi.fn() }));
 const relaunch = vi.hoisted(() => ({ run: vi.fn() }));
 const chooseFolder = vi.hoisted(() => ({ run: vi.fn() }));
 const setDataRoot = vi.hoisted(() => ({ run: vi.fn() }));
@@ -13,6 +14,7 @@ const sourceRuntime = { mode: "tauri", pythonReady: true, ffmpegReady: true, ffm
 vi.mock("../bridge", () => ({
   bridge: {
     checkUpdates: updateCheck.run,
+    installUpdate: installUpdate.run,
     relaunch: relaunch.run,
     chooseFolder: chooseFolder.run,
     setDataRoot: setDataRoot.run,
@@ -22,7 +24,8 @@ vi.mock("../bridge", () => ({
 describe("Settings updates", () => {
   beforeEach(() => {
     updateCheck.run.mockReset();
-    updateCheck.run.mockResolvedValue("Update check complete. JaneConverter is up to date.");
+    installUpdate.run.mockReset();
+    updateCheck.run.mockResolvedValue({ message: "Update check complete. JaneConverter is up to date." });
     relaunch.run.mockResolvedValue(undefined);
     chooseFolder.run.mockReset();
     setDataRoot.run.mockReset();
@@ -45,6 +48,56 @@ describe("Settings updates", () => {
     });
 
     expect(container.querySelector('[role="status"]')?.textContent).toContain("Update check complete");
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+
+  it("lets the user dismiss an application update and check again", async () => {
+    const available = {
+      message: "Update check complete. JaneConverter update available: v2.2.0 -> v2.3.0.",
+      repo: {
+        has_update: true,
+        current_version: "2.2.0",
+        latest_version: "2.3.0",
+        installer_available: true,
+        installer_url: "https://github.com/janecerys/JaneConverter/releases/download/v2.3.0/JaneConverter-2.3.0-windows-x64-setup.exe",
+        installer_checksum_url: "https://github.com/janecerys/JaneConverter/releases/download/v2.3.0/JaneConverter-2.3.0-windows-x64-setup.exe.sha256",
+        release_url: "https://github.com/janecerys/JaneConverter/releases/tag/v2.3.0",
+      },
+    };
+    updateCheck.run.mockReset();
+    updateCheck.run.mockResolvedValue(available);
+    installUpdate.run.mockResolvedValue(undefined);
+
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+    await act(async () => { root.render(<SettingsView runtime={sourceRuntime} onStatus={vi.fn()} />); });
+
+    const check = () => Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Check now"));
+    await act(async () => { check()?.click(); await Promise.resolve(); });
+    expect(container.textContent).toContain("JaneConverter v2.3.0 is available");
+    expect(container.textContent).toContain("Update now");
+    expect(container.textContent).toContain("Not now");
+
+    await act(async () => {
+      Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Not now")?.click();
+      await Promise.resolve();
+    });
+    expect(container.textContent).not.toContain("JaneConverter v2.3.0 is available");
+
+    await act(async () => { check()?.click(); await Promise.resolve(); });
+    expect(container.textContent).toContain("Update now");
+    await act(async () => {
+      Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === "Update now")?.click();
+      await Promise.resolve();
+    });
+    expect(installUpdate.run).toHaveBeenCalledWith({
+      installerUrl: available.repo.installer_url,
+      checksumUrl: available.repo.installer_checksum_url,
+      version: available.repo.latest_version,
+    });
 
     await act(async () => { root.unmount(); });
     container.remove();
@@ -120,32 +173,6 @@ describe("Settings updates", () => {
     container.remove();
   });
 
-  it("toggles interface theme between dark and white pink", async () => {
-    const onToggleTheme = vi.fn();
-    const onStatus = vi.fn();
-    const container = document.createElement("div");
-    document.body.appendChild(container);
-    const root = createRoot(container);
-
-    await act(async () => {
-      root.render(<SettingsView runtime={sourceRuntime} theme="dark" onToggleTheme={onToggleTheme} onStatus={onStatus} />);
-    });
-
-    const themeButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("White Pink Theme"));
-    expect(themeButton).toBeDefined();
-
-    await act(async () => {
-      themeButton?.click();
-      await Promise.resolve();
-    });
-
-    expect(onToggleTheme).toHaveBeenCalledWith("light");
-    expect(onStatus).toHaveBeenCalledWith("Theme changed to White Pink.");
-
-    await act(async () => { root.unmount(); });
-    container.remove();
-  });
-
   it("triggers accent and background color changes from pickers and reset button", async () => {
     const onAccentColorChange = vi.fn();
     const onBgColorChange = vi.fn();
@@ -158,7 +185,6 @@ describe("Settings updates", () => {
       root.render(
         <SettingsView
           runtime={sourceRuntime}
-          theme="dark"
           accentColor="#c52b68"
           bgColor="#02000a"
           onAccentColorChange={onAccentColorChange}

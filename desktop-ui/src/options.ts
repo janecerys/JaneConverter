@@ -32,9 +32,23 @@ export interface IntentPreset {
   resolution: string;
   normalize: boolean;
   useGpu: boolean;
+  preserveQuality?: boolean;
 }
 
 export const intentPresets: IntentPreset[] = [
+  {
+    id: "preserve-quality",
+    name: "Preserve Quality",
+    description: "Keep the selected format and skip quality-changing processing; use lossless stream copy when compatible",
+    category: "Miscellaneous",
+    format: "source",
+    bitrate: "best",
+    sampleRate: 48000,
+    resolution: "original",
+    normalize: false,
+    useGpu: false,
+    preserveQuality: true,
+  },
   {
     id: "studio-master",
     name: "Studio Master",

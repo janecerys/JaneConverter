@@ -33,7 +33,7 @@ from .converter import (
     SUPPORTED_VIDEO_FORMATS,
     get_best_hardware_encoder
 )
-from .updater import check_for_engine_updates, check_for_repo_updates
+from .updater import check_for_engine_updates, check_for_repo_updates, download_application_update
 from .version import __version__
 from .paths import DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR
 from .auth import normalize_browser_session
@@ -806,6 +806,10 @@ def main():
     parser.add_argument("--browser-media-path", help=argparse.SUPPRESS)
     parser.add_argument("--no-update", action="store_true", help="Skip the read-only yt-dlp update availability check on startup")
     parser.add_argument("--check-updates", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--download-update", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--update-url", help=argparse.SUPPRESS)
+    parser.add_argument("--update-checksum-url", help=argparse.SUPPRESS)
+    parser.add_argument("--update-version", help=argparse.SUPPRESS)
     parser.add_argument("--version", action="version", version=f"JaneConverter {__version__}")
 
     args = parser.parse_args()
@@ -814,6 +818,17 @@ def main():
             "engine": check_for_engine_updates(),
             "repo": check_for_repo_updates(),
         }))
+        return
+    if args.download_update:
+        result = download_application_update({
+            "has_update": True,
+            "latest_version": args.update_version,
+            "installer_url": args.update_url,
+            "installer_checksum_url": args.update_checksum_url,
+        })
+        print(json.dumps(result))
+        if not result.get("success"):
+            sys.exit(1)
         return
     if not args.source:
         parser.error("the following arguments are required: --source/-s")

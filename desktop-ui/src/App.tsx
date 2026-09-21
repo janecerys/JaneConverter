@@ -88,15 +88,6 @@ export default function App() {
     } catch {}
   }, [theme, accentColor, bgColor]);
 
-  function handleToggleTheme(next: "dark" | "light") {
-    setTheme(next);
-    if (next === "light") {
-      setBgColor("#fdf7fa");
-    } else {
-      setBgColor("#02000a");
-    }
-  }
-
   function handleAccentChange(color: string) {
     setAccentColor(color);
   }
@@ -177,7 +168,8 @@ export default function App() {
   useEffect(() => {
     let mounted = true;
     const timer = window.setTimeout(() => {
-      void bridge.checkUpdates().then((message) => {
+      void bridge.checkUpdates().then((result) => {
+        const message = result.message;
         if (!mounted || !/update available|check unavailable/i.test(message)) return;
         setStatus(message);
         setEvents((current) => [...current.slice(-1499), { jobId: "ui", kind: "status", message }]);
@@ -261,10 +253,8 @@ export default function App() {
         : (
           <SettingsView
             runtime={runtime}
-            theme={theme}
             accentColor={accentColor}
             bgColor={bgColor}
-            onToggleTheme={handleToggleTheme}
             onAccentColorChange={handleAccentChange}
             onBgColorChange={handleBgChange}
             onResetColors={handleResetColors}

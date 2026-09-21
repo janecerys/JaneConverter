@@ -317,14 +317,14 @@ fn http_response(
         .unwrap_or_default();
     format!(
         "HTTP/1.1 {status} {reason}\r\nContent-Type: {content_type}\r\nCache-Control: no-store\r\nContent-Security-Policy: default-src 'none'; style-src 'unsafe-inline'\r\nX-Content-Type-Options: nosniff\r\nX-Frame-Options: DENY\r\nReferrer-Policy: no-referrer\r\n{cors_headers}Content-Length: {}\r\nConnection: close\r\n\r\n{}",
-        body.as_bytes().len(),
+        body.len(),
         body,
     )
 }
 
 fn access_page(title: &str, content: &str) -> String {
     format!(
-        r#"<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>{title}</title><style>body{{background:#080711;color:#ededed;font:16px Segoe UI,Arial,sans-serif;max-width:640px;margin:12vh auto;padding:0 24px;line-height:1.55}}h1{{font-size:28px}}a{{color:#93c5fd}}.primary,.confirm{{display:inline-block;padding:11px 16px;border-radius:8px;color:#fff;text-decoration:none;margin:4px 8px 4px 0}}.primary{{background:#1f5fae}}.confirm{{background:#b3265f}}.note{{color:#9ca3af;font-size:13px}}</style></head><body><h1>{title}</h1>{content}</body></html>"#
+        r#"<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>{title}</title><style>body{{background:#080711;color:#ededed;font:16px/1.6 Segoe UI,Arial,sans-serif;max-width:720px;margin:8vh auto;padding:0 24px}}.eyebrow{{color:#d54b86;font-size:12px;font-weight:700;letter-spacing:.12em;text-transform:uppercase}}h1{{font-size:32px;line-height:1.15;margin:10px 0 12px}}h2{{font-size:17px;margin:0 0 8px}}p{{margin:0 0 14px}}.lead{{color:#d4d0da;font-size:17px;max-width:650px}}.card{{background:#110d1a;border:1px solid #2a2031;border-radius:14px;padding:20px;margin:22px 0}}.steps{{margin:12px 0 0;padding-left:22px;color:#d4d0da}}.steps li{{padding:4px 0}}.privacy{{border-left:3px solid #b3265f;padding:2px 0 2px 14px;color:#aaa3b3;font-size:14px}}a{{color:#b9d9ff}}.actions{{display:flex;flex-wrap:wrap;gap:10px;margin-top:22px}}.primary,.confirm{{display:inline-block;padding:11px 16px;border-radius:8px;color:#fff;text-decoration:none}}.primary{{background:#1f5fae}}.confirm{{background:#b3265f}}.primary:hover,.confirm:hover{{filter:brightness(1.12)}}.note{{color:#9ca3af;font-size:13px;margin-top:18px}}</style></head><body>{content}</body></html>"#
     )
 }
 
@@ -536,9 +536,7 @@ fn record_diagnostic(
     Ok(())
 }
 
-fn serve(
-    listener: TcpListener,
-    token: String,
+struct ServeState {
     source: Arc<Mutex<Option<String>>>,
     default_browser: Option<String>,
     browser: Arc<Mutex<Option<String>>>,
@@ -547,7 +545,19 @@ fn serve(
     capture_state: Arc<Mutex<CaptureState>>,
     capture_root: PathBuf,
     stop: Arc<AtomicBool>,
-) {
+}
+
+fn serve(listener: TcpListener, token: String, state: ServeState) {
+    let ServeState {
+        source,
+        default_browser,
+        browser,
+        confirmed,
+        bridge_nonce,
+        capture_state,
+        capture_root,
+        stop,
+    } = state;
     let _ = listener.set_nonblocking(true);
     while !stop.load(Ordering::Relaxed) {
         match listener.accept() {
@@ -996,12 +1006,12 @@ fn serve(
                     let source_url = source.lock().ok().and_then(|value| value.clone());
                     let content = if let Some(source_url) = source_url {
                         format!(
-                            r#"<p>Use this temporary page in the browser whose session you want to use. JaneConverter only receives media you explicitly capture with the Browser Capture extension. It never reads or stores passwords, cookies, cache, or browser profile data.</p><ol><li>Open the source page below.</li><li>Sign in normally if needed.</li><li>Return here and confirm access.</li></ol><p><a class="primary" href="{}" target="_blank" rel="noreferrer">Open source link</a></p><p><a class="confirm" href="/access/{token}/ready">I am signed in - confirm access</a></p><p class="note">The link expires when JaneConverter closes or access is cleared.</p>"#,
+                            r#"<div class="eyebrow">Temporary browser access</div><h1>JaneConverter account access</h1><p class="lead">Use this temporary page in the browser where the media session is already signed in. Browser Capture lets you send only the media you choose back to JaneConverter.</p><div class="card"><h2>How Browser Capture works</h2><ol class="steps"><li>Open the source page below and sign in normally if the site asks.</li><li>Return here and select <strong>Confirm Access</strong>.</li><li>On the media page, open the JaneConverter Browser Capture extension and choose <strong>Capture current media</strong> for one item or <strong>Capture story sequence</strong> for a sequence.</li><li>Return to JaneConverter. The selected media appears in <strong>Fetched Media</strong>, ready to convert.</li></ol></div><p class="privacy">Only media you explicitly capture is sent to JaneConverter. The extension does not read or store passwords, cookies, cache, or browser profile data. This temporary access ends when JaneConverter closes or access is cleared.</p><p class="actions"><a class="primary" href="{}" target="_blank" rel="noreferrer">Open source page</a><a class="confirm" href="/access/{token}/ready">Confirm Access</a></p><p class="note">Browser Capture is optional and is intended for private or browser-only media. Public URLs and local files can continue through the normal conversion flow.</p>"#,
                             html_escape(&source_url)
                         )
                     } else {
                         format!(
-                            r#"<p>Use this temporary page in the browser whose session you want to use. JaneConverter only receives media you explicitly capture with the Browser Capture extension. It never reads or stores passwords, cookies, cache, or browser profile data.</p><ol><li>Open the media page you want to capture in this browser.</li><li>Sign in normally if needed.</li><li>Return here and confirm access, then use the Browser Capture extension on the media page.</li></ol><p><a class="confirm" href="/access/{token}/ready">I am signed in - confirm access</a></p><p class="note">The first capture binds this temporary session to the media page's site. The link expires when JaneConverter closes or access is cleared.</p>"#
+                            r#"<div class="eyebrow">Temporary browser access</div><h1>JaneConverter account access</h1><p class="lead">Use this temporary page in the browser where the media session is already signed in. Browser Capture lets you send only the media you choose back to JaneConverter.</p><div class="card"><h2>How Browser Capture works</h2><ol class="steps"><li>Open the media page you want to capture and sign in normally if the site asks.</li><li>Return here and select <strong>Confirm Access</strong>.</li><li>On the media page, open the JaneConverter Browser Capture extension and choose <strong>Capture current media</strong> for one item or <strong>Capture story sequence</strong> for a sequence.</li><li>Return to JaneConverter. The selected media appears in <strong>Fetched Media</strong>, ready to convert.</li></ol></div><p class="privacy">Only media you explicitly capture is sent to JaneConverter. The extension does not read or store passwords, cookies, cache, or browser profile data. This temporary access ends when JaneConverter closes or access is cleared.</p><p class="actions"><a class="confirm" href="/access/{token}/ready">Confirm Access</a></p><p class="note">Browser Capture is optional and is intended for private or browser-only media. The first capture binds this temporary session to the media page's site.</p>"#
                         )
                     };
                     send_html(
@@ -1025,10 +1035,6 @@ fn serve(
             Err(_) => break,
         }
     }
-}
-
-pub fn create(source: &str, stamp: u128) -> Result<AccessServer, String> {
-    create_with_root(source, stamp, crate::paths::default_fetched_dir())
 }
 
 pub fn create_with_root(
@@ -1089,14 +1095,16 @@ pub fn create_with_root(
             serve(
                 listener,
                 token,
-                source_for_thread,
-                default_browser,
-                thread_browser,
-                thread_confirmed,
-                bridge_nonce,
-                thread_capture_state,
-                thread_capture_root,
-                thread_stop,
+                ServeState {
+                    source: source_for_thread,
+                    default_browser,
+                    browser: thread_browser,
+                    confirmed: thread_confirmed,
+                    bridge_nonce,
+                    capture_state: thread_capture_state,
+                    capture_root: thread_capture_root,
+                    stop: thread_stop,
+                },
             )
         }
     });

@@ -32,6 +32,31 @@ export interface ConverterSettings {
   retries: number;
 }
 
+export interface UpdateCheckResult {
+  message: string;
+  engine?: {
+    has_update?: boolean;
+    online?: boolean;
+    current_version?: string;
+    latest_version?: string;
+  };
+  repo?: {
+    has_update?: boolean;
+    current_version?: string;
+    latest_version?: string;
+    installer_available?: boolean;
+    installer_url?: string;
+    installer_checksum_url?: string;
+    release_url?: string;
+  };
+}
+
+export interface UpdateInstallRequest {
+  installerUrl: string;
+  checksumUrl: string;
+  version: string;
+}
+
 export interface ConversionRequest extends Omit<ConverterSettings, "fetchedDir"> {
   source: string;
   playlistIndexes?: string;
@@ -124,7 +149,8 @@ export interface JaneBridge {
   discardFetchedMedia(path: string): Promise<void>;
   clearAccessLink(): Promise<void>;
   relaunch(): Promise<void>;
-  checkUpdates(): Promise<string>;
+  checkUpdates(): Promise<UpdateCheckResult>;
+  installUpdate(update: UpdateInstallRequest): Promise<void>;
 }
 
 const demoSettings: ConverterSettings = {
@@ -173,7 +199,8 @@ const demoBridge: JaneBridge = {
   async discardFetchedMedia() {},
   async clearAccessLink() {},
   async relaunch() {},
-  async checkUpdates() { return "Preview mode: update checks are available in the desktop build."; },
+  async checkUpdates() { return { message: "Preview mode: update checks are available in the desktop build." }; },
+  async installUpdate() {},
 };
 
 const isTauriRuntime = () => "__TAURI_INTERNALS__" in window;
@@ -207,7 +234,8 @@ const tauriBridge: JaneBridge = {
   discardFetchedMedia: (path) => invoke<void>("discard_fetched_media", { path }),
   clearAccessLink: () => invoke<void>("clear_access_link"),
   relaunch: () => invoke<void>("relaunch"),
-  checkUpdates: () => invoke<string>("check_updates"),
+  checkUpdates: () => invoke<UpdateCheckResult>("check_updates"),
+  installUpdate: (update) => invoke<void>("install_update", { update }),
 };
 
 export const bridge: JaneBridge = isTauriRuntime() ? tauriBridge : demoBridge;

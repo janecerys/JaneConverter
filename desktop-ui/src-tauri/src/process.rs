@@ -59,13 +59,6 @@ pub fn terminate_child(child: &mut Child) {
     let _ = child.kill();
 }
 
-pub fn build_conversion_args(
-    request: &ConversionRequest,
-    browser: Option<String>,
-) -> Result<Vec<String>, String> {
-    build_conversion_args_with_capture(request, browser, None)
-}
-
 pub fn build_conversion_args_with_capture(
     request: &ConversionRequest,
     browser: Option<String>,
@@ -166,14 +159,18 @@ fn normalize_browser_session_arg(value: &str) -> Result<String, String> {
     ))
 }
 
+pub struct ConversionSlots {
+    pub child: Arc<Mutex<Option<Arc<Mutex<Child>>>>>,
+    pub cancel: Arc<Mutex<Option<Arc<AtomicBool>>>>,
+}
+
 pub fn start_conversion(
     app: tauri::AppHandle,
     job_id: String,
     request: ConversionRequest,
     browser: Option<String>,
     browser_media_path: Option<PathBuf>,
-    child_slot: Arc<Mutex<Option<Arc<Mutex<Child>>>>>,
-    cancel_slot: Arc<Mutex<Option<Arc<AtomicBool>>>>,
+    slots: ConversionSlots,
     output: impl FnOnce(i32, bool) + Send + 'static,
 ) -> Result<(), String> {
     let args = build_conversion_args_with_capture(&request, browser, browser_media_path)?;
@@ -195,10 +192,12 @@ pub fn start_conversion(
     let stderr = child.stderr.take();
     let child = Arc::new(Mutex::new(child));
     let cancel = Arc::new(AtomicBool::new(false));
-    *child_slot
+    *slots
+        .child
         .lock()
         .map_err(|_| "The conversion process slot is unavailable.")? = Some(Arc::clone(&child));
-    *cancel_slot
+    *slots
+        .cancel
         .lock()
         .map_err(|_| "The cancellation slot is unavailable.")? = Some(Arc::clone(&cancel));
     if let Some(reader) = stdout {
@@ -232,7 +231,7 @@ pub fn start_conversion(
         };
         let cancelled = cancel.load(Ordering::Relaxed);
         let code = status.code().unwrap_or(1);
-        let _ = output(code, cancelled);
+        output(code, cancelled);
         let (kind, message, progress) = if cancelled {
             ("cancelled", "Conversion cancelled.", None)
         } else if status.success() {
@@ -315,7 +314,7 @@ pub fn load_playlist(source: &str, browser: Option<String>) -> Result<PlaylistCa
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     prepare_command(&mut command);
-    let mut child = command
+    let child = command
         .spawn()
         .map_err(|error| format!("Could not start playlist loading: {error}"))?;
     let output = child
@@ -374,8 +373,8 @@ mod tests {
             browser_session: Some("Chrome".into()),
             browser_capture_path: None,
         };
-        let args =
-            build_conversion_args(&request, None).expect("display labels should be accepted");
+        let args = build_conversion_args_with_capture(&request, None, None)
+            .expect("display labels should be accepted");
         let flag = args
             .iter()
             .position(|value| value == "--browser-session")
@@ -437,8 +436,8 @@ mod tests {
             browser_session: None,
             browser_capture_path: None,
         };
-        let args =
-            build_conversion_args(&request, None).expect("public conversion should be valid");
+        let args = build_conversion_args_with_capture(&request, None, None)
+            .expect("public conversion should be valid");
         assert!(!args.iter().any(|value| value == "--browser-session"));
     }
 }

@@ -69,19 +69,22 @@ function SelectField({
   return (
     <label className="block min-w-0">
       <span className="mb-2 block text-[11px] font-medium text-zinc-500">{label}</span>
-      <select
-        aria-label={label}
-        disabled={disabled}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-        className="field w-full px-3 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {values.map((item) => (
-          <option key={item} value={item}>
-            {String(item)}
-          </option>
-        ))}
-      </select>
+      <span className="relative block">
+        <select
+          aria-label={label}
+          disabled={disabled}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          className="field w-full appearance-none px-3 py-2.5 pr-9 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {values.map((item) => (
+            <option key={item} value={item}>
+              {String(item)}
+            </option>
+          ))}
+        </select>
+        <ChevronDown aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 size-3.5 -translate-y-1/2 text-zinc-400" />
+      </span>
     </label>
   );
 }
@@ -149,6 +152,7 @@ export function ConverterView({
   const [loadingPlaylist, setLoadingPlaylist] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
   const [accessBusy, setAccessBusy] = useState(false);
   const [accessNotice, setAccessNotice] = useState("");
   const [accessNoticeTone, setAccessNoticeTone] = useState<"neutral" | "success" | "error">("neutral");
@@ -272,7 +276,10 @@ export function ConverterView({
     void onStart(targetItem.source);
   }, [queueRunning, running, queue, onStart, onStatus]);
 
-  const update = (patch: Partial<ConverterSettings>) => onSettings({ ...settings, ...patch });
+  const update = (patch: Partial<ConverterSettings>) => {
+    setSelectedPresetId(null);
+    onSettings({ ...settings, ...patch });
+  };
 
   function handleSourceInput(val: string) {
     setSource(val);
@@ -550,6 +557,17 @@ export function ConverterView({
   }
 
   function applyPreset(preset: IntentPreset) {
+    if (preset.preserveQuality) {
+      update({
+        resolution: "original",
+        normalize: false,
+        useGpu: false,
+        bitrate: qualitiesFor(activeFormat)[0],
+      });
+      setSelectedPresetId(preset.id);
+      onStatus(`Applied ${preset.name} preset: ${preset.description}.`);
+      return;
+    }
     update({
       category: preset.category,
       format: preset.format,
@@ -867,10 +885,11 @@ export function ConverterView({
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
             {intentPresets.map((preset) => {
-              const isSelected =
-                settings.category === preset.category &&
-                settings.format === preset.format &&
-                settings.bitrate === preset.bitrate;
+              const isSelected = preset.preserveQuality
+                ? selectedPresetId === preset.id
+                : settings.category === preset.category &&
+                  settings.format === preset.format &&
+                  settings.bitrate === preset.bitrate;
               return (
                 <button
                   key={preset.id}

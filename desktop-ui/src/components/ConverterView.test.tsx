@@ -88,6 +88,25 @@ describe("Converter account access feedback", () => {
     view.container.remove();
   });
 
+  it("offers a preserve-quality intent preset without changing the chosen format", async () => {
+    const view = renderView();
+    const button = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Preserve Quality");
+
+    expect(button).toBeDefined();
+    await act(async () => { button?.click(); await Promise.resolve(); });
+
+    expect(view.onSettings).toHaveBeenCalledWith(expect.objectContaining({
+      format: "mp3",
+      resolution: "original",
+      normalize: false,
+      useGpu: false,
+    }));
+    expect(view.onStatus).toHaveBeenCalledWith(expect.stringContaining("Applied Preserve Quality preset"));
+
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
   it("shows where the user is in the access handoff", async () => {
     const view = renderView();
     const input = view.container.querySelector<HTMLInputElement>('input[aria-label="Source media URL or local path"]');

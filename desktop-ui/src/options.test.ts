@@ -39,6 +39,10 @@ describe("converter option parity", () => {
     const image = intentPresets.find((p) => p.id === "lossless-image");
     expect(image?.format).toBe("png");
     expect(image?.bitrate).toBe("best");
+
+    const preserve = intentPresets.find((p) => p.id === "preserve-quality");
+    expect(preserve?.name).toBe("Preserve Quality");
+    expect(preserve?.preserveQuality).toBe(true);
   });
 
   it("detects media category accurately from file extensions", () => {

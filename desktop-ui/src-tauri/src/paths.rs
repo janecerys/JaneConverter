@@ -313,65 +313,6 @@ pub fn packaged_engine(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn recognizes_packaged_engine_names_on_release_platforms() {
-        assert!(packaged_engine(Path::new(
-            "runtime/engine/JaneConverterEngine"
-        )));
-        assert!(packaged_engine(Path::new(
-            "runtime/engine/JaneConverterEngine.exe"
-        )));
-        assert!(!packaged_engine(Path::new("uv")));
-    }
-
-    #[test]
-    fn resolves_ffmpeg_from_path_when_available() {
-        if find_executable_in_path(ffmpeg_name()).is_some() {
-            let resolved = find_ffmpeg();
-            assert!(resolved.is_absolute());
-            assert!(resolved.is_file());
-            assert!(command_available(resolved.to_str().unwrap_or("ffmpeg")));
-        }
-    }
-
-    #[test]
-    fn packaged_engine_lives_in_the_private_engine_directory() {
-        let root = Path::new("resources/runtime");
-        assert_eq!(
-            root.join("engine").join(packaged_engine_name()),
-            root.join("engine").join(if cfg!(target_os = "windows") {
-                "JaneConverterEngine.exe"
-            } else {
-                "JaneConverterEngine"
-            })
-        );
-    }
-
-    #[test]
-    fn resolves_runtime_beneath_a_macos_app_bundle() {
-        let executable_directory = Path::new("/Applications/JaneConverter.app/Contents/MacOS");
-        assert_eq!(
-            macos_bundle_runtime(executable_directory),
-            Some(PathBuf::from(
-                "/Applications/JaneConverter.app/Contents/Resources/runtime"
-            ))
-        );
-        assert_eq!(macos_bundle_runtime(Path::new("/opt/JaneConverter")), None);
-    }
-
-    #[test]
-    fn uses_macos_application_support_for_user_data() {
-        assert_eq!(
-            macos_user_data_root(Path::new("/Users/jane")),
-            PathBuf::from("/Users/jane/Library/Application Support/JaneConverter")
-        );
-    }
-}
-
 pub fn read_kv() -> HashMap<String, String> {
     let mut values = HashMap::new();
     if let Ok(content) = fs::read_to_string(settings_path()) {
@@ -504,4 +445,63 @@ pub fn write_settings(settings: &ConverterSettings) -> io::Result<()> {
     .map(|(key, value)| format!("{key}={value}\n"))
     .collect::<String>();
     fs::write(settings_path(), body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_packaged_engine_names_on_release_platforms() {
+        assert!(packaged_engine(Path::new(
+            "runtime/engine/JaneConverterEngine"
+        )));
+        assert!(packaged_engine(Path::new(
+            "runtime/engine/JaneConverterEngine.exe"
+        )));
+        assert!(!packaged_engine(Path::new("uv")));
+    }
+
+    #[test]
+    fn resolves_ffmpeg_from_path_when_available() {
+        if find_executable_in_path(ffmpeg_name()).is_some() {
+            let resolved = find_ffmpeg();
+            assert!(resolved.is_absolute());
+            assert!(resolved.is_file());
+            assert!(command_available(resolved.to_str().unwrap_or("ffmpeg")));
+        }
+    }
+
+    #[test]
+    fn packaged_engine_lives_in_the_private_engine_directory() {
+        let root = Path::new("resources/runtime");
+        assert_eq!(
+            root.join("engine").join(packaged_engine_name()),
+            root.join("engine").join(if cfg!(target_os = "windows") {
+                "JaneConverterEngine.exe"
+            } else {
+                "JaneConverterEngine"
+            })
+        );
+    }
+
+    #[test]
+    fn resolves_runtime_beneath_a_macos_app_bundle() {
+        let executable_directory = Path::new("/Applications/JaneConverter.app/Contents/MacOS");
+        assert_eq!(
+            macos_bundle_runtime(executable_directory),
+            Some(PathBuf::from(
+                "/Applications/JaneConverter.app/Contents/Resources/runtime"
+            ))
+        );
+        assert_eq!(macos_bundle_runtime(Path::new("/opt/JaneConverter")), None);
+    }
+
+    #[test]
+    fn uses_macos_application_support_for_user_data() {
+        assert_eq!(
+            macos_user_data_root(Path::new("/Users/jane")),
+            PathBuf::from("/Users/jane/Library/Application Support/JaneConverter")
+        );
+    }
 }

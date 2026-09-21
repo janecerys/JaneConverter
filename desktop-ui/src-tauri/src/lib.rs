@@ -13,15 +13,24 @@ use paths::{
 };
 use process::{
     load_playlist as load_playlist_engine, start_conversion as start_engine_conversion,
-    terminate_child,
+    terminate_child, ConversionSlots,
 };
 use rfd::FileDialog;
+use serde::Deserialize;
 use std::fs;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::State;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct UpdateInstallRequest {
+    installer_url: String,
+    checksum_url: String,
+    version: String,
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -279,8 +288,10 @@ fn start_conversion(
         request,
         browser,
         capture_path,
-        child_slot,
-        cancel_slot,
+        ConversionSlots {
+            child: child_slot,
+            cancel: cancel_slot,
+        },
         move |_code, _cancelled| {
             if let Ok(mut value) = child_slot_for_worker.lock() {
                 *value = None;
@@ -652,7 +663,7 @@ fn format_update_summary(stdout: &str) -> String {
     }
 }
 #[tauri::command]
-fn check_updates() -> Result<String, String> {
+fn check_updates() -> Result<serde_json::Value, String> {
     let engine = find_python();
     let mut command = Command::new(&engine);
     if !packaged_engine(&engine) {
@@ -672,7 +683,97 @@ fn check_updates() -> Result<String, String> {
     if !output.status.success() {
         return Err(if stderr.is_empty() { stdout } else { stderr });
     }
-    Ok(format_update_summary(&stdout))
+    let summary = format_update_summary(&stdout);
+    let mut payload = serde_json::from_str::<serde_json::Value>(&stdout)
+        .unwrap_or_else(|_| serde_json::json!({}));
+    if let Some(object) = payload.as_object_mut() {
+        object.insert("message".into(), serde_json::Value::String(summary));
+    }
+    Ok(payload)
+}
+
+#[tauri::command]
+fn install_update(app: tauri::AppHandle, update: UpdateInstallRequest) -> Result<(), String> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, update);
+        return Err(
+            "Automatic application updates are currently available only for Windows packages."
+                .into(),
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if update.installer_url.trim().is_empty()
+            || update.checksum_url.trim().is_empty()
+            || update.version.trim().is_empty()
+        {
+            return Err("The application update details are incomplete.".into());
+        }
+
+        let engine = find_python();
+        let mut command = Command::new(&engine);
+        if !packaged_engine(&engine) {
+            command.args(["run", "--locked", "janeconverter"]);
+        }
+        command.args([
+            "--no-update",
+            "--download-update",
+            "--update-url",
+            update.installer_url.trim(),
+            "--update-checksum-url",
+            update.checksum_url.trim(),
+            "--update-version",
+            update.version.trim(),
+        ]);
+        command
+            .current_dir(project_root())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        prepare_command(&mut command);
+        let output = command
+            .output()
+            .map_err(|error| format!("Could not start the application update: {error}"))?;
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        if !output.status.success() {
+            return Err(if stderr.is_empty() { stdout } else { stderr });
+        }
+        let result = serde_json::from_str::<serde_json::Value>(&stdout)
+            .map_err(|error| format!("The application update returned invalid data: {error}"))?;
+        if !result
+            .get("success")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false)
+        {
+            return Err(result
+                .get("error")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("The application update could not be verified.")
+                .to_owned());
+        }
+        let installer_path = result
+            .get("installer_path")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "The verified installer path was not returned.".to_owned())?;
+        let installer = PathBuf::from(installer_path);
+        if !installer.is_file()
+            || installer
+                .extension()
+                .and_then(|value| value.to_str())
+                .map(str::to_ascii_lowercase)
+                .as_deref()
+                != Some("exe")
+        {
+            return Err("The verified application installer could not be found.".into());
+        }
+        Command::new(&installer)
+            .spawn()
+            .map_err(|error| format!("Could not launch the verified installer: {error}"))?;
+        app.exit(0);
+        Ok(())
+    }
 }
 
 pub fn run() {
@@ -706,7 +807,8 @@ pub fn run() {
             discard_fetched_media,
             clear_access_link,
             relaunch,
-            check_updates
+            check_updates,
+            install_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running JaneConverter Desktop");
@@ -777,6 +879,6 @@ mod tests {
             browser_session: None,
             browser_capture_path: None,
         };
-        assert!(crate::process::build_conversion_args(&request, None).is_err());
+        assert!(crate::process::build_conversion_args_with_capture(&request, None, None).is_err());
     }
 }
