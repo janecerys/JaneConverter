@@ -2,12 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
+  Copy,
   ExternalLink,
   FileAudio,
   Folder,
   FolderInput,
   FolderOpen,
   ImageIcon,
+  Play,
   RefreshCw,
   Trash2,
   Video,
@@ -81,9 +83,36 @@ export function LibraryView({
   const [recentLoading, setRecentLoading] = useState(false);
   const [moving, setMoving] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; entry: LibraryEntry } | null>(null);
   const refreshSequence = useRef(0);
   const recentRefreshSequence = useRef(0);
   const cancelConfirmRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(null);
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setContextMenu(null);
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("contextmenu", close);
+    window.addEventListener("keydown", handleKey);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("contextmenu", close);
+      window.removeEventListener("keydown", handleKey);
+    };
+  }, [contextMenu]);
+
+  function handleContextMenu(e: React.MouseEvent, entry: LibraryEntry) {
+    e.preventDefault();
+    e.stopPropagation();
+    const menuWidth = 220;
+    const menuHeight = 220;
+    const x = Math.min(e.clientX, window.innerWidth - menuWidth - 12);
+    const y = Math.min(e.clientY, window.innerHeight - menuHeight - 12);
+    setContextMenu({ x, y, entry });
+  }
 
   useEffect(() => {
     if (!pendingAction) return;
@@ -349,7 +378,22 @@ export function LibraryView({
             ? entry.mediaCount + " media item" + (entry.mediaCount === 1 ? "" : "s") + " - " + size(entry.totalBytes)
             : entry.extension + " - " + size(entry.totalBytes);
           return (
-            <motion.div key={entry.path} initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="panel flex flex-wrap items-center gap-3 px-4 py-3">
+            <motion.div
+              key={entry.path}
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              whileHover={{ scale: 1.002 }}
+              whileTap={{ scale: 0.998 }}
+              onClick={() => {
+                if (entry.isDirectory) {
+                  navigate(entry.path);
+                } else {
+                  void openFile(entry.path);
+                }
+              }}
+              onContextMenu={(e) => handleContextMenu(e, entry)}
+              className="panel group relative flex flex-wrap items-center gap-3 px-4 py-3 cursor-pointer select-none transition-all duration-150 hover:border-pink-500/30 hover:bg-white/[0.04] active:bg-white/[0.06]"
+            >
               <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl border border-white/[0.07] bg-black/15 text-zinc-500">
                 {preview ? (
                   <img
@@ -365,25 +409,58 @@ export function LibraryView({
                 )}
               </div>
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm text-zinc-300">{entry.name}</div>
+                <div className="truncate text-sm text-zinc-300 group-hover:text-white transition-colors">{entry.name}</div>
                 <div className="mt-1 text-[11px] text-zinc-600">{details}{entry.isPlaylist ? " - playlist" : ""}</div>
                 {section === "recent" && <div className="mt-1 truncate font-mono text-[10px] text-zinc-700">{parentPath(entry.path)}</div>}
               </div>
               {entry.isDirectory ? (
-                <button type="button" onClick={() => navigate(entry.path)} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs">
-                  <FolderOpen className="size-3.5" /> Open
+                <button
+                  type="button"
+                  aria-label={"Open " + entry.name}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    navigate(entry.path);
+                  }}
+                  className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors hover:border-pink-500/40"
+                >
+                  <FolderOpen className="size-3.5 text-pink-400" /> Open
                 </button>
               ) : (
-                <div className="flex flex-wrap gap-2">
-                  <button type="button" aria-label={"Open " + entry.name} onClick={() => void openFile(entry.path)} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs">
-                    <ExternalLink className="size-3.5" /> Open
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    aria-label={"Open " + entry.name}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void openFile(entry.path);
+                    }}
+                    className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors hover:border-pink-500/40"
+                  >
+                    <Play className="size-3 text-pink-400" /> Open
                   </button>
-                  <button type="button" aria-label={"Show " + entry.name + " in folder"} onClick={() => void openPath(entry.path)} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs">
+                  <button
+                    type="button"
+                    aria-label={"Show " + entry.name + " in folder"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void openPath(entry.path);
+                    }}
+                    className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
+                  >
                     <FolderOpen className="size-3.5" /> Show file
                   </button>
                 </div>
               )}
-              <button type="button" onClick={() => remove(entry)} className="grid size-8 place-items-center rounded-lg text-zinc-600 transition-colors hover:bg-red-500/10 hover:text-red-300" aria-label={"Delete " + entry.name}>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  remove(entry);
+                }}
+                className="grid size-8 place-items-center rounded-lg text-zinc-600 transition-colors hover:bg-red-500/10 hover:text-red-300"
+                aria-label={"Delete " + entry.name}
+                title={"Delete " + entry.name}
+              >
                 <Trash2 size={14} />
               </button>
             </motion.div>
@@ -396,6 +473,102 @@ export function LibraryView({
           </div>
         )}
       </section>
+
+      {contextMenu && (
+        <div
+          style={{
+            position: "fixed",
+            left: `${contextMenu.x}px`,
+            top: `${contextMenu.y}px`,
+            zIndex: 9999,
+          }}
+          className="context-menu min-w-[210px] rounded-xl border border-white/[0.12] bg-[#0c0914]/95 p-1.5 shadow-2xl shadow-black/80 backdrop-blur-md animate-in fade-in zoom-in-95 duration-100"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <div className="border-b border-white/[0.06] px-3 py-2">
+            <div className="truncate text-xs font-semibold text-white">{contextMenu.entry.name}</div>
+            <div className="text-[10px] text-zinc-500">
+              {contextMenu.entry.isDirectory ? "Folder" : `${contextMenu.entry.extension} File`}
+            </div>
+          </div>
+
+          <div className="mt-1 space-y-0.5">
+            {contextMenu.entry.isDirectory ? (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigate(contextMenu.entry.path);
+                    setContextMenu(null);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-zinc-200 transition-colors hover:bg-pink-500/15 hover:text-pink-200"
+                >
+                  <FolderOpen size={13} className="text-pink-400" /> Open folder
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void openPath(contextMenu.entry.path);
+                    setContextMenu(null);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-zinc-200 transition-colors hover:bg-white/[0.06]"
+                >
+                  <ExternalLink size={13} className="text-zinc-400" /> Show in File Explorer
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void openFile(contextMenu.entry.path);
+                    setContextMenu(null);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-zinc-200 transition-colors hover:bg-pink-500/15 hover:text-pink-200"
+                >
+                  <Play size={13} className="text-pink-400" /> Open / Play file
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    void openPath(contextMenu.entry.path);
+                    setContextMenu(null);
+                  }}
+                  className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-zinc-200 transition-colors hover:bg-white/[0.06]"
+                >
+                  <FolderOpen size={13} className="text-zinc-400" /> Show in File Explorer
+                </button>
+              </>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                void navigator.clipboard.writeText(contextMenu.entry.path);
+                onStatus(`Copied path for ${contextMenu.entry.name}`);
+                setContextMenu(null);
+              }}
+              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-zinc-200 transition-colors hover:bg-white/[0.06]"
+            >
+              <Copy size={13} className="text-zinc-400" /> Copy full path
+            </button>
+
+            <div className="my-1 border-t border-white/[0.06]" />
+
+            <button
+              type="button"
+              onClick={() => {
+                const target = contextMenu.entry;
+                setContextMenu(null);
+                remove(target);
+              }}
+              className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-xs text-red-400 transition-colors hover:bg-red-500/15 hover:text-red-300"
+            >
+              <Trash2 size={13} /> {contextMenu.entry.isDirectory ? "Delete folder" : "Delete file"}
+            </button>
+          </div>
+        </div>
+      )}
 
       {pendingAction && confirmation && (
         <motion.div

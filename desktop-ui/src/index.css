@@ -163,3 +163,18 @@ button { cursor: pointer; }
 [data-theme="light"] .top-right-glow-line {
   background: linear-gradient(90deg, transparent, rgba(236, 72, 153, 0.12), rgba(236, 72, 153, 0.35)) !important;
 }
+
+[data-theme="light"] .context-menu {
+  background: #ffffff !important;
+  border-color: rgba(197, 43, 104, 0.22) !important;
+  box-shadow: 0 10px 30px -4px rgba(197, 43, 104, 0.18), 0 4px 12px rgba(0, 0, 0, 0.06) !important;
+}
+
+[data-theme="light"] .context-menu button {
+  color: #3b223a !important;
+}
+
+[data-theme="light"] .context-menu button:hover {
+  background: #fdf2f7 !important;
+  color: #c52b68 !important;
+}
