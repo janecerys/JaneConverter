@@ -10,9 +10,15 @@ import os
 import filecmp
 import shutil
 import tempfile
+from pathlib import Path
 
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_source_root = Path(__file__).resolve().parents[2]
+BASE_DIR = str(
+    _source_root
+    if (_source_root / "pyproject.toml").is_file()
+    else Path(__file__).resolve().parents[1]
+)
 _local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
 LEGACY_APP_DATA_DIR = os.path.join(_local_app_data, "JaneConverter") if _local_app_data else ""
 

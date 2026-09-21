@@ -21,22 +21,22 @@ if sys.stdout is not None and hasattr(sys.stdout, "encoding") and sys.stdout.enc
     except Exception:
         pass
 
-from engine.extractor import (
+from .extractor import (
     is_url, sanitize_filename, fetch_media_stream,
     is_playlist_url, fetch_playlist_entries, download_and_convert_thumbnail, format_duration,
     identify_source_type
 )
-from engine.converter import (
+from .converter import (
     convert_media,
     SUPPORTED_AUDIO_FORMATS,
     SUPPORTED_VIDEO_FORMATS,
     get_best_hardware_encoder
 )
-from engine.updater import check_for_engine_updates, check_for_repo_updates
-from engine.version import __version__
-from engine.paths import DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR
-from engine.auth import normalize_browser_session
-from engine.browser_bridge import (
+from .updater import check_for_engine_updates, check_for_repo_updates
+from .version import __version__
+from .paths import DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR
+from .auth import normalize_browser_session
+from .browser_bridge import (
     CookieBridgeError,
     read_cookie_jar_from_stdin,
     set_active_browser_cookie_jar,
@@ -763,7 +763,7 @@ def validate_cli_args(args, parser: argparse.ArgumentParser):
 
     return fmt, bitrate
 
-def main():
+def _run_cli():
     parser = argparse.ArgumentParser(description="JaneConverter: Universal Media Downloader & Converter")
     parser.add_argument("--source", "-s", help="Media URL (YouTube, Spotify, Apple Music, SoundCloud, TikTok, Twitter, etc.) or local file path")
     parser.add_argument("--format", "-f", default="mp3", help=f"Target output format ({', '.join(CLI_FORMATS)})")
@@ -899,12 +899,17 @@ def main():
             auth_browser=args.browser_session
         )
 
-if __name__ == "__main__":
+def main():
+    """Run the command-line interface and translate expected failures to exit codes."""
     try:
-        main()
+        _run_cli()
     except KeyboardInterrupt:
         print("\n[!] Interrupted by user.")
         sys.exit(130)
     except (RuntimeError, ValueError, FileNotFoundError) as e:
         print(f"\n[!] Error: {e}")
         sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()

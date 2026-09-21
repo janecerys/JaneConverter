@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from engine.browser_bridge import CookieBridgeError, cookie_jar_from_payload, read_cookie_jar_from_stdin
+from janeconverter.browser_bridge import CookieBridgeError, cookie_jar_from_payload, read_cookie_jar_from_stdin
 
 
 def _payload(*cookies):

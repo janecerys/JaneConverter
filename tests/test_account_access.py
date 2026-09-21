@@ -7,7 +7,7 @@ from urllib.request import Request, urlopen
 
 import pytest
 
-from engine.account_access import AccountAccessServer
+from janeconverter.account_access import AccountAccessServer
 
 
 def test_account_access_link_is_local_and_confirms_once():

@@ -74,12 +74,7 @@ pub fn build_conversion_args(
     let engine = find_python();
     let mut args = Vec::new();
     if !packaged_engine(&engine) {
-        args.push(
-            project_root()
-                .join("run_converter.py")
-                .display()
-                .to_string(),
-        );
+        args.extend(["run".into(), "--locked".into(), "janeconverter".into()]);
     }
     args.extend([
         "--source".into(),
@@ -312,7 +307,7 @@ pub fn load_playlist(
     let engine = find_python();
     let mut command = Command::new(&engine);
     if !packaged_engine(&engine) {
-        command.arg(project_root().join("run_converter.py"));
+        command.args(["run", "--locked", "janeconverter"]);
     }
     command.args(["--source", source.trim(), "--list-playlist", "--no-update"]);
     if let Some(browser) = browser.filter(|value| !value.trim().is_empty()) {

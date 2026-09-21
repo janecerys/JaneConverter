@@ -16,7 +16,7 @@ from typing import Callable, Optional
 from urllib.parse import urlparse
 import secrets
 
-from engine.auth import BrowserDetection, detect_browser_from_headers
+from .auth import BrowserDetection, detect_browser_from_headers
 
 
 MAX_BRIDGE_PAYLOAD_BYTES = 256 * 1024
@@ -215,7 +215,7 @@ class AccountAccessServer:
             self._send_json(handler, {"error": "The browser bridge challenge was invalid or expired."}, status=403, cors_origin=origin)
             return
         try:
-            from engine.browser_bridge import cookie_jar_from_payload
+            from .browser_bridge import cookie_jar_from_payload
 
             cookie_jar_from_payload(body, self.source_url)
             parsed = json.loads(body.decode("utf-8"))

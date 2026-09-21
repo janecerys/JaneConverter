@@ -4,9 +4,9 @@ import http.cookiejar
 
 import pytest
 
-import engine.auth as auth
-import engine.extractor as extractor
-from engine.auth import (
+import janeconverter.auth as auth
+import janeconverter.extractor as extractor
+from janeconverter.auth import (
     describe_authenticated_extraction_failure,
     detect_browser_from_headers,
     browser_session_label,

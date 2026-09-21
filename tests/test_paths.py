@@ -2,11 +2,13 @@
 
 import json
 import os
+from pathlib import Path
 
-from engine.paths import APP_DATA_DIR, BASE_DIR, DEFAULT_CONVERTED_DIR, _writable_directory, migrate_legacy_app_data
+from janeconverter.paths import APP_DATA_DIR, BASE_DIR, DEFAULT_CONVERTED_DIR, _writable_directory, migrate_legacy_app_data
 
 
 def test_portable_default_converted_folder_is_next_to_application():
+    assert (Path(BASE_DIR) / "pyproject.toml").is_file()
     assert os.path.normcase(DEFAULT_CONVERTED_DIR) == os.path.normcase(
         os.path.join(APP_DATA_DIR, "converted")
     )

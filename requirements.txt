@@ -1,7 +1,0 @@
-# JaneConverter runtime dependencies
-# Keep the extractor engine on the tested major release line. Availability checks
-# are read-only; upgrades happen only through an explicit, reviewed release flow.
-yt-dlp>=2025.1.0,<2027
-psutil>=5.9.0,<8
-pillow>=10.0.0,<13
-requests>=2.31.0,<3

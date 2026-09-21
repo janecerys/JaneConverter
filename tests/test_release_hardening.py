@@ -1,12 +1,17 @@
 """Regression tests for bounded events, source routing, and safe update defaults."""
 
 import os
+from pathlib import Path
 
-from engine.events import BoundedLogQueue, CoalescingCallbackQueue
-from engine.extractor import identify_source_type, is_playlist_url
-from engine import updater
-from engine.updater import check_and_apply_all_updates, update_engine
-from run_converter import media_library_folder, _metadata_folder
+from janeconverter.events import BoundedLogQueue, CoalescingCallbackQueue
+from janeconverter.extractor import identify_source_type, is_playlist_url
+from janeconverter import updater
+from janeconverter.updater import check_and_apply_all_updates, update_engine
+from janeconverter.cli import media_library_folder, _metadata_folder
+
+
+def test_source_updater_resolves_repository_root():
+    assert (Path(updater.REPO_DIR) / "pyproject.toml").is_file()
 
 
 def test_progress_queue_coalesces_and_bounds_callbacks():
@@ -51,10 +56,10 @@ def test_single_item_metadata_isolated_by_source(tmp_path):
 
 
 def test_updates_are_read_only_by_default(monkeypatch):
-    monkeypatch.setattr("engine.updater.check_for_engine_updates", lambda: {
+    monkeypatch.setattr("janeconverter.updater.check_for_engine_updates", lambda: {
         "has_update": False, "online": True, "current_version": "1", "latest_version": "1"
     })
-    monkeypatch.setattr("engine.updater.check_for_repo_updates", lambda: {
+    monkeypatch.setattr("janeconverter.updater.check_for_repo_updates", lambda: {
         "has_update": False, "is_git": False, "current_commit": "unknown", "commits_behind": 0
     })
     result = check_and_apply_all_updates()
@@ -65,9 +70,9 @@ def test_updates_are_read_only_by_default(monkeypatch):
 
 def test_engine_install_requires_explicit_permission(monkeypatch):
     def fail_if_called(*_args, **_kwargs):
-        raise AssertionError("pip must not run during a read-only update check")
+        raise AssertionError("the package installer must not run during a read-only update check")
 
-    monkeypatch.setattr("engine.updater.subprocess.run", fail_if_called)
+    monkeypatch.setattr("janeconverter.updater.subprocess.run", fail_if_called)
     result = update_engine(info={
         "has_update": True,
         "online": True,

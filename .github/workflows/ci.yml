@@ -25,6 +25,11 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
       - name: Install FFmpeg (Windows)
         if: runner.os == 'Windows'
         run: choco install ffmpeg -y --no-progress
@@ -38,19 +43,19 @@ jobs:
         run: brew install ffmpeg
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements-dev.txt
+        env:
+          UV_PYTHON: ${{ matrix.python-version }}
+        run: uv sync --locked
 
       - name: Lint with pyflakes
-        run: python -m pyflakes engine/ run_converter.py
+        run: uv run --locked pyflakes src/janeconverter packaging/engine_entry.py
 
       - name: Run hermetic test suite
-        run: python -m pytest tests/ -v
+        run: uv run --locked pytest tests/ -v
 
       - name: Run online tests (opt-in)
         if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch'
-        run: python -m pytest tests/ -m online -v
+        run: uv run --locked pytest tests/ -m online -v
 
   desktop:
     name: Desktop UI (${{ matrix.os }})

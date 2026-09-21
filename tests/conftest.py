@@ -2,12 +2,6 @@
 Shared test fixtures and helpers for the JaneConverter test suite.
 """
 
-import os
-import sys
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-
 class FakeResponse:
     """Minimal stand-in for requests.Response used by hermetic extractor tests."""
 

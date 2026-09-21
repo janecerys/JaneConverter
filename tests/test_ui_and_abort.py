@@ -1,15 +1,13 @@
 """Unit tests for conversion abort and retry behavior."""
 
 import os
-import sys
 import threading
 import pytest
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-import run_converter
+from janeconverter import cli
 
-from run_converter import process_conversion, process_playlist_conversion
-from engine.converter import convert_media
+from janeconverter.cli import process_conversion, process_playlist_conversion
+from janeconverter.converter import convert_media
 
 def test_process_conversion_aborts_immediately():
     abort_event = threading.Event()
@@ -45,8 +43,8 @@ def test_playlist_retry_operation_retries_with_bounded_attempts(monkeypatch):
             raise RuntimeError("temporary provider failure")
         return "ok"
 
-    monkeypatch.setattr(run_converter.time, "sleep", lambda _seconds: None)
-    result = run_converter._retry_operation(flaky_operation, "Test track", max_retries=2)
+    monkeypatch.setattr(cli.time, "sleep", lambda _seconds: None)
+    result = cli._retry_operation(flaky_operation, "Test track", max_retries=2)
 
     assert result == "ok"
     assert attempts == [1, 2, 3]

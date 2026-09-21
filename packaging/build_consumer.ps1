@@ -51,12 +51,12 @@ if (-not [Environment]::Is64BitOperatingSystem -or -not [Environment]::Is64BitPr
 }
 
 $engineVersion = [regex]::Match(
-    (Get-Content -Raw (Join-Path $repoRoot "engine\version.py")),
+    (Get-Content -Raw (Join-Path $repoRoot "src\janeconverter\version.py")),
     '__version__\s*=\s*"([^"]+)"'
 ).Groups[1].Value
-if (-not $engineVersion) { throw "Could not determine the version from engine/version.py." }
+if (-not $engineVersion) { throw "Could not determine the version from src/janeconverter/version.py." }
 if ($Version -and $Version -ne $engineVersion) {
-    throw "Requested version $Version does not match engine/version.py ($engineVersion)."
+    throw "Requested version $Version does not match src/janeconverter/version.py ($engineVersion)."
 }
 $Version = $engineVersion
 
@@ -79,17 +79,15 @@ foreach ($artifact in @($installerOutput, "$installerOutput.sha256", $portableOu
 }
 New-Item -ItemType Directory -Path $runtimeEngine,$runtimeBin,$pyinstallerRoot -Force | Out-Null
 
-$python = Join-Path $repoRoot ".venv\Scripts\python.exe"
-if (-not (Test-Path -LiteralPath $python -PathType Leaf)) {
-    $python = Resolve-Tool "" "python.exe" "Python"
-}
+$uv = Resolve-Tool "" "uv.exe" "uv"
 $ffmpeg = Resolve-Tool $FFmpegPath "ffmpeg.exe" "FFmpeg"
 $ffprobe = Resolve-Tool $FFprobePath "ffprobe.exe" "FFprobe"
 $node = Resolve-Tool $NodePath "node.exe" "Node.js"
 $npm = Resolve-Tool "" "npm.cmd" "npm"
 $cargo = Resolve-Tool "" "cargo.exe" "Rust/Cargo"
 
-Invoke-Checked { & $python -m PyInstaller --version | Out-Null } "PyInstaller validation"
+Invoke-Checked { & $uv sync --locked --python 3.12 } "Locked Python environment sync"
+Invoke-Checked { & $uv run --locked pyinstaller --version | Out-Null } "PyInstaller validation"
 Invoke-Checked { & $ffmpeg -version | Out-Null } "FFmpeg validation"
 Invoke-Checked { & $ffprobe -version | Out-Null } "FFprobe validation"
 Invoke-Checked { & $node --version | Out-Null } "Node.js validation"
@@ -98,9 +96,9 @@ Invoke-Checked { & $cargo --version | Out-Null } "Cargo validation"
 Write-Host "Building the frozen engine (onedir)..." -ForegroundColor Cyan
 $engineDist = Join-Path $pyinstallerRoot "dist"
 Invoke-Checked {
-    & $python -m PyInstaller --noconfirm --clean --onedir --contents-directory _internal `
+    & $uv run --locked pyinstaller --noconfirm --clean --onedir --contents-directory _internal `
         --name JaneConverterEngine `
-        --paths $repoRoot `
+        --paths (Join-Path $repoRoot "src") `
         --distpath $engineDist `
         --workpath (Join-Path $pyinstallerRoot "work") `
         --specpath (Join-Path $pyinstallerRoot "spec") `

@@ -5,19 +5,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-09-21
+
 ### Added
 - Self-contained Windows x64 installer, Windows portable ZIP, and Linux x86_64 tarball.
 - Bundled frozen conversion engine, FFmpeg, FFprobe, and Node.js runtime.
 - Tagged release publishing with SHA-256 checksums through GitHub Actions.
 
 ### Changed
+- Bumped the Python package, desktop app, and Browser Bridge to 2.0.0 for the consolidated product redesign.
 - Made the Tauri application the only supported desktop interface.
 - Moved packaged settings, temporary files, and converted media to OS user-data directories.
 - Updated release checks for versioned installer filenames.
+- Migrated the Python backend to the installable `src/janeconverter/` package, managed and locked by uv.
+- Replaced source-script execution with the `janeconverter` console command across Tauri, CI, and release packaging.
 
 ### Removed
 - Legacy Python and Rust desktop interfaces and the C# launcher.
 - Source installer, launcher, uninstall, compatibility-build, and staged-update scripts.
+- Root Python launch and requirements files superseded by project metadata and `uv.lock`.
 
 ## [1.2.0] - 2026-09-20
 

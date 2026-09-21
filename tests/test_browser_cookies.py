@@ -2,7 +2,7 @@
 
 import sqlite3
 
-import engine.browser_cookies as browser_cookies
+import janeconverter.browser_cookies as browser_cookies
 
 
 def test_load_browser_cookies_reads_only_matching_live_source_cookies(tmp_path, monkeypatch):

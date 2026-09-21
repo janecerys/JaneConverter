@@ -12,15 +12,15 @@ from typing import Optional, Dict, Any, Callable
 import json
 import requests
 import yt_dlp
-from engine.auth import (
+from .auth import (
     browser_session_label,
     describe_authenticated_extraction_failure,
     normalize_browser_session,
     normalize_browser_error_message,
     yt_dlp_cookie_option,
 )
-from engine.browser_cookies import load_browser_cookies_read_only
-from engine.browser_bridge import get_active_browser_cookie_jar
+from .browser_cookies import load_browser_cookies_read_only
+from .browser_bridge import get_active_browser_cookie_jar
 
 
 class _AuthenticatedYtdlpLogger:

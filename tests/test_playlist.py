@@ -3,15 +3,12 @@ Unit tests for playlist detection, extraction, and sequential ordered formatting
 """
 
 import os
-import sys
 import re
 import shutil
 import pytest
 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-from engine.extractor import is_playlist_url, format_duration, fetch_playlist_entries, sanitize_filename
-from run_converter import process_playlist_conversion
+from janeconverter.extractor import is_playlist_url, format_duration, fetch_playlist_entries, sanitize_filename
+from janeconverter.cli import process_playlist_conversion
 
 def test_is_playlist_url():
     # True cases

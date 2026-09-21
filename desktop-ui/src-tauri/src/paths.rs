@@ -42,7 +42,13 @@ fn is_runtime_root(directory: &Path) -> bool {
 }
 
 fn is_source_checkout(directory: &Path) -> bool {
-    directory.join("run_converter.py").is_file() && directory.join("engine").is_dir()
+    directory.join("pyproject.toml").is_file()
+        && directory.join("uv.lock").is_file()
+        && directory
+            .join("src")
+            .join("janeconverter")
+            .join("cli.py")
+            .is_file()
 }
 
 fn packaged_engine_name() -> &'static str {
@@ -152,27 +158,13 @@ pub fn find_ffmpeg() -> PathBuf {
 
 pub fn find_python() -> PathBuf {
     let root = project_root();
-    #[cfg(target_os = "windows")]
-    let candidates = [
-        root.join("engine").join("JaneConverterEngine.exe"),
-        root.join(".venv").join("Scripts").join("python.exe"),
-        root.join("venv").join("Scripts").join("python.exe"),
-    ];
-    #[cfg(not(target_os = "windows"))]
-    let candidates = [
-        root.join("engine").join("JaneConverterEngine"),
-        root.join(".venv").join("bin").join("python3"),
-        root.join("venv").join("bin").join("python3"),
-    ];
-    for candidate in candidates {
-        if candidate.is_file() {
-            return candidate;
-        }
+    if is_source_checkout(&root) {
+        #[cfg(target_os = "windows")]
+        return PathBuf::from("uv.exe");
+        #[cfg(not(target_os = "windows"))]
+        return PathBuf::from("uv");
     }
-    #[cfg(target_os = "windows")]
-    return PathBuf::from("python.exe");
-    #[cfg(not(target_os = "windows"))]
-    return PathBuf::from("python3");
+    root.join("engine").join(packaged_engine_name())
 }
 
 pub fn packaged_engine(path: &Path) -> bool {
@@ -196,7 +188,7 @@ mod tests {
         assert!(packaged_engine(Path::new(
             "runtime/engine/JaneConverterEngine.exe"
         )));
-        assert!(!packaged_engine(Path::new("python3")));
+        assert!(!packaged_engine(Path::new("uv")));
     }
 
     #[test]

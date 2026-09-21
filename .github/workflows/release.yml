@@ -18,7 +18,10 @@ jobs:
         with:
           python-version: "3.12"
           architecture: x64
-          cache: pip
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -31,11 +34,11 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
       - name: Install Python build dependencies
-        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+        run: uv sync --locked
       - name: Validate packaging contracts
         run: |
-          python -m pip check
-          python -m pytest -q tests/test_consumer_packaging.py
+          uv pip check
+          uv run --locked pytest -q tests/test_consumer_packaging.py
       - name: Download and verify static FFmpeg
         id: ffmpeg
         shell: pwsh
@@ -58,7 +61,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/')
         shell: pwsh
         run: |
-          $version = [regex]::Match((Get-Content -Raw engine/version.py), '__version__\s*=\s*"([^"]+)"').Groups[1].Value
+          $version = & uv run --locked python -c "from janeconverter.version import __version__; print(__version__)"
           if ($env:GITHUB_REF_NAME -ne "v$version") { throw "Tag $env:GITHUB_REF_NAME does not match engine version $version." }
       - name: Build Windows installer and portable package
         shell: pwsh
@@ -85,7 +88,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: pip
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
@@ -102,11 +108,11 @@ jobs:
           rustup toolchain install stable --profile minimal
           rustup default stable
       - name: Install Python build dependencies
-        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+        run: uv sync --locked
       - name: Validate packaging contracts
         run: |
-          python -m pip check
-          python -m pytest -q tests/test_consumer_packaging.py
+          uv pip check
+          uv run --locked pytest -q tests/test_consumer_packaging.py
       - name: Download and verify static FFmpeg
         id: ffmpeg
         run: |
@@ -129,7 +135,7 @@ jobs:
       - name: Verify tag version
         if: startsWith(github.ref, 'refs/tags/')
         run: |
-          version="$(python -c 'import re,pathlib; print(re.search(r"__version__\s*=\s*\"([^\"]+)\"", pathlib.Path("engine/version.py").read_text()).group(1))')"
+          version="$(uv run --locked python -c 'from janeconverter.version import __version__; print(__version__)')"
           test "$GITHUB_REF_NAME" = "v$version"
       - name: Build Linux portable package
         run: |
