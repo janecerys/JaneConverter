@@ -6,16 +6,12 @@ __pycache__/
 .pytest_cache/
 
 # Build artifacts
-JaneConverter.exe
-JaneConverterDesktop.exe
-JaneConverterNative.exe
 ffmpeg.exe
 build/
 dist/
 .vs/
 .vscode/
 .idea/
-native_ui/target/
 desktop-ui/node_modules/
 desktop-ui/dist/
 desktop-ui/src-tauri/target/
@@ -32,12 +28,8 @@ Desktop.ini
 .janecoverter-data/
 logs/
 config.json
-frontend.preference
 native.settings
-updates/
 desktop-ui/.npm-cache/
 desktop-ui/.cargo-target/
 .cargo-local/
 .rustup-local/
-
-*.stale

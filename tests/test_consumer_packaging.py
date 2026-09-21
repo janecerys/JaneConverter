@@ -79,6 +79,15 @@ def test_tauri_runtime_paths_support_frozen_windows_and_linux_engines():
     assert "!packaged_engine(&engine)" in process
 
 
+def test_tauri_relaunch_starts_the_current_desktop_executable():
+    library = read("desktop-ui/src-tauri/src/lib.rs")
+    relaunch = library.split("fn relaunch", 1)[1].split("fn format_update_summary", 1)[0]
+
+    assert "std::env::current_exe()" in relaunch
+    assert "JaneConverter.exe" not in relaunch
+    assert "run_converter.sh" not in relaunch
+
+
 def test_release_workflow_builds_and_publishes_only_agreed_platforms():
     workflow = read(".github/workflows/release.yml")
 
@@ -93,15 +102,6 @@ def test_release_workflow_builds_and_publishes_only_agreed_platforms():
     assert "github.token" in workflow
     assert "AppImage" not in workflow
     assert "macos" not in workflow.lower()
-
-
-def test_compatibility_wrapper_only_delegates_to_portable_build():
-    wrapper = read("build_release.ps1")
-
-    assert "packaging\\build_consumer.ps1" in wrapper
-    assert '"-SkipInstaller"' in wrapper
-    assert "gui.py" not in wrapper
-    assert "native_ui" not in wrapper
 
 
 def test_frozen_engine_entrypoint_keeps_source_cli_compatibility():

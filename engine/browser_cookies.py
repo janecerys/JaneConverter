@@ -10,7 +10,6 @@ disables browser security, or stores a cookie export.
 
 from __future__ import annotations
 
-import http.cookiejar
 import os
 import sqlite3
 import time

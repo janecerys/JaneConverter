@@ -7,8 +7,7 @@ mod process;
 use model::{AccessStatus, ConversionRequest, LibraryEntry, RuntimeInfo};
 use paths::{
     command_available, data_root, detect_gpu, find_ffmpeg, find_python, packaged_engine,
-    prepare_command, project_root, read_preference, settings_get_internal, write_preference,
-    write_settings,
+    prepare_command, project_root, settings_get_internal, write_settings,
 };
 use process::{
     load_playlist as load_playlist_engine, start_conversion as start_engine_conversion,
@@ -84,11 +83,6 @@ fn runtime_info() -> RuntimeInfo {
         gpu_available,
         gpu_label,
         packaged,
-        frontend_preference: if packaged {
-            "tauri".into()
-        } else {
-            read_preference()
-        },
     }
 }
 
@@ -405,25 +399,10 @@ fn clear_access_link(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
-fn set_frontend_preference(preference: String) -> Result<(), String> {
-    write_preference(preference.trim())
-        .map_err(|error| format!("Could not save interface preference: {error}"))
-}
-
-#[tauri::command]
 fn relaunch(app: tauri::AppHandle) -> Result<(), String> {
     let root = project_root();
-    #[cfg(target_os = "windows")]
-    let preferred_launcher = root.join("JaneConverter.exe");
-    #[cfg(not(target_os = "windows"))]
-    let preferred_launcher = root.join("run_converter.sh");
-
-    let launcher = if preferred_launcher.is_file() {
-        preferred_launcher
-    } else {
-        std::env::current_exe()
-            .map_err(|error| format!("Could not locate JaneConverter: {error}"))?
-    };
+    let launcher = std::env::current_exe()
+        .map_err(|error| format!("Could not locate JaneConverter: {error}"))?;
     let mut command = Command::new(&launcher);
     command
         .current_dir(&root)
@@ -601,7 +580,6 @@ pub fn run() {
             create_access_link,
             access_status,
             clear_access_link,
-            set_frontend_preference,
             relaunch,
             check_updates
         ])

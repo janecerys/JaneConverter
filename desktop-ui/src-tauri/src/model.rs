@@ -47,7 +47,6 @@ pub struct RuntimeInfo {
     pub gpu_available: bool,
     pub gpu_label: String,
     pub packaged: bool,
-    pub frontend_preference: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

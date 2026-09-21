@@ -36,7 +36,6 @@ export function Topbar({ runtime }: { runtime: RuntimeInfo | null }) {
           <div className="mt-4 space-y-3 text-xs leading-relaxed text-zinc-500">
             <p><span className="text-zinc-200">Convert:</span> paste a supported public link or choose a local media file, select your output settings, then start the conversion.</p>
             <p><span className="text-zinc-200">Need details?</span> Open Live console to see extraction, FFmpeg, and failure messages.</p>
-            {runtime && !runtime.packaged && <p><span className="text-zinc-200">Switch interfaces:</span> Settings lets you choose Main UI, Legacy Rust, or Legacy Python for the next launch.</p>}
             <p><span className="text-zinc-200">Where are files?</span> Converted media uses the {runtime?.packaged ? "OS user-data directory" : "project-local converted folder"} unless you choose another export folder.</p>
           </div>
           <button type="button" onClick={() => setHelpOpen(false)} className="subtle-button mt-5 px-3 py-2 text-xs">Close</button>

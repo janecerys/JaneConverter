@@ -43,7 +43,7 @@ jobs:
           pip install -r requirements-dev.txt
 
       - name: Lint with pyflakes
-        run: python -m pyflakes engine/ run_converter.py gui.py update_helper.py
+        run: python -m pyflakes engine/ run_converter.py
 
       - name: Run hermetic test suite
         run: python -m pytest tests/ -v
@@ -52,25 +52,37 @@ jobs:
         if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch'
         run: python -m pytest tests/ -m online -v
 
-  native:
-    name: Native frontend (${{ matrix.os }})
+  desktop:
+    name: Desktop UI (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
         os: [windows-latest, ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: desktop-ui/package-lock.json
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
-      - name: Install native Linux dependencies
+        with:
+          components: rustfmt
+      - name: Install Tauri Linux dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev
-      - name: Check shell launchers
-        if: runner.os != 'Windows'
-        run: bash -n install.sh run_converter.sh uninstall.sh
+        run: sudo apt-get update && sudo apt-get install -y build-essential curl wget file libwebkit2gtk-4.1-dev libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - name: Install frontend dependencies
+        working-directory: desktop-ui
+        run: npm ci
+      - name: Run frontend tests
+        working-directory: desktop-ui
+        run: npm test -- --run
+      - name: Build frontend
+        working-directory: desktop-ui
+        run: npm run build
       - name: Check Rust formatting
-        run: cargo fmt --manifest-path native_ui/Cargo.toml --check
-      - name: Run Rust tests
-        run: cargo test --manifest-path native_ui/Cargo.toml
-      - name: Build Rust release frontend
-        run: cargo build --release --manifest-path native_ui/Cargo.toml
+        run: cargo fmt --manifest-path desktop-ui/src-tauri/Cargo.toml --check
+      - name: Run Tauri tests
+        run: cargo test --manifest-path desktop-ui/src-tauri/Cargo.toml

@@ -257,7 +257,7 @@ def check_for_repo_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
 def apply_repo_update(status_callback: Optional[Callable[[str], None]] = None,
                       allow_live_update: bool = False) -> Dict[str, Any]:
     """
-    Pulls latest commits from the configured upstream, installs updated dependencies, and recompiles launcher if needed.
+    Pulls latest commits from the configured upstream and installs updated dependencies.
     """
     def log(msg: str):
         if status_callback:
@@ -265,7 +265,7 @@ def apply_repo_update(status_callback: Optional[Callable[[str], None]] = None,
         print(f"[RepoUpdate] {msg}")
 
     if not allow_live_update:
-        log("Application updates are staged outside the running process. Use a published release installer to apply them safely.")
+        log("Application updates are installed through published release packages.")
         return {"success": False, "error": "Live application updates are disabled"}
 
     if not is_git_repo():
@@ -306,35 +306,6 @@ def apply_repo_update(status_callback: Optional[Callable[[str], None]] = None,
                 log(f"Notice: Dependency update failed ({res.stderr.strip() or 'pip returned non-zero code'}).")
         except Exception as e:
             log(f"Notice: Dependency update skipped ({e}).")
-
-    cs_file = os.path.join(REPO_DIR, "Program.cs")
-    if os.path.exists(cs_file):
-        csc_candidates = [
-            r"C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe",
-            r"C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe",
-        ]
-        csc_exe = next((p for p in csc_candidates if os.path.exists(p)), None)
-        if csc_exe:
-            icon_arg = f"/win32icon:{os.path.join(REPO_DIR, 'assets', 'icon.ico')}"
-            out_arg = f"/out:{os.path.join(REPO_DIR, 'JaneConverter.exe')}"
-            target_arg = "/target:winexe"
-            try:
-                no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-                res = subprocess.run(
-                    [csc_exe, target_arg, icon_arg, out_arg, "Program.cs"],
-                    cwd=REPO_DIR,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    timeout=30.0,
-                    creationflags=no_window
-                )
-                if res.returncode == 0:
-                    log("Recompiled native launcher JaneConverter.exe.")
-                else:
-                    log(f"Notice: Launcher recompile failed ({res.stderr.strip() or 'compiler returned non-zero code'}). Existing launcher left unchanged.")
-            except Exception as e:
-                log(f"Notice: Launcher recompile skipped ({e}).")
 
     return {"success": True, "error": None}
 

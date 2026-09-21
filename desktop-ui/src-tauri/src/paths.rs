@@ -93,10 +93,6 @@ pub fn settings_path() -> PathBuf {
     data_root().join("native.settings")
 }
 
-pub fn preference_path() -> PathBuf {
-    data_root().join("frontend.preference")
-}
-
 pub fn default_output_dir() -> PathBuf {
     data_root().join("converted")
 }
@@ -341,27 +337,4 @@ pub fn write_settings(settings: &ConverterSettings) -> io::Result<()> {
     .map(|(key, value)| format!("{key}={value}\n"))
     .collect::<String>();
     fs::write(settings_path(), body)
-}
-
-pub fn read_preference() -> String {
-    match fs::read_to_string(preference_path())
-        .ok()
-        .map(|value| value.trim().to_ascii_lowercase())
-    {
-        Some(value) if ["tauri", "rust", "python"].contains(&value.as_str()) => value,
-        _ => "tauri".into(),
-    }
-}
-
-pub fn write_preference(preference: &str) -> io::Result<()> {
-    if !["tauri", "rust", "python"].contains(&preference) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "Unknown interface preference.",
-        ));
-    }
-    if let Some(parent) = preference_path().parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(preference_path(), format!("{preference}\n"))
 }

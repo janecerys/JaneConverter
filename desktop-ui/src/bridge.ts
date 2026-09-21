@@ -2,7 +2,6 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 export type Category = "Music" | "Video" | "Miscellaneous";
-export type FrontendPreference = "tauri" | "rust" | "python";
 export type EventKind = "started" | "log" | "progress" | "status" | "finished" | "failed" | "cancelled";
 
 export interface RuntimeInfo {
@@ -15,7 +14,6 @@ export interface RuntimeInfo {
   gpuAvailable: boolean;
   gpuLabel: string;
   packaged: boolean;
-  frontendPreference: FrontendPreference;
 }
 
 export interface ConverterSettings {
@@ -97,7 +95,6 @@ export interface JaneBridge {
   createAccessLink(source: string): Promise<AccessStatus>;
   accessStatus(): Promise<AccessStatus>;
   clearAccessLink(): Promise<void>;
-  setFrontendPreference(preference: FrontendPreference): Promise<void>;
   relaunch(): Promise<void>;
   checkUpdates(): Promise<string>;
 }
@@ -118,7 +115,7 @@ const demoSettings: ConverterSettings = {
 
 const demoBridge: JaneBridge = {
   async runtimeInfo() {
-    return { mode: "browser", pythonReady: false, ffmpegReady: false, pythonPath: "", dataRoot: "Project-local", projectRoot: "Project-local", gpuAvailable: false, gpuLabel: "Preview mode", packaged: false, frontendPreference: "tauri" };
+    return { mode: "browser", pythonReady: false, ffmpegReady: false, pythonPath: "", dataRoot: "Project-local", projectRoot: "Project-local", gpuAvailable: false, gpuLabel: "Preview mode", packaged: false };
   },
   async settingsGet() { return { ...demoSettings }; },
   async settingsSave() {},
@@ -139,7 +136,6 @@ const demoBridge: JaneBridge = {
   async createAccessLink() { return { active: true, link: "Preview mode", browser: "", bridgeConnected: false }; },
   async accessStatus() { return { active: false, link: "", browser: "", bridgeConnected: false }; },
   async clearAccessLink() {},
-  async setFrontendPreference() {},
   async relaunch() {},
   async checkUpdates() { return "Preview mode: update checks are available in the desktop build."; },
 };
@@ -167,7 +163,6 @@ const tauriBridge: JaneBridge = {
   createAccessLink: (source) => invoke<AccessStatus>("create_access_link", { source }),
   accessStatus: () => invoke<AccessStatus>("access_status"),
   clearAccessLink: () => invoke<void>("clear_access_link"),
-  setFrontendPreference: (preference) => invoke<void>("set_frontend_preference", { preference }),
   relaunch: () => invoke<void>("relaunch"),
   checkUpdates: () => invoke<string>("check_updates"),
 };
