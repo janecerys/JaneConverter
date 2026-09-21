@@ -128,7 +128,10 @@ pub fn set_data_root(path: &Path) -> io::Result<PathBuf> {
     if let Some(parent) = data_root_override_path().parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(data_root_override_path(), target.to_string_lossy().as_bytes())?;
+    fs::write(
+        data_root_override_path(),
+        target.to_string_lossy().as_bytes(),
+    )?;
     Ok(target)
 }
 
@@ -185,6 +188,32 @@ fn runtime_bin_candidates() -> Vec<PathBuf> {
     candidates
 }
 
+fn find_executable_in_path(name: &str) -> Option<PathBuf> {
+    let mut directories = Vec::new();
+    #[cfg(target_os = "windows")]
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        directories.push(
+            PathBuf::from(local_app_data)
+                .join("Microsoft")
+                .join("WinGet")
+                .join("Links"),
+        );
+    }
+    if let Some(path) = std::env::var_os("PATH") {
+        directories.extend(std::env::split_paths(&path));
+    }
+    for directory in directories {
+        if directory.as_os_str().is_empty() {
+            continue;
+        }
+        let candidate = directory.join(name);
+        if !candidate.is_file() {
+            continue;
+        }
+        return Some(candidate);
+    }
+    None
+}
 pub fn run_command(program: &str, args: &[&str]) -> io::Result<Output> {
     let mut command = Command::new(program);
     command.args(args);
@@ -193,9 +222,11 @@ pub fn run_command(program: &str, args: &[&str]) -> io::Result<Output> {
 }
 
 pub fn command_available(program: &str) -> bool {
-    run_command(program, &["--version"])
-        .map(|output| output.status.success())
-        .unwrap_or(false)
+    ["--version", "-version"].iter().any(|flag| {
+        run_command(program, &[flag])
+            .map(|output| output.status.success())
+            .unwrap_or(false)
+    })
 }
 
 pub fn find_ffmpeg() -> PathBuf {
@@ -223,6 +254,9 @@ pub fn find_ffmpeg() -> PathBuf {
         if candidate.is_file() {
             return candidate;
         }
+    }
+    if let Some(candidate) = find_executable_in_path(ffmpeg_name()) {
+        return candidate;
     }
     PathBuf::from(ffmpeg_name())
 }
@@ -260,6 +294,16 @@ mod tests {
             "runtime/engine/JaneConverterEngine.exe"
         )));
         assert!(!packaged_engine(Path::new("uv")));
+    }
+
+    #[test]
+    fn resolves_ffmpeg_from_path_when_available() {
+        if find_executable_in_path(ffmpeg_name()).is_some() {
+            let resolved = find_ffmpeg();
+            assert!(resolved.is_absolute());
+            assert!(resolved.is_file());
+            assert!(command_available(resolved.to_str().unwrap_or("ffmpeg")));
+        }
     }
 
     #[test]

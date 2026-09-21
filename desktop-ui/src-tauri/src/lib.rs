@@ -82,6 +82,7 @@ fn runtime_info() -> RuntimeInfo {
             command_available(python.to_str().unwrap_or("python"))
         },
         ffmpeg_ready: command_available(ffmpeg.to_str().unwrap_or("ffmpeg")),
+        ffmpeg_path: ffmpeg.display().to_string(),
         python_path: python.display().to_string(),
         data_root: data_root().display().to_string(),
         project_root: project_root().display().to_string(),

@@ -43,6 +43,7 @@ pub struct RuntimeInfo {
     pub mode: &'static str,
     pub python_ready: bool,
     pub ffmpeg_ready: bool,
+    pub ffmpeg_path: String,
     pub python_path: String,
     pub data_root: String,
     pub project_root: String,

@@ -9,7 +9,7 @@ const updateCheck = vi.hoisted(() => ({ run: vi.fn() }));
 const relaunch = vi.hoisted(() => ({ run: vi.fn() }));
 const chooseFolder = vi.hoisted(() => ({ run: vi.fn() }));
 const setDataRoot = vi.hoisted(() => ({ run: vi.fn() }));
-const sourceRuntime = { mode: "tauri", pythonReady: true, ffmpegReady: true, pythonPath: ".venv/bin/python3", dataRoot: ".", projectRoot: ".", gpuAvailable: false, gpuLabel: "CPU mode", packaged: false } as const;
+const sourceRuntime = { mode: "tauri", pythonReady: true, ffmpegReady: true, ffmpegPath: "/usr/bin/ffmpeg", pythonPath: ".venv/bin/python3", dataRoot: ".", projectRoot: ".", gpuAvailable: false, gpuLabel: "CPU mode", packaged: false } as const;
 vi.mock("../bridge", () => ({
   bridge: {
     checkUpdates: updateCheck.run,
@@ -109,7 +109,7 @@ describe("Settings updates", () => {
     const root = createRoot(container);
 
     await act(async () => {
-      root.render(<SettingsView runtime={{ mode: "tauri", pythonReady: true, ffmpegReady: true, pythonPath: "resources/runtime/engine/JaneConverterEngine", dataRoot: "/home/user/.local/share/JaneConverter", projectRoot: "resources/runtime", gpuAvailable: false, gpuLabel: "CPU mode", packaged: true }} onStatus={vi.fn()} />);
+      root.render(<SettingsView runtime={{ mode: "tauri", pythonReady: true, ffmpegReady: true, ffmpegPath: "resources/runtime/bin/ffmpeg", pythonPath: "resources/runtime/engine/JaneConverterEngine", dataRoot: "/home/user/.local/share/JaneConverter", projectRoot: "resources/runtime", gpuAvailable: false, gpuLabel: "CPU mode", packaged: true }} onStatus={vi.fn()} />);
     });
 
     expect(container.textContent).toContain("Running from a production package");

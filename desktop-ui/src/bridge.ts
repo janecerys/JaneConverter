@@ -8,6 +8,7 @@ export interface RuntimeInfo {
   mode: "tauri" | "browser";
   pythonReady: boolean;
   ffmpegReady: boolean;
+  ffmpegPath: string;
   pythonPath: string;
   dataRoot: string;
   projectRoot: string;
@@ -142,7 +143,7 @@ const demoSettings: ConverterSettings = {
 
 const demoBridge: JaneBridge = {
   async runtimeInfo() {
-    return { mode: "browser", pythonReady: false, ffmpegReady: false, pythonPath: "", dataRoot: "Project-local", projectRoot: "Project-local", gpuAvailable: false, gpuLabel: "Preview mode", packaged: false };
+    return { mode: "browser", pythonReady: false, ffmpegReady: false, ffmpegPath: "", pythonPath: "", dataRoot: "Project-local", projectRoot: "Project-local", gpuAvailable: false, gpuLabel: "Preview mode", packaged: false };
   },
   async settingsGet() { return { ...demoSettings }; },
   async settingsSave() {},
