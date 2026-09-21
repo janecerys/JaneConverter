@@ -15,19 +15,17 @@
   <img src="https://img.shields.io/badge/Audio-24--bit%20WAV%20%7C%20FLAC%20%7C%20320k%20MP3-orange?style=flat-square" alt="Audio" />
 </p>
 
-**Current release: v1.2.0** — The release includes the Main UI, shared library management, cover previews, and one-click relaunch controls across all three interfaces.
+**Current release: v1.2.0** - Production packages use the Tauri Main UI with a private frozen conversion engine.
 
 JaneConverter downloads media from virtually any online source, matches high-resolution metadata and album cover art, normalizes audio to streaming broadcast standards, and transcodes files into studio-grade audio or hardware-accelerated video formats.
 
 The standard way to use JaneConverter is its modern dark-themed desktop studio application. A complete command-line interface is also available for automated workflows and terminal users.
 
-JaneConverter runs from a private Python environment with an optional native launcher and automated setup scripts for Windows, macOS, and Linux. Update checks are read-only; a verified staged package is applied by a short-lived restart helper before the next launch.
+Production packages include the Python engine, FFmpeg, FFprobe, and Node.js. Update checks are read-only.
 
-On Windows, launch `JaneConverter.exe`, the universal entry point. It reads the saved launch preference and starts the Main UI (Tauri + React), Legacy Rust, or Legacy Python interface. All three inherit the same project-local data root and therefore share the same `converted` library. On macOS and Linux, use `run_converter.sh`; it uses the selected frontend when available and falls back to the original Python interface.
+On Windows, launch `JaneConverter.exe`. On Linux, launch `JaneConverter` from the extracted portable folder. These are the only user-facing executables in production packages. Source checkouts retain the development launchers and legacy interfaces for compatibility.
 
-### Interface preference
-
-JaneConverter.exe opens the Main UI by default. In Settings, choose Main UI, Legacy Rust, or Legacy Python; the choice is saved beside the launcher. Each interface now exposes a **Relaunch** action so the selected interface can be applied immediately without manually closing and reopening the program. The individual child executables remain available for recovery and diagnostics, but the universal launcher is the normal entry point. The development checkout also keeps a top-level `JaneConverter.exe`; it resolves the newest complete package under `dist` so the main launcher is easy to find without duplicating the application files. Unless `JANECONVERTER_DATA_DIR` is set, every interface uses the `converted` folder beside `JaneConverter.exe`.
+Packaged settings, temporary files, and the default converted library are stored in the operating system's user-data directory. Set `JANECONVERTER_DATA_DIR` before launch to use another location. Source checkouts keep their existing project-local behavior.
 
 ## Source troubleshooting FAQ
 
@@ -50,9 +48,9 @@ The file may be unreadable, the output folder may not be writable, disk space ma
 ## v1.2.0 release highlights
 
 - **Main UI:** Tauri 2 + React + TypeScript desktop surface with Tailwind styling, restrained motion, a low-contrast pink glow, and native Rust process/file-dialog bridging.
-- **One universal launcher:** `JaneConverter.exe` opens the selected Main UI, Legacy Rust, or Legacy Python interface while keeping settings and exports in the same project-local data root.
-- **Shared converted library:** All three interfaces browse the same export directory. The Main UI can open the root folder, move the library, preview media thumbnails/covers, refresh, and safely delete items without leaving the configured root.
-- **Immediate interface switching:** Main UI, Legacy Rust, and Legacy Python each provide a relaunch path that applies the saved interface preference.
+- **Production desktop UI:** Release packages expose one Tauri + React application and keep the frozen Python engine private.
+- **Converted library:** The Main UI can open the root folder, move the library, preview media thumbnails/covers, refresh, and safely delete items without leaving the configured root.
+- **Bundled media runtime:** Release packages carry one FFmpeg/FFprobe pair and Node runtime for yt-dlp JavaScript challenges.
 
 ## Project documentation
 
@@ -76,15 +74,9 @@ For each media link or local file, JaneConverter:
 
 ## Before you install
 
-Windows is the officially packaged and validated release platform. macOS and Linux are experimental/community validation targets until clean-machine testing and signed distribution packages are available.
+Release packages support Windows x64 and Linux x86_64. Python, FFmpeg, FFprobe, and Node.js are bundled and do not need to be installed separately. Allow enough disk space for downloaded media and high-resolution exports.
 
-For the consumer Windows installer, the private runtime is bundled. The source and
-portable paths have the prerequisites below:
-
-- A 64-bit computer running **Windows 10/11**, **macOS 12 or newer**, or a modern 64-bit Linux distribution.
-- **Python 3.10 or newer**. Windows setup can install it; macOS/Linux setup expects `python3` to already be installed.
-- **FFmpeg** with `ffprobe`. Windows setup can install it; macOS/Linux setup expects it to already be installed.
-- Available disk space for downloaded media and high-resolution audio exports.
+Windows uses WebView2. The installer uses Tauri's normal WebView2 bootstrap behavior; the portable ZIP may prompt you to install the WebView2 Runtime if it is absent. Linux uses the system WebKitGTK 4.1 and standard desktop libraries. Distribution package names vary, but Debian/Ubuntu systems provide these through `libwebkit2gtk-4.1-0` and related GTK libraries.
 
 Hardware acceleration:
 - **Universal GPU Support**: Automatically detects NVIDIA (NVENC with p2 high-performance preset), AMD (AMF speed preset), Intel (Quick Sync / QSV), Apple Silicon (VideoToolbox), and Linux (VAAPI).
@@ -92,60 +84,23 @@ Hardware acceleration:
 - **Multi-Core Threading**: Automatically configures FFmpeg (`-threads 0`, `-thread_queue_size 1024`) to utilize all available CPU threads for peak throughput when processing media.
 - **Zero Configuration Fallback**: If GPU encoding is unavailable or unsupported on a given system, JaneConverter seamlessly falls back to multi-core CPU encoding (`libx264`) without interrupting your queue.
 
-Node.js is optional but recommended when fetching YouTube media, as it enables the extraction engine to solve current YouTube signature challenges.
+## Installation and setup
 
-## Installation & Setup
+Download one artifact from the [latest release](https://github.com/janecerys/JaneConverter/releases/latest):
 
-### Windows consumer installation (recommended)
+- **Windows installer, recommended:** `JaneConverter-<version>-windows-x64-setup.exe`
+- **Windows portable:** `JaneConverter-<version>-windows-x64-portable.zip`
+- **Linux portable:** `JaneConverter-<version>-linux-x86_64.tar.gz`
 
-Most consumers should use the single-file installer from the latest GitHub release:
+Every artifact has a matching `.sha256` file. Compare it before running the application. On Windows, use `Get-FileHash <file> -Algorithm SHA256`. On Linux, use `sha256sum -c <file>.sha256`.
 
-1. Open the [latest JaneConverter release](https://github.com/janecerys/JaneConverter/releases/latest).
-2. Under **Assets**, download **`JaneConverter-Setup.exe`** to your computer. Do not
-   run it from inside a ZIP file.
-3. Double-click the downloaded installer. If Windows shows SmartScreen, choose
-   **More info** → **Run anyway** only when the file came from the official
-   `janecerys/JaneConverter` release page.
-4. Accept the default install location, or choose another folder with enough free
-   space for the application and converted media.
-5. Start JaneConverter from the Desktop or Start Menu shortcut. The **Main UI** is
-   selected automatically; the Legacy Rust and Legacy Python interfaces remain
-   available in **Settings → Launch preference**.
-6. If you want to download media that requires an account session, install the
-   optional Browser Bridge using the short instructions in **Authorized browser
-   sessions** below. If you skip it, JaneConverter still works for public media.
+Run the Windows installer as the current user, or extract the portable archive and launch `JaneConverter.exe`. On Linux, extract the tarball while preserving modes, then run `./JaneConverter/JaneConverter`. No production artifact contains source Python, pip, npm, Cargo, Rust, the legacy UIs, or the C# launcher.
 
-The consumer installer is self-contained: Python, pip, Rust, Node.js, FFmpeg, and
-FFprobe do not need to be installed separately. The installer also includes the
-conversion engine, the shared converted-library support, the three launcher modes,
-and the JaneConverter Browser Bridge files.
+### Source checkout setup
 
-For a quick authenticity check before running the installer, download the matching
-`JaneConverter-Setup.exe.sha256` file from the same release and run this in PowerShell
-from the download folder:
+The source installers below are for contributors and unsupported platforms. They are separate from the self-contained release packages.
 
-```powershell
-Get-FileHash .\JaneConverter-Setup.exe -Algorithm SHA256
-```
-
-The displayed hash must match the value in the `.sha256` file. If it does not, delete
-the installer and download it again from the official release page.
-
-The installer does not silently install a browser extension or read browser
-passwords. Browser extensions require explicit user consent. JaneConverter ships the
-bridge files beside the installed application; install them only if you need
-account-only browser sessions, using the manual **Load unpacked** steps below.
-
-### Portable/developer safety net
-
-The `JaneConverter-1.2.0-windows.zip` package is the source-visible recovery path.
-It keeps `setup.bat`, the Python engine, the legacy interfaces, diagnostics, and
-the project-local data layout available for developers or troubleshooting. Extract
-it to a normal folder first, then run `setup.bat` from the extracted folder. This is
-not the recommended consumer path because it may need to install prerequisites and
-is intended as a recovery/developer path.
-
-### 1-Click Automated Setup (portable path)
+#### Windows source setup
 
 Clone this repository or extract the downloaded ZIP folder, open PowerShell or Command Prompt in the `JaneConverter` folder, and run:
 
@@ -153,7 +108,7 @@ Clone this repository or extract the downloaded ZIP folder, open PowerShell or C
 .\setup.bat
 ```
 
-What `setup.bat` does automatically:
+What `setup.bat` does automatically for a source checkout:
 1. Verifies **Python 3.10+** (installs it via winget if missing).
 2. Verifies **FFmpeg** (installs it via winget if missing).
 3. Verifies **Node.js** for YouTube bot challenge handling.
@@ -162,7 +117,7 @@ What `setup.bat` does automatically:
 6. Creates a **JaneConverter** shortcut directly on your Windows Desktop.
 7. Launches the studio window immediately.
 
-### Manual Installation (Alternative)
+#### Manual source installation
 
 If you prefer to install dependencies manually:
 
@@ -183,7 +138,7 @@ If you prefer to install dependencies manually:
 
 ## Use the Desktop Application
 
-Launch JaneConverter from your Desktop shortcut or run `JaneConverter.exe`.
+Launch JaneConverter from the Windows shortcut, run `JaneConverter.exe` from the Windows portable folder, or run `JaneConverter` from the extracted Linux folder.
 
 ### 1. Converter Tab (Studio)
 
@@ -199,14 +154,14 @@ Launch JaneConverter from your Desktop shortcut or run `JaneConverter.exe`.
    - **EBU R128 Normalization**: Enable to automatically normalize tracks to -14 LUFS streaming broadcast loudness.
    - **Hardware Acceleration**: Automatically detects your host GPU and displays the active encoder (e.g. NVIDIA NVENC, AMD AMF, Intel Quick Sync, Apple VideoToolbox).
    - **Cover Art & Metadata**: Toggles for embedding cover artwork and exporting formatted production notes.
-3. **Destination Folder**: Choose where converted files are saved (defaults to the `converted` folder beside JaneConverter).
+3. **Destination Folder**: Choose where converted files are saved (defaults to `converted` in the user-data directory for packages, or beside the source checkout during development).
 4. **Account Access (optional)**: Click **Create Access Link** when you are authorized to view account-only media. Open the temporary link in the browser whose session you want to use, sign in normally if needed, and confirm access. JaneConverter detects the browser that opened the link and reads that browser session for the current app session. It never asks for your password or writes a cookie file.
 5. **Convert & Abort**:
    - Click **CONVERT MEDIA** to begin processing.
    - Click **Abort** at any time to immediately kill the FFmpeg process, stop downloads, and remove partial files.
    - Click **Open Folder** to reveal the export folder and select the most recently exported file in Windows Explorer, Finder, or the system file manager.
 
-### macOS and Linux (experimental)
+### macOS and Linux source checkout
 
 Install Python 3.10+, FFmpeg with `ffprobe`, and optionally Rust/Cargo for the native frontend. From the JaneConverter folder, run:
 
@@ -216,7 +171,29 @@ chmod +x install.sh run_converter.sh uninstall.sh
 ./run_converter.sh
 ```
 
-The Unix launcher uses the selected frontend preference when available and otherwise starts the legacy Python interface. If an older native binary is found during installation without Cargo available, the installer moves it aside instead of launching it against newer source code. Finder or the default Linux file manager is used for **Open Folder** actions. Hardware acceleration depends on the FFmpeg build and graphics drivers available on the host.
+The source launcher uses the selected frontend preference when available and otherwise starts the legacy Python interface. This is not the Linux x86_64 release package described above. macOS does not currently have a packaged release artifact. Hardware acceleration depends on the FFmpeg build and graphics drivers available on the host.
+
+### Building production packages
+
+Build tools are not shipped to users. Maintainers need Python 3.10+ with `requirements-dev.txt`, Node.js with npm, Rust/Cargo, and the platform's Tauri prerequisites. Pass release-compatible FFmpeg, FFprobe, and Node executables explicitly when reproducibility matters.
+
+Windows x64 builds the NSIS installer and portable ZIP from one staged payload:
+
+```powershell
+.\packaging\build_consumer.ps1 -FFmpegPath C:\tools\ffmpeg.exe -FFprobePath C:\tools\ffprobe.exe -NodePath C:\tools\node.exe
+```
+
+Use `-SkipInstaller` or `-SkipPortable` to produce only one Windows format. `build_release.ps1` remains a compatibility wrapper for the portable build.
+
+Linux x86_64 builds only the portable tarball:
+
+```bash
+./packaging/build_linux.sh --ffmpeg /opt/ffmpeg/ffmpeg --ffprobe /opt/ffmpeg/ffprobe --node /opt/node/bin/node
+```
+
+The Linux FFmpeg pair should come from a static-compatible x86_64 build. GitHub Actions builds all three release artifacts on Windows and Ubuntu 22.04, verifies the downloaded FFmpeg archive checksum, uploads artifacts for manual runs, and publishes them on `v*` tags.
+
+The release workflow currently selects the GPL FFmpeg build. Distributors must preserve the applicable FFmpeg license notices and satisfy the corresponding GPL source requirements. Node.js and its bundled components also retain their upstream licenses.
 
 ### 2. Playlist Track Selector
 
@@ -230,14 +207,14 @@ When pasting a playlist or album URL (YouTube playlist, Spotify album or playlis
 
 ### 3. Converted Library Tab
 
-- Browses the same converted library from the Main UI, Legacy Rust, and Legacy Python interfaces.
+- Browses the converted library configured for the Main UI. Source-checkout legacy interfaces can use the same directory when configured explicitly.
 - Shows file size, format, organized source location, and available thumbnail or cover art.
 - Use **Open folder** for the active export directory or an individual item. **Move library** lets you relocate the shared library without moving files manually.
 - The root folder has a disabled Back control so navigation cannot escape the library; **Delete** remains available for files and folders inside it.
 
 ### 4. Live Console
 
-- The Main UI and Legacy Rust interface keep conversion progress visible without requiring an external terminal; the Legacy Python interface retains its dedicated Console tab.
+- The Main UI keeps conversion progress visible without requiring an external terminal.
 - Displays real-time streaming output from the extraction and transcode engine.
 - Displays automatic update checks for the underlying extractor engine.
 - Displays live CPU, RAM, and GPU telemetry in the top header.
@@ -248,7 +225,7 @@ When pasting a playlist or album URL (YouTube playlist, Spotify album or playlis
 
 Some services require an active account session for private playlists, age-restricted media, or other content the signed-in user is allowed to view. In the Converter tab, click **Create Access Link**. JaneConverter starts a temporary localhost page, copies the link, and opens it in the host's default browser. You may paste that link into any other browser, open the source link there, sign in normally if needed, then click **I'm signed in — confirm access**.
 
-After confirmation, the recommended path is the **JaneConverter Browser Bridge** extension in `browser-extension/`. Load that folder as an unpacked extension in Vivaldi or another Chromium browser, click its toolbar button, and choose **Connect**. The extension asks for permission for the current source origin only, reads the already-authorized session through the browser's cookies API, and sends a source-scoped payload to JaneConverter's loopback server. It supports any HTTP or HTTPS source supported by the browser and yt-dlp; the manifest no longer needs a manually maintained platform list. The browser can stay open, and the payload is kept in memory for the current app session only. No password is requested, no cookies file is exported, and no session data is uploaded.
+After confirmation, source-checkout users can optionally load the **JaneConverter Browser Bridge** extension from `browser-extension/`. The production desktop archives do not bundle this developer extension. It asks for permission for the current source origin only, reads the already-authorized session through the browser's cookies API, and sends a source-scoped payload to JaneConverter's loopback server. The browser can stay open, and the payload is kept in memory for the current app session only. No password is requested, no cookies file is exported, and no session data is uploaded.
 
 If the extension is not installed or cannot be used, JaneConverter retains the regular read-only in-memory browser fallback and yt-dlp database fallback. For Chromium browsers, it automatically retries the read-only path for a few seconds. If Windows blocks both paths, fully exit the browser—not just the visible window—so the fallback can run. In Vivaldi on Windows, use **File > Exit** or the full quit shortcut; background browser processes can keep the database locked. Browser sessions do not bypass privacy settings, permissions, DRM, or expired content; if the account cannot access the media, JaneConverter will stop and explain the failure.
 
@@ -263,9 +240,9 @@ The extension is intentionally local and source-scoped. It does not run continuo
 
 ## Updates, releases, and uninstalling
 
-JaneConverter checks for updates without modifying the running installation. Packaged consumer snapshots query the latest published GitHub release because they do not contain a Git checkout; the Main UI performs this check shortly after launch and Settings can retry it manually. Published ZIP packages include a SHA-256 checksum and can be staged for application on the next restart. A short-lived helper waits for the launcher to exit before applying staged files, so the application never replaces files that it still has open.
+JaneConverter checks for updates without modifying the running installation. Packaged snapshots query the latest published GitHub release because they do not contain a Git checkout; the Main UI performs this check shortly after launch and Settings can retry it manually. Install a newer Windows release or replace an extracted portable folder to update. Every published artifact includes a SHA-256 checksum.
 
-To remove JaneConverter's private environment and user data, close the app and run `uninstall.ps1` on Windows or `./uninstall.sh` on macOS/Linux. Exported media is included in the removal, so copy anything you want to keep first.
+Remove an installed Windows package through **Installed apps**. For a portable package, close JaneConverter and delete its extracted folder. User data and converted media remain in the OS user-data directory unless you remove them separately, so copy or delete that directory deliberately. Source checkouts retain their existing uninstall scripts.
 
 ## Playlist Folder Organization
 
@@ -299,14 +276,14 @@ You can also run conversions directly from PowerShell or Command Prompt:
 ### Single Track / Video Run
 
 ```powershell
-\.venv\Scripts\python.exe run_converter.py --source "https://www.youtube.com/watch?v=VIDEO_ID" --format mp3 --bitrate 320k --normalize
+.\.venv\Scripts\python.exe run_converter.py --source "https://www.youtube.com/watch?v=VIDEO_ID" --format mp3 --bitrate 320k --normalize
 ```
 
 ### Apple Music Song or Album
 
 ```powershell
-python run_converter.py --source "https://music.apple.com/us/album/ALBUM_SLUG/ALBUM_ID?i=TRACK_ID" --format flac
-python run_converter.py --source "https://music.apple.com/us/album/ALBUM_SLUG/ALBUM_ID" --list-playlist
+.\.venv\Scripts\python.exe run_converter.py --source "https://music.apple.com/us/album/ALBUM_SLUG/ALBUM_ID?i=TRACK_ID" --format flac
+.\.venv\Scripts\python.exe run_converter.py --source "https://music.apple.com/us/album/ALBUM_SLUG/ALBUM_ID" --list-playlist
 ```
 
 Apple Music uses catalog metadata and matching public-source search; it does not directly download subscription audio.
@@ -314,14 +291,14 @@ Apple Music uses catalog metadata and matching public-source search; it does not
 ### Spotify Track or Album
 
 ```powershell
-python run_converter.py --source "https://open.spotify.com/track/TRACK_ID" --format flac
-python run_converter.py --source "https://open.spotify.com/album/ALBUM_ID" --format mp3
+.\.venv\Scripts\python.exe run_converter.py --source "https://open.spotify.com/track/TRACK_ID" --format flac
+.\.venv\Scripts\python.exe run_converter.py --source "https://open.spotify.com/album/ALBUM_ID" --format mp3
 ```
 
 ### Local File Conversion
 
 ```powershell
-\.venv\Scripts\python.exe run_converter.py --source "C:\Music\recording.wav" --format mp3 --bitrate 320k
+.\.venv\Scripts\python.exe run_converter.py --source "C:\Music\recording.wav" --format mp3 --bitrate 320k
 ```
 
 ### Command-Line Arguments
@@ -347,7 +324,7 @@ python run_converter.py --source "https://open.spotify.com/album/ALBUM_ID" --for
 Run this to see all CLI options:
 
 ```powershell
-python run_converter.py --help
+.\.venv\Scripts\python.exe run_converter.py --help
 ```
 
 ## Audio Engineering & Fidelity Standards
@@ -369,19 +346,19 @@ python run_converter.py --help
 
 ### FFmpeg was not found
 
-If FFmpeg is not detected in your system PATH, install it with your operating system's package manager, then restart your terminal. On Windows, use `winget install Gyan.FFmpeg`; on macOS, use `brew install ffmpeg`; on Debian/Ubuntu, use `sudo apt install ffmpeg`. JaneConverter also discovers a local Windows `ffmpeg.exe` build placed beside the application.
+Release packages include FFmpeg and FFprobe. If either is reported missing, verify the archive checksum and extract the complete folder again. For a source checkout, install FFmpeg with your operating system's package manager and restart the terminal.
 
-### Python runtime was not found
+### Python runtime was not found in a source checkout
 
 Run `.\setup.bat` in the JaneConverter folder on Windows, or `./install.sh` on macOS/Linux. Alternatively, install Python 3.10+ from [python.org](https://www.python.org/downloads/) or your operating system package manager.
 
-### Windows setup finds Python but `.venv\Scripts\python.exe` is missing
+### Windows source setup finds Python but `.venv\Scripts\python.exe` is missing
 
-This means setup found a system Python, but the private JaneConverter environment did not finish creating. The current installer checks every `python.exe` and `python3.exe` on PATH, the Windows Python launcher, and registered Python installations, then resolves the actual interpreter path. It also repairs a partial `.venv` before installing dependencies. Re-run the current `setup.bat`; it will not modify your global Python packages.
+This means `setup.bat` found a system Python, but the private source environment did not finish creating. The source setup checks Python commands, the Windows Python launcher, and registered installations. Re-run the current `setup.bat`; it will not modify your global Python packages.
 
 ### Stream extraction fails or YouTube throttles
 
-Make sure you have Node.js installed on your machine (`winget install OpenJS.NodeJS.LTS`). Node.js allows the extractor engine to execute JavaScript signature challenges from YouTube.
+Release packages include Node.js so the extractor can execute current JavaScript signature challenges. In a source checkout, install a supported Node.js release and make sure `node` is on `PATH`.
 
 ### Spotify playlist only loads first 100 tracks
 

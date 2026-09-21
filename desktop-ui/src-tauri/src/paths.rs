@@ -16,6 +16,7 @@ pub fn project_root() -> PathBuf {
             let candidates = [
                 directory.to_path_buf(),
                 directory.join("resources").join("runtime"),
+                directory.join("runtime"),
                 directory.join("resources"),
             ];
             for candidate in candidates {
@@ -33,14 +34,59 @@ pub fn project_root() -> PathBuf {
 }
 
 fn is_runtime_root(directory: &Path) -> bool {
-    (directory.join("run_converter.py").is_file() && directory.join("engine").is_dir())
-        || directory.join("JaneConverterEngine.exe").is_file()
+    is_source_checkout(directory)
+        || directory
+            .join("engine")
+            .join(packaged_engine_name())
+            .is_file()
+}
+
+fn is_source_checkout(directory: &Path) -> bool {
+    directory.join("run_converter.py").is_file() && directory.join("engine").is_dir()
+}
+
+fn packaged_engine_name() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "JaneConverterEngine.exe"
+    } else {
+        "JaneConverterEngine"
+    }
+}
+
+fn user_data_root() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    if let Some(root) = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA")) {
+        return PathBuf::from(root).join("JaneConverter");
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(root) = std::env::var_os("XDG_DATA_HOME") {
+            return PathBuf::from(root).join("JaneConverter");
+        }
+        if let Some(home) = std::env::var_os("HOME") {
+            return PathBuf::from(home)
+                .join(".local")
+                .join("share")
+                .join("JaneConverter");
+        }
+    }
+
+    std::env::temp_dir().join("JaneConverter")
 }
 
 pub fn data_root() -> PathBuf {
-    std::env::var_os("JANECONVERTER_DATA_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(project_root)
+    if let Some(configured) = std::env::var_os("JANECONVERTER_DATA_DIR") {
+        if !configured.is_empty() {
+            return PathBuf::from(configured);
+        }
+    }
+    let root = project_root();
+    if is_source_checkout(&root) {
+        root
+    } else {
+        user_data_root()
+    }
 }
 
 pub fn settings_path() -> PathBuf {
@@ -63,6 +109,17 @@ pub fn now_stamp() -> u128 {
 }
 
 pub fn prepare_command(command: &mut Command) {
+    let runtime_bin = project_root().join("bin");
+    if runtime_bin.is_dir() {
+        let mut paths = vec![runtime_bin];
+        if let Some(existing) = std::env::var_os("PATH") {
+            paths.extend(std::env::split_paths(&existing));
+        }
+        if let Ok(path) = std::env::join_paths(paths) {
+            command.env("PATH", path);
+        }
+    }
+    command.env("JANECONVERTER_DATA_DIR", data_root());
     #[cfg(target_os = "windows")]
     command.creation_flags(CREATE_NO_WINDOW);
 }
@@ -83,18 +140,9 @@ pub fn command_available(program: &str) -> bool {
 pub fn find_ffmpeg() -> PathBuf {
     let root = project_root();
     #[cfg(target_os = "windows")]
-    let candidates = [
-        root.join("ffmpeg.exe"),
-        root.join("bin").join("ffmpeg.exe"),
-        root.join("engine").join("ffmpeg.exe"),
-        root.join("resources").join("runtime").join("ffmpeg.exe"),
-    ];
+    let candidates = [root.join("bin").join("ffmpeg.exe"), root.join("ffmpeg.exe")];
     #[cfg(not(target_os = "windows"))]
-    let candidates = [
-        root.join("ffmpeg"),
-        root.join("bin").join("ffmpeg"),
-        root.join("engine").join("ffmpeg"),
-    ];
+    let candidates = [root.join("bin").join("ffmpeg"), root.join("ffmpeg")];
     for candidate in candidates {
         if candidate.is_file() {
             return candidate;
@@ -110,12 +158,13 @@ pub fn find_python() -> PathBuf {
     let root = project_root();
     #[cfg(target_os = "windows")]
     let candidates = [
-        root.join("JaneConverterEngine.exe"),
+        root.join("engine").join("JaneConverterEngine.exe"),
         root.join(".venv").join("Scripts").join("python.exe"),
         root.join("venv").join("Scripts").join("python.exe"),
     ];
     #[cfg(not(target_os = "windows"))]
     let candidates = [
+        root.join("engine").join("JaneConverterEngine"),
         root.join(".venv").join("bin").join("python3"),
         root.join("venv").join("bin").join("python3"),
     ];
@@ -133,8 +182,39 @@ pub fn find_python() -> PathBuf {
 pub fn packaged_engine(path: &Path) -> bool {
     path.file_name()
         .and_then(|value| value.to_str())
-        .map(|value| value.eq_ignore_ascii_case("JaneConverterEngine.exe"))
+        .map(|value| {
+            value.eq_ignore_ascii_case("JaneConverterEngine.exe") || value == "JaneConverterEngine"
+        })
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recognizes_packaged_engine_names_on_both_release_platforms() {
+        assert!(packaged_engine(Path::new(
+            "runtime/engine/JaneConverterEngine"
+        )));
+        assert!(packaged_engine(Path::new(
+            "runtime/engine/JaneConverterEngine.exe"
+        )));
+        assert!(!packaged_engine(Path::new("python3")));
+    }
+
+    #[test]
+    fn packaged_engine_lives_in_the_private_engine_directory() {
+        let root = Path::new("resources/runtime");
+        assert_eq!(
+            root.join("engine").join(packaged_engine_name()),
+            root.join("engine").join(if cfg!(target_os = "windows") {
+                "JaneConverterEngine.exe"
+            } else {
+                "JaneConverterEngine"
+            })
+        );
+    }
 }
 
 pub fn read_kv() -> HashMap<String, String> {

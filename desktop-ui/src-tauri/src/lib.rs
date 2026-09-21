@@ -69,6 +69,7 @@ fn runtime_info() -> RuntimeInfo {
     let (gpu_available, gpu_label) = detect_gpu();
     let python = find_python();
     let ffmpeg = find_ffmpeg();
+    let packaged = packaged_engine(&python);
     RuntimeInfo {
         mode: "tauri",
         python_ready: if python.is_file() {
@@ -82,7 +83,12 @@ fn runtime_info() -> RuntimeInfo {
         project_root: project_root().display().to_string(),
         gpu_available,
         gpu_label,
-        frontend_preference: read_preference(),
+        packaged,
+        frontend_preference: if packaged {
+            "tauri".into()
+        } else {
+            read_preference()
+        },
     }
 }
 

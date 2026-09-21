@@ -1,11 +1,36 @@
 {
-  "schema": 1,
-  "engine": "JaneConverterEngine.exe",
-  "legacy_python": "JaneConverterPython.exe",
-  "ffmpeg": [
-    "ffmpeg.exe",
-    "ffprobe.exe"
+  "schema": 2,
+  "ui": {
+    "windows": "JaneConverter.exe",
+    "linux": "JaneConverter"
+  },
+  "private_runtime": "resources/runtime",
+  "documents": ["LICENSE"],
+  "engine": {
+    "directory": "engine",
+    "windows": "JaneConverterEngine.exe",
+    "linux": "JaneConverterEngine",
+    "support_directory": "_internal",
+    "pyinstaller_mode": "onedir"
+  },
+  "tools": {
+    "directory": "bin",
+    "windows": ["ffmpeg.exe", "ffprobe.exe", "node.exe"],
+    "linux": ["ffmpeg", "ffprobe", "node"]
+  },
+  "artifacts": [
+    "JaneConverter-<version>-windows-x64-setup.exe",
+    "JaneConverter-<version>-windows-x64-portable.zip",
+    "JaneConverter-<version>-linux-x86_64.tar.gz"
   ],
-  "portable_fallback": "build_release.ps1",
-  "installer": "JaneConverter-Setup.exe"
+  "forbidden": [
+    "JaneConverterPython",
+    "JaneConverterNative",
+    "Program.cs",
+    "*.py",
+    "pip",
+    "npm",
+    "cargo",
+    "rustc"
+  ]
 }

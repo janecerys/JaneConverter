@@ -1,120 +1,166 @@
-name: Windows Release Package
+name: Release packages
 
 on:
   workflow_dispatch:
   push:
-    tags: ["v*.*.*"]
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
 
 jobs:
-  package:
+  windows-x64:
     runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: x64
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          architecture: x64
+          cache: npm
+          cache-dependency-path: desktop-ui/package-lock.json
+      - name: Set up Rust
+        shell: pwsh
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Install Python build dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+      - name: Validate packaging contracts
+        run: |
+          python -m pip check
+          python -m pytest -q tests/test_consumer_packaging.py
+      - name: Download and verify static FFmpeg
+        id: ffmpeg
+        shell: pwsh
+        run: |
+          $name = "ffmpeg-master-latest-win64-gpl.zip"
+          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$name"
+          Invoke-WebRequest -Uri $url -OutFile $name
+          Invoke-WebRequest -Uri "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/checksums.sha256" -OutFile checksums.sha256
+          $checksumLine = Get-Content checksums.sha256 | Where-Object { $_ -match [regex]::Escape($name) } | Select-Object -First 1
+          $expected = ([regex]::Match($checksumLine, '[a-fA-F0-9]{64}')).Value.ToLowerInvariant()
+          $actual = (Get-FileHash -Algorithm SHA256 $name).Hash.ToLowerInvariant()
+          if (-not $expected -or $actual -ne $expected) { throw "FFmpeg SHA256 verification failed." }
+          Expand-Archive -LiteralPath $name -DestinationPath ffmpeg-static
+          $ffmpeg = (Get-ChildItem ffmpeg-static -Recurse -Filter ffmpeg.exe -File | Select-Object -First 1).FullName
+          $ffprobe = (Get-ChildItem ffmpeg-static -Recurse -Filter ffprobe.exe -File | Select-Object -First 1).FullName
+          if (-not $ffmpeg -or -not $ffprobe) { throw "Verified FFmpeg archive did not contain both tools." }
+          "ffmpeg=$ffmpeg" >> $env:GITHUB_OUTPUT
+          "ffprobe=$ffprobe" >> $env:GITHUB_OUTPUT
+      - name: Verify tag version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $version = [regex]::Match((Get-Content -Raw engine/version.py), '__version__\s*=\s*"([^"]+)"').Groups[1].Value
+          if ($env:GITHUB_REF_NAME -ne "v$version") { throw "Tag $env:GITHUB_REF_NAME does not match engine version $version." }
+      - name: Build Windows installer and portable package
+        shell: pwsh
+        run: |
+          ./packaging/build_consumer.ps1 `
+            -FFmpegPath "${{ steps.ffmpeg.outputs.ffmpeg }}" `
+            -FFprobePath "${{ steps.ffmpeg.outputs.ffprobe }}" `
+            -NodePath (Get-Command node.exe).Source
+      - name: Upload Windows release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64-release
+          if-no-files-found: error
+          path: |
+            dist/JaneConverter-*-windows-x64-setup.exe
+            dist/JaneConverter-*-windows-x64-setup.exe.sha256
+            dist/JaneConverter-*-windows-x64-portable.zip
+            dist/JaneConverter-*-windows-x64-portable.zip.sha256
+
+  linux-x86_64:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: desktop-ui/package-lock.json
+      - name: Install Tauri Linux prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential curl file libayatana-appindicator3-dev libssl-dev \
+            libwebkit2gtk-4.1-dev libxdo-dev librsvg2-dev patchelf wget xz-utils
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Install Python build dependencies
+        run: python -m pip install --disable-pip-version-check -r requirements-dev.txt
+      - name: Validate packaging contracts
+        run: |
+          python -m pip check
+          python -m pytest -q tests/test_consumer_packaging.py
+      - name: Download and verify static FFmpeg
+        id: ffmpeg
+        run: |
+          set -euo pipefail
+          name=ffmpeg-master-latest-linux64-gpl.tar.xz
+          url="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$name"
+          curl --fail --location --retry 3 --output "$name" "$url"
+          curl --fail --location --retry 3 --output checksums.sha256 \
+            https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/checksums.sha256
+          expected="$(awk -v name="$name" '$2 == name || $2 == "*" name {print tolower($1); exit}' checksums.sha256)"
+          actual="$(sha256sum "$name" | cut -d' ' -f1)"
+          test -n "$expected" && test "$actual" = "$expected"
+          mkdir ffmpeg-static
+          tar -xJf "$name" -C ffmpeg-static
+          ffmpeg="$(find "$PWD/ffmpeg-static" -type f -name ffmpeg -perm -111 -print -quit)"
+          ffprobe="$(find "$PWD/ffmpeg-static" -type f -name ffprobe -perm -111 -print -quit)"
+          test -n "$ffmpeg" && test -n "$ffprobe"
+          echo "ffmpeg=$ffmpeg" >> "$GITHUB_OUTPUT"
+          echo "ffprobe=$ffprobe" >> "$GITHUB_OUTPUT"
+      - name: Verify tag version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version="$(python -c 'import re,pathlib; print(re.search(r"__version__\s*=\s*\"([^\"]+)\"", pathlib.Path("engine/version.py").read_text()).group(1))')"
+          test "$GITHUB_REF_NAME" = "v$version"
+      - name: Build Linux portable package
+        run: |
+          bash packaging/build_linux.sh \
+            --ffmpeg "${{ steps.ffmpeg.outputs.ffmpeg }}" \
+            --ffprobe "${{ steps.ffmpeg.outputs.ffprobe }}" \
+            --node "$(command -v node)"
+      - name: Upload Linux release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64-release
+          if-no-files-found: error
+          path: |
+            dist/JaneConverter-*-linux-x86_64.tar.gz
+            dist/JaneConverter-*-linux-x86_64.tar.gz.sha256
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows-x64, linux-x86_64]
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/download-artifact@v4
         with:
-          python-version: "3.12"
-      - name: Set up Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable-x86_64-pc-windows-msvc
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: npm
-          cache-dependency-path: desktop-ui/package-lock.json
-      - name: Install Rust advisory scanner
-        uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-audit
-      - name: Install Python dependencies for package smoke tests
-        run: python -m pip install -r requirements-dev.txt
-      - name: Verify Python dependencies
-        run: python -m pip check
-      - name: Audit Python dependencies
-        shell: pwsh
-        run: |
-          python -m pip install pip-audit
-          python -m pip_audit -r requirements.txt
-      - name: Audit Rust dependencies
-        shell: pwsh
-        run: |
-          cargo audit --file desktop-ui/src-tauri/Cargo.lock
-          cargo audit --file native_ui/Cargo.lock
-      - name: Enforce Rust formatting
-        shell: pwsh
-        run: |
-          cargo fmt --manifest-path desktop-ui/src-tauri/Cargo.toml -- --check
-          cargo fmt --manifest-path native_ui/Cargo.toml -- --check
-      - name: Test Rust launchers
-        shell: pwsh
-        run: |
-          cargo test --manifest-path desktop-ui/src-tauri/Cargo.toml --locked
-          cargo test --manifest-path native_ui/Cargo.toml --locked
-      - name: Test and build Main UI
-        shell: pwsh
-        working-directory: desktop-ui
-        run: |
-          npm ci --no-audit --no-fund --ignore-scripts
-          npm test
-          npm run build
-          npm audit --omit=dev --audit-level=high
-      - name: Build portable source package
-        shell: pwsh
-        run: .\build_release.ps1 -Version "${{ github.ref_name }}".TrimStart('v')
-      - name: Ensure FFmpeg is available for the consumer bundle
-        shell: pwsh
-        run: |
-          if (-not (Get-Command ffmpeg.exe -ErrorAction SilentlyContinue) -or -not (Get-Command ffprobe.exe -ErrorAction SilentlyContinue)) {
-            choco install ffmpeg --no-progress --yes
-          }
-      - name: Build consumer setup installer
-        shell: pwsh
-        run: .\packaging\build_consumer.ps1 -Version "${{ github.ref_name }}".TrimStart('v') -SkipPortable
-      - name: Verify release package contents
-        shell: pwsh
-        run: |
-          $archive = Get-ChildItem dist -Filter "*.zip" | Select-Object -First 1
-          if (-not $archive) { throw "No release ZIP was produced." }
-          Add-Type -AssemblyName System.IO.Compression.FileSystem
-          $zip = [IO.Compression.ZipFile]::OpenRead($archive.FullName)
-          try {
-            $names = @($zip.Entries | ForEach-Object { $_.FullName -replace '\\', '/' })
-            foreach ($required in @("JaneConverter.exe", "JaneConverterNative.exe", "README.md", "LICENSE", "update_helper.py", "assets/icon.ico", "engine/version.py")) {
-              if ($required -notin $names) { throw "Release ZIP is missing $required" }
-            }
-            if ($names | Where-Object { $_ -match "(^|/)(__pycache__|\.pytest_cache|temp|converted)(/|$)|\.(pyc|pyo|log)$" }) {
-              throw "Release ZIP contains generated cache or runtime data."
-            }
-          } finally {
-            $zip.Dispose()
-          }
-      - name: Smoke-test packaged Python entry points
-        shell: pwsh
-        run: |
-          $package = Get-ChildItem dist -Directory -Filter "JaneConverter-*" | Select-Object -First 1
-          python -m py_compile "$package\run_converter.py" "$package\gui.py" "$package\update_helper.py"
-          $version = python "$package\run_converter.py" --version
-          if (-not $version -or $version -notmatch "JaneConverter") { throw "Packaged CLI version check failed." }
-          $installer = Get-Item dist\JaneConverter-Setup.exe -ErrorAction Stop
-          if ($installer.Length -lt 1MB) { throw "Consumer setup installer is unexpectedly small." }
-      - name: Upload workflow artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: JaneConverter-${{ github.ref_name }}-windows
-          path: |
-            dist/*.zip
-            dist/*.sha256
-            dist/JaneConverter-Setup.exe
-      - name: Publish tagged release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/*.zip
-            dist/*.sha256
-            dist/JaneConverter-Setup.exe
-          generate_release_notes: true
+          path: artifacts
+          merge-multiple: true
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh release create "$GITHUB_REF_NAME" artifacts/*
+          --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+          --title "JaneConverter $GITHUB_REF_NAME"

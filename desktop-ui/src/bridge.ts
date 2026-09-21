@@ -14,6 +14,7 @@ export interface RuntimeInfo {
   projectRoot: string;
   gpuAvailable: boolean;
   gpuLabel: string;
+  packaged: boolean;
   frontendPreference: FrontendPreference;
 }
 
@@ -117,7 +118,7 @@ const demoSettings: ConverterSettings = {
 
 const demoBridge: JaneBridge = {
   async runtimeInfo() {
-    return { mode: "browser", pythonReady: false, ffmpegReady: false, pythonPath: "", dataRoot: "Project-local", projectRoot: "Project-local", gpuAvailable: false, gpuLabel: "Preview mode", frontendPreference: "tauri" };
+    return { mode: "browser", pythonReady: false, ffmpegReady: false, pythonPath: "", dataRoot: "Project-local", projectRoot: "Project-local", gpuAvailable: false, gpuLabel: "Preview mode", packaged: false, frontendPreference: "tauri" };
   },
   async settingsGet() { return { ...demoSettings }; },
   async settingsSave() {},
