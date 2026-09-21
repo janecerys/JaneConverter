@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-export type Category = "Music" | "Video" | "Image" | "Miscellaneous";
+export type Category = "Audio" | "Music" | "Video" | "Image" | "Miscellaneous";
 export type EventKind = "started" | "log" | "progress" | "status" | "finished" | "failed" | "cancelled";
 
 export interface RuntimeInfo {

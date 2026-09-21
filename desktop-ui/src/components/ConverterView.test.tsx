@@ -88,7 +88,7 @@ describe("Converter account access feedback", () => {
     view.container.remove();
   });
 
-  it("offers a preserve-quality intent preset without changing the chosen format", async () => {
+  it("offers a preserve-quality intent preset that selects source format", async () => {
     const view = renderView();
     const button = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Preserve Quality");
 
@@ -96,12 +96,25 @@ describe("Converter account access feedback", () => {
     await act(async () => { button?.click(); await Promise.resolve(); });
 
     expect(view.onSettings).toHaveBeenCalledWith(expect.objectContaining({
-      format: "mp3",
+      format: "source",
       resolution: "original",
       normalize: false,
       useGpu: false,
     }));
     expect(view.onStatus).toHaveBeenCalledWith(expect.stringContaining("Applied Preserve Quality preset"));
+
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
+  it("lets users clear the active preset and use custom settings", async () => {
+    const view = renderView();
+    const clearButton = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "No preset");
+
+    expect(clearButton).toBeDefined();
+    await act(async () => { clearButton?.click(); await Promise.resolve(); });
+
+    expect(view.onStatus).toHaveBeenCalledWith("No preset selected. Choose your own conversion settings.");
 
     await act(async () => { view.root.unmount(); });
     view.container.remove();

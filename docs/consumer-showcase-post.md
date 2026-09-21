@@ -39,13 +39,14 @@ We have all experienced a converter that says "Done 100%" only to leave behind a
 
 ### 4. 1-Click Intent Presets & Context-Aware UI
 Instead of forcing you to decipher complex codec matrices, JaneConverter introduces **Goal-Oriented Presets**:
-- 🎧 **Studio Master**: 24-bit 48kHz WAV with SoX precision resampling.
+- 🛡️ **Preserve Quality**: Raw source extraction without re-encoding passes.
+- 🎧 **Studio Master**: 32-bit 48kHz uncompressed WAV with SoX precision resampling.
 - 🎵 **Universal Music**: Pristine 320 kbps MP3 with EBU R128 broadcast normalization.
-- 💎 **Lossless FLAC**: 24-bit compressed archival quality with maximum compression ratio.
-- 🎬 **Universal Video**: High-efficiency MP4 (H.264/AAC, 1080p balanced) with hardware GPU acceleration.
-- 🖼️ **Web Image**: High-compression, lightweight WebP/PNG for high-performance publishing.
+- 💎 **Lossless FLAC**: 24-bit compressed archival quality at 48kHz.
+- 🎬 **Universal Video**: 1080p Full HD MP4 with hardware acceleration enabled.
+- 🖼️ **Lossless Image**: Lossless pixel-for-pixel PNG export.
 
-The interface dynamically adapts its sliders and menus based on whether you are working with **Music**, **Video**, or **Images**, keeping the workspace clean while tucking power-user parameters inside a collapsible drawer.
+The interface dynamically adapts its sliders and menus based on whether you are working with **Audio**, **Video**, or **Images**, keeping the workspace clean while tucking power-user parameters inside a collapsible drawer.
 
 ### 5. Multi-File Batch Queue with Sequential Protection
 Need to convert an entire album or a folder of video clips?

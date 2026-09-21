@@ -146,6 +146,26 @@ def format_duration(seconds: int) -> str:
         return f"{h}:{m:02d}:{s:02d}"
     return f"{m}:{s:02d}"
 
+
+def build_video_format_selector(resolution: str = "original") -> str:
+    """Build a yt-dlp selector that prioritizes source size over codec preference.
+
+    Codec-first selectors can choose a small AV1 or VP9 stream even when a larger
+    H.264/VP9 stream is available. The consumer-facing resolution choice should
+    limit the maximum size only when the user explicitly requests one.
+    """
+    max_heights = {
+        "4k": 2160,
+        "1440p": 1440,
+        "1080p": 1080,
+        "720p": 720,
+        "480p": 480,
+    }
+    max_height = max_heights.get((resolution or "original").lower())
+    if max_height is None:
+        return "bv*+ba/b"
+    return f"bv*[height<={max_height}]+ba/b[height<={max_height}]/best[height<={max_height}]"
+
 def download_and_convert_thumbnail(thumbnail_url: str, output_path: str) -> Optional[str]:
     """
     Downloads cover art or thumbnail from URL (or loads local image) and converts it to standard RGB JPEG.
@@ -454,6 +474,7 @@ def fetch_media_stream(
     source: str,
     output_dir: str,
     audio_only: bool = False,
+    resolution: str = "original",
     fallback_title: Optional[str] = None,
     fallback_artist: Optional[str] = None,
     abort_event: Optional[Any] = None,
@@ -610,19 +631,27 @@ def fetch_media_stream(
             total = d.get("total_bytes") or d.get("total_bytes_estimate") or 0
             downloaded = d.get("downloaded_bytes", 0)
             speed = d.get("speed", 0) or 0
-            speed_mb = speed / (1024 * 1024) if speed else 0.0
+            eta = d.get("eta")
             percent = (downloaded / total * 100.0) if total > 0 else 0.0
+
+            total_str = f"{total / (1024 * 1024):.2f}MiB" if total else "Unknown"
+            speed_str = f"{speed / (1024 * 1024):.2f}MiB/s" if speed else "Unknown B/s"
+            eta_str = f"{int(eta // 60):02d}:{int(eta % 60):02d}" if eta is not None else "Unknown"
+
             # Scale download phase from 15% to 75%
             scaled_pct = 0.15 + (percent / 100.0) * 0.60
-            report(scaled_pct, f"Downloading stream: {percent:.1f}% ({speed_mb:.1f} MB/s)")
+            report(scaled_pct, f"[download] {percent:5.1f}% of {total_str} at {speed_str} ETA {eta_str}")
         elif progress_callback and d.get("status") == "finished":
             report(0.75, "Stream download complete. Preparing conversion...", force=True)
 
     format_selector = (
         "ba[ext=m4a]/ba[ext=opus]/bestaudio/best"
         if audio_only
-        else "bv*[vcodec^=av01][height<=2160]+ba/bv*[vcodec^=vp9][height<=2160]+ba/bv*[height<=2160]+ba/b[height<=2160]/best"
+        else build_video_format_selector(resolution)
     )
+
+    from .converter import get_ffmpeg_binary
+    ffmpeg_bin = get_ffmpeg_binary()
 
     ydl_opts = {
         "format": format_selector,
@@ -631,12 +660,19 @@ def fetch_media_stream(
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
+        "noprogress": True,
         "concurrent_fragment_downloads": 4,
-        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+        # Prefer a direct HTTPS stream over an HLS fallback, then prefer the
+        # highest source bitrate at the requested resolution. This prevents
+        # YouTube's low-bitrate AV1 rendition from winning over its clearer
+        # direct VP9 rendition at the same resolution.
+        "format_sort": ["res", "fps", "proto:https", "br"],
         "js_runtimes": {"node": {"path": None}},
         "remote_components": ["ejs:github"],
         "progress_hooks": [progress_hook]
     }
+    if ffmpeg_bin and (os.path.isfile(ffmpeg_bin) or shutil.which(ffmpeg_bin)):
+        ydl_opts["ffmpeg_location"] = ffmpeg_bin
 
     try:
         info = None
@@ -706,6 +742,16 @@ def fetch_media_stream(
             categories = info.get("categories", []) or []
             webpage_url = info.get("webpage_url") or source
 
+            selected_width = info.get("width")
+            selected_height = info.get("height")
+            selected_format = info.get("format_note") or info.get("format_id") or "provider-selected stream"
+            if selected_width and selected_height:
+                report(
+                    0.75,
+                    f"Selected source stream: {selected_width}×{selected_height} ({selected_format}).",
+                    force=True,
+                )
+
             # Thumbnail download and conversion to JPEG
             thumb_url = (catalog_meta.get("thumbnail") if catalog_meta and catalog_meta.get("thumbnail") else None) or info.get("thumbnail")
             thumbnail_local_path = None
@@ -726,6 +772,12 @@ def fetch_media_stream(
                 "thumbnail_url": thumb_url or "",
                 "thumbnail_path": thumbnail_local_path,
                 "duration": info.get("duration", 0),
+                "source_format": selected_format,
+                "source_format_id": info.get("format_id", ""),
+                "source_width": selected_width,
+                "source_height": selected_height,
+                "source_video_codec": info.get("vcodec", ""),
+                "source_audio_codec": info.get("acodec", ""),
                 "source_type": source_type,
                 "is_local": False
             }

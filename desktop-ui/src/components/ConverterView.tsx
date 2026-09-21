@@ -34,11 +34,14 @@ import {
   detectCategoryFromPath,
   formatsFor,
   imageFormats,
+  imageQualityLabel,
   intentPresets,
   type IntentPreset,
   qualitiesFor,
+  resolutionLabel,
   resolutions,
   videoFormats,
+  videoQualityLabel,
 } from "../options";
 import { PlaylistDialog } from "./PlaylistDialog";
 
@@ -59,12 +62,14 @@ function SelectField({
   values,
   onChange,
   disabled = false,
+  formatValue,
 }: {
   label: string;
   value: string | number;
   values: Array<string | number>;
   onChange: (value: string) => void;
   disabled?: boolean;
+  formatValue?: (item: string | number) => string;
 }) {
   return (
     <label className="block min-w-0">
@@ -79,7 +84,7 @@ function SelectField({
         >
           {values.map((item) => (
             <option key={item} value={item}>
-              {String(item)}
+              {formatValue ? formatValue(item) : String(item)}
             </option>
           ))}
         </select>
@@ -169,7 +174,7 @@ export function ConverterView({
     ? selectedCapture.mediaKind === "image"
       ? "Image"
       : selectedCapture.mediaKind === "audio"
-      ? "Music"
+      ? "Audio"
       : "Video"
     : null;
   const capturedFormat = selectedCapture?.mediaKind
@@ -180,7 +185,7 @@ export function ConverterView({
       : "mp4"
     : null;
 
-  const activeCategory = capturedCategory || settings.category;
+  const activeCategory = (capturedCategory || settings.category) === "Music" ? "Audio" : (capturedCategory || settings.category);
   const activeFormat = capturedFormat || settings.format;
   const formats = useMemo(() => formatsFor(activeCategory), [activeCategory]);
   const qualities = useMemo(() => qualitiesFor(activeFormat), [activeFormat]);
@@ -211,7 +216,7 @@ export function ConverterView({
 
   useEffect(() => {
     if (!selectedCapture?.mediaKind) return;
-    const nextCategory = selectedCapture.mediaKind === "image" ? "Image" : selectedCapture.mediaKind === "audio" ? "Music" : "Video";
+    const nextCategory = selectedCapture.mediaKind === "image" ? "Image" : selectedCapture.mediaKind === "audio" ? "Audio" : "Video";
     const nextFormat = selectedCapture.mediaKind === "image" ? "jpg" : selectedCapture.mediaKind === "audio" ? "mp3" : "mp4";
     if (settings.category !== nextCategory || settings.format !== nextFormat) {
       onSettings({ ...settings, category: nextCategory, format: nextFormat, bitrate: qualitiesFor(nextFormat)[0] });
@@ -559,10 +564,12 @@ export function ConverterView({
   function applyPreset(preset: IntentPreset) {
     if (preset.preserveQuality) {
       update({
+        category: (["Audio", "Video", "Image"].includes(activeCategory) ? activeCategory : preset.category) as Category,
+        format: preset.format,
         resolution: "original",
         normalize: false,
         useGpu: false,
-        bitrate: qualitiesFor(activeFormat)[0],
+        bitrate: qualitiesFor(preset.format)[0],
       });
       setSelectedPresetId(preset.id);
       onStatus(`Applied ${preset.name} preset: ${preset.description}.`);
@@ -577,6 +584,7 @@ export function ConverterView({
       normalize: preset.normalize,
       useGpu: preset.useGpu,
     });
+    setSelectedPresetId(preset.id);
     onStatus(`Applied ${preset.name} preset: ${preset.description}.`);
   }
 
@@ -862,7 +870,7 @@ export function ConverterView({
             <div className="mt-0.5 text-xs text-zinc-600">Select an intent goal or fine-tune settings below.</div>
           </div>
           <div className="flex items-center gap-1 rounded-xl border border-white/[0.07] bg-black/15 p-1">
-            {(["Music", "Video", "Image", "Miscellaneous"] as const).map((category) => (
+            {(["Audio", "Video", "Image"] as const).map((category) => (
               <button
                 key={category}
                 type="button"
@@ -884,12 +892,25 @@ export function ConverterView({
             <span className="text-[11px] font-medium text-zinc-400">1-Click Presets:</span>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedPresetId(null);
+                setShowAdvanced(true);
+                onStatus("No preset selected. Choose your own conversion settings.");
+              }}
+              className={`rounded-lg px-2.5 py-1 text-xs transition-colors ${
+                selectedPresetId === null
+                  ? "text-white font-medium"
+                  : "border border-white/[0.08] bg-black/20 text-zinc-400 hover:border-white/[0.18] hover:text-white"
+              }`}
+              style={selectedPresetId === null ? { backgroundColor: "var(--accent-color, #c52b68)", boxShadow: "0 1px 6px var(--accent-glow, rgba(197,43,104,0.3))" } : undefined}
+              title="Pick quality and parameters manually"
+            >
+              No preset
+            </button>
             {intentPresets.map((preset) => {
-              const isSelected = preset.preserveQuality
-                ? selectedPresetId === preset.id
-                : settings.category === preset.category &&
-                  settings.format === preset.format &&
-                  settings.bitrate === preset.bitrate;
+              const isSelected = selectedPresetId === preset.id;
               return (
                 <button
                   key={preset.id}
@@ -916,6 +937,7 @@ export function ConverterView({
             label="Container format"
             value={activeFormat}
             values={formats}
+            formatValue={(format) => (format === "source" ? "Source (preserve original)" : String(format).toUpperCase())}
             onChange={(format) => update({ format, bitrate: qualitiesFor(format)[0] })}
           />
           <div className="flex items-end">
@@ -942,16 +964,18 @@ export function ConverterView({
               <div className="mt-4 border-t border-white/[0.06] pt-4">
                 <div className="grid gap-3 md:grid-cols-3">
                   <SelectField
-                    label={isVideo ? "Video quality" : isImage ? "Image quality" : "Audio bitrate / quality"}
+                    label={isVideo ? "Picture quality (compression)" : isImage ? "Image quality" : "Audio bitrate / quality"}
                     value={isImage ? "best" : settings.bitrate}
                     values={qualities}
+                    formatValue={(v) => (isVideo ? videoQualityLabel(String(v)) : isImage ? imageQualityLabel(String(v)) : String(v))}
                     onChange={(bitrate) => update({ bitrate })}
                   />
                   {isVideo && (
                     <SelectField
-                      label="Video resolution"
+                      label="Picture size (resolution)"
                       value={settings.resolution}
                       values={resolutions}
+                      formatValue={(v) => resolutionLabel(String(v))}
                       onChange={(resolution) => update({ resolution })}
                     />
                   )}

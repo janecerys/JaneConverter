@@ -7,6 +7,8 @@ import pytest
 
 from janeconverter.converter import (
     build_ffmpeg_args,
+    format_video_dimensions,
+    VIDEO_QUALITY_SETTINGS,
     get_unique_target_path,
     get_host_gpus,
     get_best_hardware_encoder
@@ -118,6 +120,56 @@ def test_build_ffmpeg_args_mp4_cpu():
     )
     assert "libx264" in cmd
     assert "h264_nvenc" not in cmd
+
+
+def test_best_video_quality_is_applied_to_each_hardware_encoder():
+    nvenc = build_ffmpeg_args(
+        input_path="input.mov", output_path="output.mp4", target_format="mp4",
+        bitrate="best", use_gpu=True, gpu_codec="h264_nvenc"
+    )
+    qsv = build_ffmpeg_args(
+        input_path="input.mov", output_path="output.mp4", target_format="mp4",
+        bitrate="best", use_gpu=True, gpu_codec="h264_qsv"
+    )
+    amf = build_ffmpeg_args(
+        input_path="input.mov", output_path="output.mp4", target_format="mp4",
+        bitrate="best", use_gpu=True, gpu_codec="h264_amf"
+    )
+    vaapi = build_ffmpeg_args(
+        input_path="input.mov", output_path="output.mp4", target_format="mp4",
+        bitrate="best", use_gpu=True, gpu_codec="h264_vaapi"
+    )
+
+    assert VIDEO_QUALITY_SETTINGS["best"]["crf"] == 16
+    assert nvenc[nvenc.index("-preset") + 1] == "p7"
+    assert nvenc[nvenc.index("-tune") + 1] == "hq"
+    assert nvenc[nvenc.index("-cq") + 1] == "16"
+    assert qsv[qsv.index("-global_quality") + 1] == "16"
+    assert amf[amf.index("-quality") + 1] == "quality"
+    assert "-rc" not in amf
+    assert vaapi[vaapi.index("-qp") + 1] == "16"
+
+
+def test_original_resolution_does_not_add_a_scale_filter():
+    cmd = build_ffmpeg_args(
+        input_path="input.mov", output_path="output.mp4", target_format="mp4",
+        bitrate="best", resolution="original", use_gpu=False
+    )
+    assert "-vf" not in cmd
+
+
+def test_best_cpu_video_quality_uses_a_quality_focused_preset():
+    cmd = build_ffmpeg_args(
+        input_path="input.mov", output_path="output.mp4", target_format="mp4",
+        bitrate="best", resolution="original", use_gpu=False
+    )
+    assert cmd[cmd.index("-preset") + 1] == "slow"
+    assert cmd[cmd.index("-crf") + 1] == "16"
+
+
+def test_format_video_dimensions_reports_source_and_output_size():
+    probe = {"streams": [{"codec_type": "video", "width": 3840, "height": 2160}]}
+    assert format_video_dimensions(probe) == "3840×2160 (4K Ultra HD)"
 
 def test_build_ffmpeg_args_mp4_amf():
     cmd = build_ffmpeg_args(

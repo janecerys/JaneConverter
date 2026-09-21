@@ -64,12 +64,24 @@ def test_is_stream_copy_safe_guardrails(tmp_path):
             {"codec_type": "audio", "codec_name": "aac", "sample_rate": "48000"}
         ]
     }
+    # Video cover thumbnails are not embedded into video outputs, so they must
+    # not force an otherwise compatible video to be re-encoded.
+    assert is_stream_copy_safe(
+        "dummy.mp4",
+        "mp4",
+        sample_rate=48000,
+        cover_path=str(cover),
+        probed_info=mock_mp4,
+    )
     # MP4 to MP4: safe
     assert is_stream_copy_safe("dummy.mp4", "mp4", sample_rate=48000, probed_info=mock_mp4)
     # MP4 to WEBM (incompatible codecs h264/aac in webm): unsafe
     assert not is_stream_copy_safe("dummy.mp4", "webm", sample_rate=48000, probed_info=mock_mp4)
-    # Sample rate change requested (48000 -> 44100): unsafe
-    assert not is_stream_copy_safe("dummy.mp4", "mp4", sample_rate=44100, probed_info=mock_mp4)
+    # Video conversion does not change audio sample rate, so the UI's audio
+    # sample-rate default must not force a video re-encode.
+    assert is_stream_copy_safe("dummy.mp4", "mp4", sample_rate=44100, probed_info=mock_mp4)
+    # Audio extraction still must reject a requested sample-rate change.
+    assert not is_stream_copy_safe("dummy.mp4", "m4a", sample_rate=44100, probed_info=mock_mp4)
     # Extract AAC audio to m4a: safe
     assert is_stream_copy_safe("dummy.mp4", "m4a", sample_rate=48000, probed_info=mock_mp4)
     # Extract AAC audio to mp3: unsafe (needs transcode)
@@ -129,3 +141,34 @@ def test_convert_media_stream_copy_e2e(tmp_path):
     info = probe_media_streams(result)
     assert info is not None
     assert any(s.get("codec_name") == "mp3" for s in info.get("streams", []))
+
+
+def test_convert_media_preserve_quality_source_format(tmp_path):
+    ffmpeg = get_ffmpeg_binary()
+    source_mp4 = tmp_path / "source.mp4"
+
+    # Generate a short 0.2s valid test mp4 video with ffmpeg
+    subprocess.run(
+        [ffmpeg, "-y", "-f", "lavfi", "-i", "testsrc=duration=0.2:size=320x240:rate=10",
+         "-f", "lavfi", "-i", "sine=frequency=440:duration=0.2",
+         "-c:v", "libx264", "-c:a", "aac", str(source_mp4)],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        check=True
+    )
+
+    output_dir = str(tmp_path / "out_raw")
+    result = convert_media(
+        input_path=str(source_mp4),
+        output_dir=output_dir,
+        output_filename="raw_video",
+        target_format="source",
+    )
+
+    assert os.path.isfile(result)
+    assert result.endswith(".mp4")
+    assert os.path.getsize(result) == os.path.getsize(str(source_mp4))
+    info = probe_media_streams(result)
+    assert info is not None
+    assert any(s.get("codec_type") == "video" for s in info.get("streams", []))
+

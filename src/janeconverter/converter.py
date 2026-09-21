@@ -19,8 +19,8 @@ SUPPORTED_AUDIO_FORMATS = {"mp3", "wav", "flac", "aac", "m4a", "ogg"}
 SUPPORTED_VIDEO_FORMATS = {"mp4", "mkv", "webm", "mov", "gif"}
 SUPPORTED_IMAGE_FORMATS = {"jpg", "jpeg", "png", "webp"}
 VIDEO_QUALITY_SETTINGS = {
-    "best": {"crf": 18, "audio_bitrate": "192k", "gif_fps": 30},
-    "high": {"crf": 20, "audio_bitrate": "160k", "gif_fps": 24},
+    "best": {"crf": 16, "audio_bitrate": "192k", "gif_fps": 30},
+    "high": {"crf": 18, "audio_bitrate": "160k", "gif_fps": 24},
     "balanced": {"crf": 23, "audio_bitrate": "128k", "gif_fps": 15},
     "small": {"crf": 28, "audio_bitrate": "96k", "gif_fps": 10},
 }
@@ -134,6 +134,32 @@ def probe_media_streams(input_path: str) -> Optional[Dict[str, Any]]:
         pass
     return None
 
+def format_video_dimensions(probe: Optional[Dict[str, Any]]) -> str:
+    """Format the primary video stream resolution in consumer-facing text."""
+    if not probe or not probe.get("streams"):
+        return "unknown size"
+    for stream in probe.get("streams", []):
+        if stream.get("codec_type") != "video":
+            continue
+        width = stream.get("width")
+        height = stream.get("height")
+        if not width or not height:
+            continue
+        try:
+            width_int, height_int = int(width), int(height)
+        except (TypeError, ValueError):
+            continue
+        if width_int >= 3840 and height_int >= 2160:
+            return f"{width_int}×{height_int} (4K Ultra HD)"
+        if width_int >= 2560 and height_int >= 1440:
+            return f"{width_int}×{height_int} (1440p)"
+        if width_int >= 1920 and height_int >= 1080:
+            return f"{width_int}×{height_int} (Full HD)"
+        if width_int >= 1280 and height_int >= 720:
+            return f"{width_int}×{height_int} (HD)"
+        return f"{width_int}×{height_int}"
+    return "unknown size"
+
 def validate_output_file(
     output_path: str,
     target_format: str,
@@ -224,7 +250,7 @@ def is_stream_copy_safe(
     """
     if normalize_audio:
         return False
-    if cover_path and os.path.exists(cover_path):
+    if target_format.lower().strip(".") in SUPPORTED_AUDIO_FORMATS and cover_path and os.path.exists(cover_path):
         return False
     if resolution and resolution.lower() != "original":
         return False
@@ -271,9 +297,6 @@ def is_stream_copy_safe(
         v_codec = (v_stream.get("codec_name") or "").lower()
         a_codec = (audio_streams[0].get("codec_name") or "").lower() if audio_streams else None
         a_sr = audio_streams[0].get("sample_rate") if audio_streams else None
-
-        if sample_rate and a_sr and str(sample_rate) != str(a_sr):
-            return False
 
         if target_format == "mp4":
             v_ok = v_codec in ("h264", "hevc", "av1")
@@ -509,6 +532,79 @@ def _detect_best_hardware_encoder(preferred_codec: Optional[str] = None) -> Dict
         "args": ["-c:v", "libx264", "-preset", "veryfast", "-crf", "22", "-pix_fmt", "yuv420p"]
     }
 
+
+def _apply_video_quality_to_encoder_args(
+    encoder_args: list,
+    encoder: str,
+    quality_name: str,
+    resolution: str = "original",
+) -> list:
+    """Apply the selected visual-quality level and optimal VBR rate control to each hardware encoder."""
+    quality = VIDEO_QUALITY_SETTINGS.get(
+        (quality_name or "").lower(), VIDEO_QUALITY_SETTINGS["balanced"]
+    )
+    crf = str(quality["crf"])
+    args = list(encoder_args)
+
+    def replace_value(option: str, value: str) -> None:
+        if option in args:
+            args[args.index(option) + 1] = value
+
+    if encoder == "h264_nvenc":
+        res_lower = (resolution or "original").lower()
+        if "4k" in res_lower or "2160" in res_lower:
+            maxrate = "60M"
+            bufsize = "120M"
+        elif "1440" in res_lower:
+            maxrate = "35M"
+            bufsize = "70M"
+        elif "1080" in res_lower:
+            maxrate = "20M"
+            bufsize = "40M"
+        elif "720" in res_lower:
+            maxrate = "12M"
+            bufsize = "24M"
+        else:
+            maxrate = "60M"
+            bufsize = "120M"
+
+        return [
+            "-c:v", "h264_nvenc",
+            "-preset", "p7",
+            "-tune", "hq",
+            "-rc:v", "vbr",
+            "-cq", crf,
+            "-qmin", crf,
+            "-qmax", str(int(crf) + 4),
+            "-maxrate", maxrate,
+            "-bufsize", bufsize,
+            "-profile:v", "high",
+            "-spatial_aq", "1",
+            "-temporal_aq", "1",
+            "-pix_fmt", "yuv420p",
+        ]
+    elif encoder == "h264_qsv":
+        replace_value("-global_quality", crf)
+    elif encoder == "h264_vaapi":
+        replace_value("-qp", crf)
+    elif encoder == "h264_amf":
+        replace_value("-quality", {
+            "best": "quality",
+            "high": "quality",
+            "balanced": "balanced",
+            "small": "speed",
+        }.get((quality_name or "").lower(), "balanced"))
+    elif encoder == "h264_videotoolbox":
+        replace_value("-q:v", {
+            "best": "75",
+            "high": "65",
+            "balanced": "55",
+            "small": "40",
+        }.get((quality_name or "").lower(), "55"))
+
+    return args
+
+
 def build_ffmpeg_args(
     input_path: str,
     output_path: str,
@@ -683,13 +779,19 @@ def build_ffmpeg_args(
                         # Software decode: upload frames to the VAAPI render device before encoding
                         video_filters.append("format=nv12")
                         video_filters.append("hwupload")
-                    encoder_args = list(enc_spec["args"])
-                    if enc_spec["encoder"] == "h264_nvenc" and "-cq" in encoder_args:
-                        encoder_args[encoder_args.index("-cq") + 1] = str(video_quality["crf"])
+                    encoder_args = _apply_video_quality_to_encoder_args(
+                        enc_spec["args"], enc_spec["encoder"], (bitrate or "").lower(), resolution=resolution
+                    )
                     cmd.extend(encoder_args)
                 else:
+                    cpu_preset = {
+                        "best": "slow",
+                        "high": "medium",
+                        "balanced": "veryfast",
+                        "small": "veryfast",
+                    }.get((bitrate or "").lower(), "veryfast")
                     cmd.extend([
-                        "-c:v", "libx264", "-preset", "veryfast",
+                        "-c:v", "libx264", "-preset", cpu_preset,
                         "-crf", str(video_quality["crf"]), "-pix_fmt", "yuv420p"
                     ])
 
@@ -747,6 +849,27 @@ def convert_media(
     """
     os.makedirs(output_dir, exist_ok=True)
     target_format = target_format.lower().strip(".")
+
+    if target_format in ("source", "original", ""):
+        # Preserve Quality Fast-Path: Zero conversion or re-encoding. Keep the pristine raw file!
+        def report_raw(frac: float, msg: str):
+            if progress_callback:
+                progress_callback(frac, msg)
+
+        _, in_ext = os.path.splitext(input_path)
+        actual_ext = in_ext.lower().lstrip(".") or "media"
+        raw_stem, _ = os.path.splitext(output_filename)
+        dest_filename = f"{raw_stem}.{actual_ext}" if not output_filename.lower().endswith(f".{actual_ext}") else output_filename
+        destination_path = get_unique_target_path(output_dir, dest_filename)
+
+        report_raw(0.70, f"Preserving source quality: keeping raw {actual_ext.upper()} stream without re-encoding...")
+        if os.path.abspath(input_path) != os.path.abspath(destination_path):
+            shutil.copy2(input_path, destination_path)
+
+        validate_output_file(destination_path, actual_ext)
+        report_raw(1.0, f"Conversion complete: {os.path.basename(destination_path)}")
+        return destination_path
+
     active_gpu = use_gpu if use_gpu is not None else use_nvenc
     known_media_exts = {
         ".mp3", ".wav", ".flac", ".aac", ".ogg", ".opus", ".m4a",

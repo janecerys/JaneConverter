@@ -5,14 +5,44 @@ export const videoFormats = ["mp4", "mkv", "webm", "mov", "gif"];
 export const imageFormats = ["jpg", "png", "webp"];
 export const resolutions = ["original", "4k", "1440p", "1080p", "720p", "480p"];
 
+const VIDEO_QUALITY_LABELS: Record<string, string> = {
+  best: "Highest video quality — largest file",
+  high: "High video quality — large file",
+  balanced: "Good quality — recommended",
+  small: "Smaller file — more compression",
+};
+
+const RESOLUTION_LABELS: Record<string, string> = {
+  original: "Keep original size — do not resize",
+  "4k": "4K Ultra HD — 2160p",
+  "1440p": "2.5K — 1440p",
+  "1080p": "Full HD — 1080p",
+  "720p": "HD — 720p",
+  "480p": "SD — 480p",
+};
+
+export function videoQualityLabel(value: string): string {
+  return VIDEO_QUALITY_LABELS[value] ?? value;
+}
+
+export function resolutionLabel(value: string): string {
+  return RESOLUTION_LABELS[value] ?? value;
+}
+
+export function imageQualityLabel(value: string): string {
+  if (value === "best") return "Lossless pixel-for-pixel (PNG)";
+  return value;
+}
+
 export function formatsFor(category: Category): string[] {
-  if (category === "Video") return [...videoFormats];
-  if (category === "Image") return [...imageFormats];
-  if (category === "Miscellaneous") return [...audioFormats, ...videoFormats, ...imageFormats];
-  return [...audioFormats];
+  if (category === "Video") return ["source", ...videoFormats];
+  if (category === "Image") return ["source", ...imageFormats];
+  if (category === "Miscellaneous") return ["source", ...videoFormats, ...audioFormats, ...imageFormats];
+  return ["source", ...audioFormats];
 }
 
 export function qualitiesFor(format: string): string[] {
+  if (format === "source") return ["best"];
   if (format === "wav") return ["16-bit", "24-bit", "32-bit"];
   if (format === "flac") return ["16-bit", "24-bit"];
   if (format === "ogg") return ["q10", "q8", "q6", "q4"];
@@ -39,8 +69,8 @@ export const intentPresets: IntentPreset[] = [
   {
     id: "preserve-quality",
     name: "Preserve Quality",
-    description: "Keep the selected format and skip quality-changing processing; use lossless stream copy when compatible",
-    category: "Miscellaneous",
+    description: "Keep source quality: takes the raw file or highest-quality stream without re-encoding",
+    category: "Video",
     format: "source",
     bitrate: "best",
     sampleRate: 48000,
@@ -52,10 +82,10 @@ export const intentPresets: IntentPreset[] = [
   {
     id: "studio-master",
     name: "Studio Master",
-    description: "24-bit uncompressed WAV at 48kHz without dynamic compression",
-    category: "Music",
+    description: "32-bit uncompressed WAV at 48kHz without dynamic compression, with cover art and credits",
+    category: "Audio",
     format: "wav",
-    bitrate: "24-bit",
+    bitrate: "32-bit",
     sampleRate: 48000,
     resolution: "original",
     normalize: false,
@@ -64,8 +94,8 @@ export const intentPresets: IntentPreset[] = [
   {
     id: "universal-music",
     name: "Universal Music",
-    description: "High-bitrate 320k MP3 with EBU R128 (-14 LUFS) streaming normalization",
-    category: "Music",
+    description: "High-bitrate 320k MP3 with EBU R128 (-14 LUFS) streaming volume leveling, cover art, and credits",
+    category: "Audio",
     format: "mp3",
     bitrate: "320k",
     sampleRate: 48000,
@@ -76,8 +106,8 @@ export const intentPresets: IntentPreset[] = [
   {
     id: "lossless-flac",
     name: "Lossless FLAC",
-    description: "Pristine 24-bit FLAC for archival and audiophile listening",
-    category: "Music",
+    description: "Pristine 24-bit FLAC archive at 48kHz with cover art and credits",
+    category: "Audio",
     format: "flac",
     bitrate: "24-bit",
     sampleRate: 48000,
@@ -88,33 +118,21 @@ export const intentPresets: IntentPreset[] = [
   {
     id: "universal-video",
     name: "Universal Video",
-    description: "High-compatibility MP4 with original resolution and hardware acceleration",
+    description: "Standard 1080p Full HD MP4 with recommended picture quality",
     category: "Video",
     format: "mp4",
-    bitrate: "best",
+    bitrate: "balanced",
     sampleRate: 48000,
-    resolution: "original",
+    resolution: "1080p",
     normalize: false,
     useGpu: true,
   },
   {
     id: "lossless-image",
     name: "Lossless Image",
-    description: "Crisp, uncompressed PNG with maximum visual fidelity",
+    description: "Uncompressed pixel-for-pixel PNG preserving original full image dimensions and clarity",
     category: "Image",
     format: "png",
-    bitrate: "best",
-    sampleRate: 48000,
-    resolution: "original",
-    normalize: false,
-    useGpu: false,
-  },
-  {
-    id: "web-image",
-    name: "Web Image",
-    description: "Modern high-efficiency WebP image for web and social media",
-    category: "Image",
-    format: "webp",
     bitrate: "best",
     sampleRate: 48000,
     resolution: "original",
@@ -129,7 +147,7 @@ export function detectCategoryFromPath(pathOrUrl: string): Category | null {
   const lastDot = cleanPath.lastIndexOf(".");
   if (lastDot === -1) return null;
   const ext = cleanPath.slice(lastDot + 1).toLowerCase();
-  if (audioFormats.includes(ext) || ["opus", "alac", "aiff", "wma"].includes(ext)) return "Music";
+  if (audioFormats.includes(ext) || ["opus", "alac", "aiff", "wma"].includes(ext)) return "Audio";
   if (videoFormats.includes(ext) || ["avi", "ts", "m2ts", "flv"].includes(ext)) return "Video";
   if (imageFormats.includes(ext) || ["jpeg", "bmp", "svg", "tiff", "ico"].includes(ext)) return "Image";
   return null;

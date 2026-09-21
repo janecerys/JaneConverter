@@ -32,7 +32,11 @@ export function ConsoleView({
       const collapsed: ConverterEvent[] = [];
       let lastWasProgress = false;
       for (const event of events) {
-        const isProgress = event.kind === "progress" || (event.progress !== undefined && event.kind === "status");
+        const isProgress =
+          event.kind === "progress" ||
+          (event.progress !== undefined && event.kind === "status") ||
+          event.message.includes("[download]") ||
+          event.message.includes("Downloading stream:");
         if (isProgress) {
           if (lastWasProgress && collapsed.length > 0) {
             collapsed[collapsed.length - 1] = event;
@@ -260,7 +264,7 @@ export function ConsoleView({
                       {Math.round(event.progress * 100)}%
                     </span>
                   )}
-                  {event.message}
+                  {event.message.replace(/^\[\d+%\]\s*/, "")}
                 </div>
               ))}
             </div>

@@ -1,6 +1,6 @@
 use crate::model::{ConversionRequest, ConverterEvent, PlaylistCatalog, PlaylistItem};
 use crate::paths::{find_python, packaged_engine, prepare_command, project_root};
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufReader, Read};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,19 +26,47 @@ pub fn emit_event(app: &tauri::AppHandle, event: ConverterEvent) {
 
 pub fn forward_output<R: Read + Send + 'static>(reader: R, app: tauri::AppHandle, job_id: String) {
     thread::spawn(move || {
-        for line in BufReader::new(reader).lines().map_while(Result::ok) {
-            let message = line.trim_end().to_owned();
+        let mut buf_reader = BufReader::new(reader);
+        let mut line_buf = Vec::new();
+
+        loop {
+            line_buf.clear();
+            let mut byte = [0u8; 1];
+            loop {
+                match buf_reader.read(&mut byte) {
+                    Ok(0) => break,
+                    Ok(_) => {
+                        if byte[0] == b'\n' || byte[0] == b'\r' {
+                            break;
+                        }
+                        line_buf.push(byte[0]);
+                    }
+                    Err(_) => break,
+                }
+            }
+
+            if line_buf.is_empty() && byte[0] == 0 {
+                break;
+            }
+
+            if line_buf.is_empty() {
+                continue;
+            }
+
+            let message = String::from_utf8_lossy(&line_buf).trim().to_owned();
+            if message.is_empty() {
+                continue;
+            }
+
             let progress = progress_from_line(&message);
+            let is_progress = progress.is_some()
+                || message.starts_with("[download]")
+                || message.contains("Downloading stream:");
             emit_event(
                 &app,
                 ConverterEvent {
                     job_id: job_id.clone(),
-                    kind: if progress.is_some() {
-                        "progress"
-                    } else {
-                        "log"
-                    }
-                    .into(),
+                    kind: if is_progress { "progress" } else { "log" }.into(),
                     message,
                     progress,
                     output: None,

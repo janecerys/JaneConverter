@@ -28,7 +28,7 @@ Desktop.ini
 .janecoverter-data/
 logs/
 config.json
-native.settings
+*.settings
 desktop-ui/.npm-cache/
 desktop-ui/.cargo-target/
 .cargo-local/

@@ -49,10 +49,17 @@ def media_library_folder(
 ) -> str:
     """Return the organized library folder for a converted item."""
     normalized_format = target_format.lower().strip(".")
-    media_kind = "Music" if normalized_format in SUPPORTED_AUDIO_FORMATS else "Images" if normalized_format in SUPPORTED_IMAGE_FORMATS else "Videos"
     category = str(content_category or "").strip().lower()
+    if category == "audio":
+        media_kind = "Audio"
+    elif category == "music" or normalized_format in SUPPORTED_AUDIO_FORMATS:
+        media_kind = "Music"
+    elif category in ("image", "images") or normalized_format in SUPPORTED_IMAGE_FORMATS:
+        media_kind = "Images"
+    else:
+        media_kind = "Videos"
     if category in ("miscellaneous", "misc"):
-        misc_kind = "Audio" if media_kind == "Music" else "Images" if media_kind == "Images" else "Videos"
+        misc_kind = "Audio" if media_kind in ("Music", "Audio") else "Images" if media_kind == "Images" else "Videos"
         return os.path.join(output_dir, "Miscellaneous", misc_kind)
     source_labels = {
         "spotify": "Spotify",
@@ -249,7 +256,9 @@ def process_conversion(
             print(f"[{int(pct * 100)}%] {msg}")
 
     target_format = target_format.lower().strip(".")
-    is_audio_target = target_format in SUPPORTED_AUDIO_FORMATS
+    is_audio_target = target_format in SUPPORTED_AUDIO_FORMATS or (
+        target_format in ("source", "original") and str(content_category or "").lower() in ("audio", "music")
+    )
     is_image_target = target_format in SUPPORTED_IMAGE_FORMATS
 
     job_id = uuid.uuid4().hex[:8]
@@ -275,6 +284,7 @@ def process_conversion(
             source=source,
             output_dir=work_dir,
             audio_only=is_audio_target,
+            resolution=resolution,
             abort_event=abort_event,
             progress_callback=report,
             auth_browser=auth_browser,
@@ -327,7 +337,10 @@ def process_conversion(
             print(f"[+] Saved metadata: {os.path.basename(meta_path)}")
 
         # Stage 2: Transcode & Cover Art Embedding
-        report(0.70, f"Transcoding to {target_format.upper()} (Bitrate: {bitrate})...")
+        if target_format in ("source", "original"):
+            report(0.70, "Exporting raw media stream without re-encoding...")
+        else:
+            report(0.70, f"Transcoding to {target_format.upper()} (Bitrate: {bitrate})...")
         metadata = {
             "title": title,
             "artist": artist,
@@ -536,6 +549,7 @@ def process_playlist_conversion(
                     source=item_url,
                     output_dir=track_work_dir,
                     audio_only=is_audio_target,
+                    resolution=resolution,
                     fallback_title=raw_title,
                     fallback_artist=artist,
                     abort_event=abort_event,
@@ -699,8 +713,8 @@ def process_playlist_conversion(
         "failed_files": failed_files
     }
 
-CLI_FORMATS = sorted(SUPPORTED_AUDIO_FORMATS | SUPPORTED_VIDEO_FORMATS | SUPPORTED_IMAGE_FORMATS)
-CLI_CATEGORIES = ("Music", "Video", "Image", "Miscellaneous")
+CLI_FORMATS = sorted(SUPPORTED_AUDIO_FORMATS | SUPPORTED_VIDEO_FORMATS | SUPPORTED_IMAGE_FORMATS | {"source", "original"})
+CLI_CATEGORIES = ("Music", "Audio", "Video", "Image", "Miscellaneous")
 CLI_BITRATES = {"320k", "256k", "192k", "128k"}
 CLI_BIT_DEPTHS = {"16-bit", "24-bit", "32-bit", "32-bit float"}
 CLI_OGG_QUALITIES = {"q10", "q8", "q6", "q4"}
@@ -730,6 +744,13 @@ def parse_playlist_indexes(value: str, total: int, parser: argparse.ArgumentPars
 def validate_cli_args(args, parser: argparse.ArgumentParser):
     """Validates CLI argument combinations, exiting with a clear message on invalid input."""
     fmt = args.format.lower().strip(".")
+    bitrate = (getattr(args, "bitrate", "best") or "best").lower().strip()
+
+    if fmt in ("source", "original"):
+        if args.playlist and not is_url(args.source):
+            parser.error("--playlist requires a URL; a local file path cannot be a playlist.")
+        return fmt, bitrate
+
     if fmt not in SUPPORTED_AUDIO_FORMATS and fmt not in SUPPORTED_VIDEO_FORMATS and fmt not in SUPPORTED_IMAGE_FORMATS:
         parser.error(f"Unsupported format '{args.format}'. Choose from: {', '.join(CLI_FORMATS)}")
 

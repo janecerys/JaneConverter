@@ -205,6 +205,13 @@ def test_validate_cli_args_accepts_valid_input():
     assert bitrate == "320k"
 
 
+def test_validate_cli_args_accepts_source_format():
+    parser = _make_parser()
+    fmt, bitrate = validate_cli_args(_args(parser, format="source", bitrate="best"), parser)
+    assert fmt == "source"
+    assert bitrate == "best"
+
+
 @pytest.mark.parametrize("overrides", [
     {"format": "mp6"},
     {"bitrate": "999k", "format": "mp3"},
