@@ -13,12 +13,15 @@ pub const CREATE_NO_WINDOW: u32 = 0x08000000;
 pub fn project_root() -> PathBuf {
     if let Ok(executable) = std::env::current_exe() {
         if let Some(directory) = executable.parent() {
-            let candidates = [
+            let mut candidates = vec![
                 directory.to_path_buf(),
                 directory.join("resources").join("runtime"),
                 directory.join("runtime"),
                 directory.join("resources"),
             ];
+            if let Some(runtime) = macos_bundle_runtime(directory) {
+                candidates.insert(0, runtime);
+            }
             for candidate in candidates {
                 if is_runtime_root(&candidate) {
                     return candidate;
@@ -31,6 +34,24 @@ pub fn project_root() -> PathBuf {
         .and_then(Path::parent)
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn macos_bundle_runtime(executable_directory: &Path) -> Option<PathBuf> {
+    if executable_directory.file_name()?.to_str()? != "MacOS" {
+        return None;
+    }
+    let contents = executable_directory.parent()?;
+    if contents.file_name()?.to_str()? != "Contents" {
+        return None;
+    }
+    Some(contents.join("Resources").join("runtime"))
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_user_data_root(home: &Path) -> PathBuf {
+    home.join("Library")
+        .join("Application Support")
+        .join("JaneConverter")
 }
 
 fn is_runtime_root(directory: &Path) -> bool {
@@ -74,7 +95,12 @@ fn user_data_root() -> PathBuf {
         return PathBuf::from(root).join("JaneConverter");
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(target_os = "macos")]
+    if let Some(home) = std::env::var_os("HOME") {
+        return macos_user_data_root(&PathBuf::from(home));
+    }
+
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
     {
         if let Some(root) = std::env::var_os("XDG_DATA_HOME") {
             return PathBuf::from(root).join("JaneConverter");
@@ -177,6 +203,9 @@ fn runtime_bin_candidates() -> Vec<PathBuf> {
     let mut candidates = vec![project_root().join("bin")];
     if let Ok(executable) = std::env::current_exe() {
         if let Some(directory) = executable.parent() {
+            if let Some(runtime) = macos_bundle_runtime(directory) {
+                candidates.push(runtime.join("bin"));
+            }
             candidates.extend([
                 directory.join("bin"),
                 directory.join("resources").join("runtime").join("bin"),
@@ -237,6 +266,9 @@ pub fn find_ffmpeg() -> PathBuf {
     ];
     if let Ok(executable) = std::env::current_exe() {
         if let Some(directory) = executable.parent() {
+            if let Some(runtime) = macos_bundle_runtime(directory) {
+                candidates.push(runtime.join("bin").join(ffmpeg_name()));
+            }
             candidates.extend([
                 directory.join(ffmpeg_name()),
                 directory.join("bin").join(ffmpeg_name()),
@@ -286,7 +318,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn recognizes_packaged_engine_names_on_both_release_platforms() {
+    fn recognizes_packaged_engine_names_on_release_platforms() {
         assert!(packaged_engine(Path::new(
             "runtime/engine/JaneConverterEngine"
         )));
@@ -316,6 +348,26 @@ mod tests {
             } else {
                 "JaneConverterEngine"
             })
+        );
+    }
+
+    #[test]
+    fn resolves_runtime_beneath_a_macos_app_bundle() {
+        let executable_directory = Path::new("/Applications/JaneConverter.app/Contents/MacOS");
+        assert_eq!(
+            macos_bundle_runtime(executable_directory),
+            Some(PathBuf::from(
+                "/Applications/JaneConverter.app/Contents/Resources/runtime"
+            ))
+        );
+        assert_eq!(macos_bundle_runtime(Path::new("/opt/JaneConverter")), None);
+    }
+
+    #[test]
+    fn uses_macos_application_support_for_user_data() {
+        assert_eq!(
+            macos_user_data_root(Path::new("/Users/jane")),
+            PathBuf::from("/Users/jane/Library/Application Support/JaneConverter")
         );
     }
 }

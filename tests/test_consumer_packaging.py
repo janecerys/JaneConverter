@@ -21,6 +21,7 @@ def test_manifest_defines_one_ui_engine_and_toolset():
     assert manifest["ui"] == {
         "windows": "JaneConverter.exe",
         "linux": "JaneConverter",
+        "macos": "JaneConverter.app",
     }
     assert manifest["private_runtime"] == "resources/runtime"
     assert manifest["documents"] == ["LICENSE"]
@@ -32,7 +33,16 @@ def test_manifest_defines_one_ui_engine_and_toolset():
         "node.exe",
     ]
     assert manifest["tools"]["linux"] == ["ffmpeg", "ffprobe", "node"]
-    assert len(manifest["artifacts"]) == 3
+    assert manifest["engine"]["macos"] == "JaneConverterEngine"
+    assert manifest["tools"]["macos"] == ["ffmpeg", "ffprobe", "node"]
+    assert manifest["artifacts"] == [
+        "JaneConverter-<version>-windows-x64-setup.exe",
+        "JaneConverter-<version>-windows-x64-portable.zip",
+        "JaneConverter-<version>-linux-x86_64.tar.gz",
+        "JaneConverter-<version>-macos-arm64.dmg",
+        "JaneConverter-<version>-macos-x86_64.dmg",
+    ]
+    assert len(manifest["artifacts"]) == 5
 
 
 def test_windows_build_stages_one_private_runtime_for_both_outputs():
@@ -65,7 +75,31 @@ def test_linux_build_is_x86_64_tarball_without_appimage():
     assert "AppImage" not in script
 
 
-def test_tauri_runtime_paths_support_frozen_windows_and_linux_engines():
+def test_macos_build_is_native_arch_specific_and_ad_hoc_signed():
+    script = read("packaging/build_macos.sh")
+
+    assert script.startswith("#!/usr/bin/env bash")
+    assert '"$(uname -s)" != "Darwin"' in script
+    assert '"arm64"' in script and '"x86_64"' in script
+    assert "sysctl.proc_translated" in script
+    for option in ("--ffmpeg", "--ffprobe", "--node", "--output-dir", "--keep-staging"):
+        assert option in script
+    assert "uv run --locked pyinstaller" in script
+    assert "--onedir" in script and "--onefile" not in script
+    assert 'RUNTIME_ROOT="$STAGING_ROOT/runtime"' in script
+    assert "install -m 0755" in script
+    assert "assert_macho_arch" in script
+    assert "xattr -dr com.apple.quarantine" in script
+    assert "codesign --force --sign -" in script
+    assert 'config["bundle"]["targets"] = ["dmg"]' in script
+    assert 'setdefault("macOS", {})["signingIdentity"] = "-"' in script
+    assert "macos-$ARCH.dmg" in script
+    assert "shasum -a 256" in script
+    assert "uv run --locked python" in script
+    assert "python3" not in script and "pip " not in script
+
+
+def test_tauri_runtime_paths_support_frozen_windows_linux_and_macos_engines():
     paths = read("desktop-ui/src-tauri/src/paths.rs")
     process = read("desktop-ui/src-tauri/src/process.rs")
 
@@ -78,6 +112,10 @@ def test_tauri_runtime_paths_support_frozen_windows_and_linux_engines():
     assert 'command.env("JANECONVERTER_DATA_DIR"' in paths
     assert 'var_os("XDG_DATA_HOME")' in paths
     assert 'var_os("LOCALAPPDATA")' in paths
+    assert 'join("Library")' in paths
+    assert 'join("Application Support")' in paths
+    assert 'join("Resources").join("runtime")' in paths
+    assert "macos_bundle_runtime(directory)" in paths
     assert 'join("pyproject.toml")' in paths
     assert 'join("uv.lock")' in paths
     assert '"run", "--locked", "janeconverter"' in process
@@ -93,20 +131,39 @@ def test_tauri_relaunch_starts_the_current_desktop_executable():
     assert "run_converter.sh" not in relaunch
 
 
-def test_release_workflow_builds_and_publishes_only_agreed_platforms():
+def test_release_workflow_builds_and_publishes_all_agreed_platforms():
     workflow = read(".github/workflows/release.yml")
 
     assert "workflow_dispatch:" in workflow
     assert 'tags:\n      - "v*"' in workflow
     assert "windows-latest" in workflow
     assert "ubuntu-22.04" in workflow
+    assert "- arch: arm64\n            runner: macos-latest" in workflow
+    assert "- arch: x86_64\n            runner: macos-15-intel" in workflow
+    assert "arch: arm64" in workflow and "arch: x86_64" in workflow
+    assert 'node-version: "22"' in workflow
+    assert 'command -v node' in workflow
+    assert "eugeneware/ffmpeg-static/releases/download/b6.1.1" in workflow
+    assert "ffmpeg-darwin-arm64" in workflow
+    assert "ffprobe-darwin-arm64" in workflow
+    assert "ffmpeg-darwin-x64" in workflow
+    assert "ffprobe-darwin-x64" in workflow
+    for checksum in (
+        "a90e3db6a3fd35f6074b013f948b1aa45b31c6375489d39e572bea3f18336584",
+        "bb2db6f5d8cef919da12fbf592119a987202a8c060a886f3cab091f9cab90b64",
+        "ebdddc936f61e14049a2d4b549a412b8a40deeff6540e58a9f2a2da9e6b18894",
+        "fa3add0ce901f7241abe0dfc0155d958fc834aca3f8ce61f87cc712ae669c1e0",
+    ):
+        assert checksum in workflow
+    assert "bash packaging/build_macos.sh" in workflow
+    assert "macos-${{ matrix.arch }}.dmg.sha256" in workflow
+    assert "needs: [windows-x64, linux-x86_64, macos]" in workflow
     assert "checksums.sha256" in workflow
     assert "actions/upload-artifact@v4" in workflow
     assert "actions/download-artifact@v4" in workflow
     assert "gh release create" in workflow
     assert "github.token" in workflow
     assert "AppImage" not in workflow
-    assert "macos" not in workflow.lower()
 
 
 def test_frozen_engine_entrypoint_calls_installed_package_cli():

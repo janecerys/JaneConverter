@@ -152,9 +152,102 @@ jobs:
             dist/JaneConverter-*-linux-x86_64.tar.gz
             dist/JaneConverter-*-linux-x86_64.tar.gz.sha256
 
+  macos:
+    name: macos-${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-latest
+            python-architecture: arm64
+            node-architecture: arm64
+            ffmpeg-asset: ffmpeg-darwin-arm64
+            ffmpeg-url: https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-darwin-arm64
+            ffmpeg-sha256: a90e3db6a3fd35f6074b013f948b1aa45b31c6375489d39e572bea3f18336584
+            ffprobe-asset: ffprobe-darwin-arm64
+            ffprobe-url: https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffprobe-darwin-arm64
+            ffprobe-sha256: bb2db6f5d8cef919da12fbf592119a987202a8c060a886f3cab091f9cab90b64
+          - arch: x86_64
+            runner: macos-15-intel
+            python-architecture: x64
+            node-architecture: x64
+            ffmpeg-asset: ffmpeg-darwin-x64
+            ffmpeg-url: https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffmpeg-darwin-x64
+            ffmpeg-sha256: ebdddc936f61e14049a2d4b549a412b8a40deeff6540e58a9f2a2da9e6b18894
+            ffprobe-asset: ffprobe-darwin-x64
+            ffprobe-url: https://github.com/eugeneware/ffmpeg-static/releases/download/b6.1.1/ffprobe-darwin-x64
+            ffprobe-sha256: fa3add0ce901f7241abe0dfc0155d958fc834aca3f8ce61f87cc712ae669c1e0
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          architecture: ${{ matrix.python-architecture }}
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          architecture: ${{ matrix.node-architecture }}
+          cache: npm
+          cache-dependency-path: desktop-ui/package-lock.json
+      - name: Verify native runner architecture
+        run: test "$(uname -m)" = "${{ matrix.arch }}"
+      - name: Set up Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Install Python build dependencies
+        run: uv sync --locked
+      - name: Validate packaging contracts
+        run: |
+          uv pip check
+          uv run --locked pytest -q tests/test_consumer_packaging.py
+      - name: Download and verify FFmpeg tools
+        id: ffmpeg
+        run: |
+          set -euo pipefail
+          mkdir ffmpeg-static
+          ffmpeg="ffmpeg-static/${{ matrix.ffmpeg-asset }}"
+          ffprobe="ffmpeg-static/${{ matrix.ffprobe-asset }}"
+          curl --fail --location --retry 3 \
+            --output "$ffmpeg" \
+            "${{ matrix.ffmpeg-url }}"
+          curl --fail --location --retry 3 \
+            --output "$ffprobe" \
+            "${{ matrix.ffprobe-url }}"
+          printf '%s  %s\n' '${{ matrix.ffmpeg-sha256 }}' "$ffmpeg" | shasum -a 256 -c -
+          printf '%s  %s\n' '${{ matrix.ffprobe-sha256 }}' "$ffprobe" | shasum -a 256 -c -
+          chmod 0755 "$ffmpeg" "$ffprobe"
+          echo "ffmpeg=$PWD/$ffmpeg" >> "$GITHUB_OUTPUT"
+          echo "ffprobe=$PWD/$ffprobe" >> "$GITHUB_OUTPUT"
+      - name: Verify tag version
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          version="$(uv run --locked python -c 'from janeconverter.version import __version__; print(__version__)')"
+          test "$GITHUB_REF_NAME" = "v$version"
+      - name: Build macOS DMG
+        run: |
+          bash packaging/build_macos.sh \
+            --ffmpeg "${{ steps.ffmpeg.outputs.ffmpeg }}" \
+            --ffprobe "${{ steps.ffmpeg.outputs.ffprobe }}" \
+            --node "$(command -v node)"
+      - name: Upload macOS release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}-release
+          if-no-files-found: error
+          path: |
+            dist/JaneConverter-*-macos-${{ matrix.arch }}.dmg
+            dist/JaneConverter-*-macos-${{ matrix.arch }}.dmg.sha256
+
   publish:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows-x64, linux-x86_64]
+    needs: [windows-x64, linux-x86_64, macos]
     runs-on: ubuntu-22.04
     permissions:
       contents: write
