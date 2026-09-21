@@ -5,6 +5,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.2.1] - 2026-09-22
+
+### Added
+- Added a controlled in-app update flow that lets users install an available update or dismiss it and decide later.
+- Added the Preserve Quality conversion preset for outputs that should retain the source quality as closely as the target format allows.
+
+### Changed
+- Updated the Browser Capture access page with clearer, consumer-friendly instructions and confirmation wording.
+- Refined the conversion controls and settings presentation for a simpler mass-consumer workflow.
+- Published stable releases as the updater's discoverable GitHub latest release.
+
+### Fixed
+- Corrected conversion preset dropdown alignment and removed the unnecessary alternate theme switch.
+
 ## [2.0.0] - 2026-09-21
 
 ### Added

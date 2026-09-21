@@ -164,7 +164,7 @@ def test_release_workflow_builds_and_publishes_all_agreed_platforms():
     assert "actions/upload-artifact@v4" in workflow
     assert "actions/download-artifact@v4" in workflow
     assert "gh release create" in workflow
-    assert "--prerelease" in workflow
+    assert "--prerelease" not in workflow
     assert "github.token" in workflow
     assert workflow.count("uv run --locked python packaging/set_version.py --check") == 3
     assert "AppImage" not in workflow
