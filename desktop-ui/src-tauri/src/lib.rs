@@ -122,7 +122,12 @@ fn choose_files() -> Vec<String> {
     FileDialog::new()
         .set_title("Choose media files")
         .pick_files()
-        .map(|paths| paths.into_iter().map(|path| path.display().to_string()).collect())
+        .map(|paths| {
+            paths
+                .into_iter()
+                .map(|path| path.display().to_string())
+                .collect()
+        })
         .unwrap_or_default()
 }
 
