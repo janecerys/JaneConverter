@@ -101,6 +101,7 @@ export interface JaneBridge {
   settingsSave(settings: ConverterSettings): Promise<void>;
   setDataRoot(path: string): Promise<string>;
   chooseFile(): Promise<string | null>;
+  chooseFiles(): Promise<string[]>;
   chooseFolder(): Promise<string | null>;
   openPath(path: string): Promise<void>;
   openFile(path: string): Promise<void>;
@@ -149,6 +150,7 @@ const demoBridge: JaneBridge = {
   async settingsSave() {},
   async setDataRoot(path) { return path; },
   async chooseFile() { return null; },
+  async chooseFiles() { return []; },
   async chooseFolder() { return null; },
   async openPath() {},
   async openFile() {},
@@ -182,6 +184,7 @@ const tauriBridge: JaneBridge = {
   settingsSave: (settings) => invoke<void>("settings_save", { settings }),
   setDataRoot: (path) => invoke<string>("set_data_root_path", { path }),
   chooseFile: () => invoke<string | null>("choose_file"),
+  chooseFiles: () => invoke<string[]>("choose_files"),
   chooseFolder: () => invoke<string | null>("choose_folder"),
   openPath: (path) => invoke<void>("open_path", { path }),
   openFile: (path) => invoke<void>("open_file", { path }),

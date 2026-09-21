@@ -618,7 +618,11 @@ def fetch_media_stream(
         elif progress_callback and d.get("status") == "finished":
             report(0.75, "Stream download complete. Preparing conversion...", force=True)
 
-    format_selector = "bestaudio/best" if audio_only else "bv*[height<=2160]+ba/b[height<=2160]/best"
+    format_selector = (
+        "ba[ext=m4a]/ba[ext=opus]/bestaudio/best"
+        if audio_only
+        else "bv*[vcodec^=av01][height<=2160]+ba/bv*[vcodec^=vp9][height<=2160]+ba/bv*[height<=2160]+ba/b[height<=2160]/best"
+    )
 
     ydl_opts = {
         "format": format_selector,
@@ -627,6 +631,8 @@ def fetch_media_stream(
         "noplaylist": True,
         "quiet": True,
         "no_warnings": True,
+        "concurrent_fragment_downloads": 4,
+        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
         "js_runtimes": {"node": {"path": None}},
         "remote_components": ["ejs:github"],
         "progress_hooks": [progress_hook]

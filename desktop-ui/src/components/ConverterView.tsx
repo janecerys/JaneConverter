@@ -1,27 +1,113 @@
-import { useEffect, useMemo, useState } from "react";
-import { AlertCircle, CheckCircle2, Clipboard, FilePlus2, FolderOpen, Info, Link2, ListMusic, LoaderCircle, LockKeyhole, Play, RefreshCw, ShieldCheck, Square } from "lucide-react";
-import { motion } from "framer-motion";
-import type { AccessStatus, ConverterEvent, ConverterSettings, FetchedMedia, PlaylistCatalog, RuntimeInfo } from "../bridge";
+import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  AlertCircle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  Clipboard,
+  Copy,
+  ExternalLink,
+  FileAudio,
+  FileImage,
+  FilePlus2,
+  Files,
+  FileVideo,
+  FolderOpen,
+  Info,
+  Link2,
+  ListMusic,
+  LoaderCircle,
+  LockKeyhole,
+  Play,
+  RefreshCw,
+  RotateCcw,
+  ShieldCheck,
+  Square,
+  Trash2,
+  Wand2,
+} from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import type { AccessStatus, Category, ConverterEvent, ConverterSettings, FetchedMedia, PlaylistCatalog, RuntimeInfo } from "../bridge";
 import { bridge } from "../bridge";
-import { formatsFor, imageFormats, qualitiesFor, resolutions, videoFormats } from "../options";
+import {
+  detectCategoryFromPath,
+  formatsFor,
+  imageFormats,
+  intentPresets,
+  type IntentPreset,
+  qualitiesFor,
+  resolutions,
+  videoFormats,
+} from "../options";
 import { PlaylistDialog } from "./PlaylistDialog";
 
-function SelectField({ label, value, values, onChange, disabled = false }: { label: string; value: string | number; values: Array<string | number>; onChange: (value: string) => void; disabled?: boolean }) {
+export interface QueueItem {
+  id: string;
+  source: string;
+  name: string;
+  category: Category;
+  status: "queued" | "converting" | "completed" | "failed";
+  progress: number;
+  outputPath?: string;
+  errorMessage?: string;
+}
+
+function SelectField({
+  label,
+  value,
+  values,
+  onChange,
+  disabled = false,
+}: {
+  label: string;
+  value: string | number;
+  values: Array<string | number>;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}) {
   return (
     <label className="block min-w-0">
       <span className="mb-2 block text-[11px] font-medium text-zinc-500">{label}</span>
-      <select aria-label={label} disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)} className="field w-full px-3 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-50">
-        {values.map((item) => <option key={item} value={item}>{String(item)}</option>)}
+      <select
+        aria-label={label}
+        disabled={disabled}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        className="field w-full px-3 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        {values.map((item) => (
+          <option key={item} value={item}>
+            {String(item)}
+          </option>
+        ))}
       </select>
     </label>
   );
 }
 
-function Toggle({ checked, onChange, label, hint }: { checked: boolean; onChange: (value: boolean) => void; label: string; hint?: string }) {
+function Toggle({
+  checked,
+  onChange,
+  label,
+  hint,
+}: {
+  checked: boolean;
+  onChange: (value: boolean) => void;
+  label: string;
+  hint?: string;
+}) {
   return (
     <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/[0.06] bg-black/10 px-3 py-3 transition-colors hover:border-white/[0.12]">
-      <input type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} className="mt-0.5 size-4 accent-[#c52b68]" />
-      <span className="min-w-0"><span className="block text-xs text-zinc-300">{label}</span>{hint && <span className="mt-1 block text-[10px] leading-relaxed text-zinc-600">{hint}</span>}</span>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+        className="mt-0.5 size-4 accent-[#c52b68]"
+      />
+      <span className="min-w-0">
+        <span className="block text-xs text-zinc-300">{label}</span>
+        {hint && <span className="mt-1 block text-[10px] leading-relaxed text-zinc-600">{hint}</span>}
+      </span>
     </label>
   );
 }
@@ -61,11 +147,33 @@ export function ConverterView({
   const [playlist, setPlaylist] = useState<PlaylistCatalog | null>(null);
   const [loadingPlaylist, setLoadingPlaylist] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [accessBusy, setAccessBusy] = useState(false);
   const [accessNotice, setAccessNotice] = useState("");
   const [accessNoticeTone, setAccessNoticeTone] = useState<"neutral" | "success" | "error">("neutral");
-  const capturedCategory = selectedCapture?.mediaKind ? selectedCapture.mediaKind === "image" ? "Image" : selectedCapture.mediaKind === "audio" ? "Music" : "Video" : null;
-  const capturedFormat = selectedCapture?.mediaKind ? selectedCapture.mediaKind === "image" ? "jpg" : selectedCapture.mediaKind === "audio" ? "mp3" : "mp4" : null;
+
+  // Queue and completion state
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+  const [queueRunning, setQueueRunning] = useState(false);
+  const activeQueueIndexRef = useRef<number>(-1);
+  const [completedItem, setCompletedItem] = useState<{ name: string; path?: string } | null>(null);
+  const [copiedCompleted, setCopiedCompleted] = useState(false);
+
+  const capturedCategory = selectedCapture?.mediaKind
+    ? selectedCapture.mediaKind === "image"
+      ? "Image"
+      : selectedCapture.mediaKind === "audio"
+      ? "Music"
+      : "Video"
+    : null;
+  const capturedFormat = selectedCapture?.mediaKind
+    ? selectedCapture.mediaKind === "image"
+      ? "jpg"
+      : selectedCapture.mediaKind === "audio"
+      ? "mp3"
+      : "mp4"
+    : null;
+
   const activeCategory = capturedCategory || settings.category;
   const activeFormat = capturedFormat || settings.format;
   const formats = useMemo(() => formatsFor(activeCategory), [activeCategory]);
@@ -76,7 +184,9 @@ export function ConverterView({
   const lastEvent = events.length ? events[events.length - 1] : null;
 
   useEffect(() => {
-    if (!formats.includes(settings.format)) onSettings({ ...settings, format: formats[0], bitrate: qualitiesFor(formats[0])[0] });
+    if (!formats.includes(settings.format)) {
+      onSettings({ ...settings, format: formats[0], bitrate: qualitiesFor(formats[0])[0] });
+    }
   }, [formats, settings, onSettings]);
 
   useEffect(() => {
@@ -102,12 +212,78 @@ export function ConverterView({
     }
   }, [selectedCapture?.mediaKind]);
 
+  // Track finished completions and queue progress
+  useEffect(() => {
+    if (!lastEvent) return;
+    if (lastEvent.kind === "finished") {
+      let outName = "media file";
+      if (lastEvent.message.startsWith("Conversion complete: ")) {
+        outName = lastEvent.message.replace("Conversion complete: ", "").trim();
+      } else if (lastEvent.output) {
+        outName = lastEvent.output.replace(/^.*[\\/]/, "");
+      }
+      const outPath = lastEvent.output || (settings.outputDir ? `${settings.outputDir.replace(/[\\/]+$/, "")}/${outName}` : undefined);
+      setCompletedItem({ name: outName, path: outPath });
+
+      if (queueRunning && activeQueueIndexRef.current >= 0) {
+        setQueue((curr) =>
+          curr.map((item, idx) => {
+            if (idx === activeQueueIndexRef.current) {
+              return { ...item, status: "completed", progress: 1.0, outputPath: outPath };
+            }
+            return item;
+          })
+        );
+      }
+    } else if (lastEvent.kind === "failed") {
+      if (queueRunning && activeQueueIndexRef.current >= 0) {
+        setQueue((curr) =>
+          curr.map((item, idx) => {
+            if (idx === activeQueueIndexRef.current) {
+              return { ...item, status: "failed", errorMessage: lastEvent.message };
+            }
+            return item;
+          })
+        );
+      }
+    }
+  }, [lastEvent, queueRunning, settings.outputDir]);
+
+  // Sequential queue runner
+  useEffect(() => {
+    if (!queueRunning) return;
+    if (running) return;
+
+    const nextIdx = queue.findIndex((item) => item.status === "queued");
+    if (nextIdx === -1) {
+      setQueueRunning(false);
+      activeQueueIndexRef.current = -1;
+      onStatus("Batch conversion queue completed.");
+      return;
+    }
+
+    activeQueueIndexRef.current = nextIdx;
+    setQueue((curr) =>
+      curr.map((item, idx) => (idx === nextIdx ? { ...item, status: "converting", progress: 0.05 } : item))
+    );
+    const targetItem = queue[nextIdx];
+    void onStart(targetItem.source);
+  }, [queueRunning, running, queue, onStart, onStatus]);
+
   const update = (patch: Partial<ConverterSettings>) => onSettings({ ...settings, ...patch });
+
+  function handleSourceInput(val: string) {
+    setSource(val);
+    const detected = detectCategoryFromPath(val);
+    if (detected && detected !== settings.category) {
+      update({ category: detected });
+    }
+  }
 
   async function paste() {
     try {
       const value = await navigator.clipboard.readText();
-      setSource(value.trim());
+      handleSourceInput(value.trim());
       onStatus("Source pasted from clipboard.");
     } catch {
       onStatus("Clipboard access was unavailable. Paste directly into the source field.");
@@ -115,8 +291,55 @@ export function ConverterView({
   }
 
   async function browseFile() {
+    try {
+      if (bridge.chooseFiles) {
+        const paths = await bridge.chooseFiles();
+        if (paths && paths.length > 1) {
+          const newItems: QueueItem[] = paths.map((p, idx) => ({
+            id: `${Date.now()}-${idx}`,
+            source: p,
+            name: p.replace(/^.*[\\/]/, ""),
+            category: detectCategoryFromPath(p) || activeCategory,
+            status: "queued",
+            progress: 0,
+          }));
+          setQueue((curr) => [...curr, ...newItems]);
+          onStatus(`Added ${paths.length} items to conversion queue.`);
+          return;
+        }
+        if (paths && paths.length === 1) {
+          handleSourceInput(paths[0]);
+          onStatus("Local media file selected.");
+          return;
+        }
+      }
+    } catch {
+      // Fallback to single chooseFile
+    }
     const path = await bridge.chooseFile();
-    if (path) { setSource(path); onStatus("Local media file selected."); }
+    if (path) {
+      handleSourceInput(path);
+      onStatus("Local media file selected.");
+    }
+  }
+
+  async function browseBatch() {
+    try {
+      const paths = bridge.chooseFiles ? await bridge.chooseFiles() : [];
+      if (!paths || paths.length === 0) return;
+      const newItems: QueueItem[] = paths.map((p, idx) => ({
+        id: `${Date.now()}-${idx}`,
+        source: p,
+        name: p.replace(/^.*[\\/]/, ""),
+        category: detectCategoryFromPath(p) || activeCategory,
+        status: "queued",
+        progress: 0,
+      }));
+      setQueue((curr) => [...curr, ...newItems]);
+      onStatus(`Added ${paths.length} items to conversion queue.`);
+    } catch (error) {
+      onStatus(error instanceof Error ? error.message : String(error));
+    }
   }
 
   async function browseOutput() {
@@ -125,7 +348,10 @@ export function ConverterView({
   }
 
   async function loadPlaylist() {
-    if (!source.trim()) { onStatus("Paste a playlist or album URL first."); return; }
+    if (!source.trim()) {
+      onStatus("Paste a playlist or album URL first.");
+      return;
+    }
     setLoadingPlaylist(true);
     try {
       const catalog = await bridge.loadPlaylist(source.trim());
@@ -182,8 +408,7 @@ export function ConverterView({
       setAccessNotice("Temporary access link copied to the clipboard.");
       setAccessNoticeTone("success");
     } catch {
-      const message = "The link could not be copied. Use Open link instead.";
-      setAccessNotice(message);
+      setAccessNotice("The link could not be copied. Use Open link instead.");
       setAccessNoticeTone("error");
     }
   }
@@ -201,13 +426,33 @@ export function ConverterView({
   }
 
   async function convert(indexes?: string) {
-    if (!source.trim() && !access.bridgeConnected) { onStatus("Paste a source URL, choose a local file, or capture media in the browser first."); return; }
+    if (queue.length > 0) {
+      setQueueRunning(true);
+      return;
+    }
+    if (!source.trim() && !access.bridgeConnected) {
+      onStatus("Paste a source URL, choose a local file, or capture media in the browser first.");
+      return;
+    }
     await onStart(source.trim(), indexes);
+  }
+
+  function applyPreset(preset: IntentPreset) {
+    update({
+      category: preset.category,
+      format: preset.format,
+      bitrate: preset.bitrate,
+      sampleRate: preset.sampleRate,
+      resolution: preset.resolution,
+      normalize: preset.normalize,
+      useGpu: preset.useGpu,
+    });
+    onStatus(`Applied ${preset.name} preset: ${preset.description}.`);
   }
 
   return (
     <div className="mx-auto max-w-[1180px] space-y-5 pb-10">
-      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: .35 }} className="flex items-end justify-between gap-5">
+      <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }} className="flex items-end justify-between gap-5">
         <div>
           <div className="mono-label">Universal media studio</div>
           <h1 className="mt-2 text-3xl font-semibold tracking-[-.04em] text-white">Convert with less friction.</h1>
@@ -219,94 +464,528 @@ export function ConverterView({
         </div>
       </motion.div>
 
+      {/* Source Input Section */}
       <section className="panel p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><div className="text-sm font-medium text-zinc-200">Source media</div><div className="mt-1 text-xs text-zinc-600">Paste a public URL or choose a local file.</div></div>
-          <span className="text-[11px] text-zinc-600">{source ? "Source provided" : "Ready for URL or path"}</span>
+          <div>
+            <div className="text-sm font-medium text-zinc-200">Source media</div>
+            <div className="mt-1 text-xs text-zinc-600">Paste a public URL, choose a file, or queue a batch.</div>
+          </div>
+          <span className="text-[11px] text-zinc-600">{queue.length > 0 ? `${queue.length} items queued` : source ? "Source provided" : "Ready for URL or path"}</span>
         </div>
         <div className="mt-4 flex gap-2">
-          <input aria-label="Source media URL or local path" value={source} onChange={(event) => setSource(event.target.value)} placeholder="YouTube, Spotify, Apple Music, SoundCloud, TikTok, X, or a local path..." className="field min-w-0 flex-1 px-3.5 py-3 text-sm placeholder:text-zinc-700" />
-          <button type="button" onClick={() => void paste()} className="subtle-button flex items-center gap-2 px-3 text-xs"><Clipboard className="size-3.5" /> Paste</button>
-          <button type="button" onClick={() => void browseFile()} className="subtle-button flex items-center gap-2 px-3 text-xs"><FilePlus2 className="size-3.5" /> Browse</button>
-          <button type="button" disabled={loadingPlaylist || running} onClick={() => void loadPlaylist()} className="subtle-button flex items-center gap-2 px-3 text-xs disabled:opacity-50"><ListMusic className="size-3.5" /> {loadingPlaylist ? "Loading..." : "Playlist tracks"}</button>
+          <input
+            aria-label="Source media URL or local path"
+            value={source}
+            onChange={(event) => handleSourceInput(event.target.value)}
+            placeholder="YouTube, Spotify, Apple Music, SoundCloud, TikTok, X, or a local path..."
+            className="field min-w-0 flex-1 px-3.5 py-3 text-sm placeholder:text-zinc-700"
+          />
+          <button type="button" onClick={() => void paste()} className="subtle-button flex items-center gap-2 px-3 text-xs">
+            <Clipboard className="size-3.5" /> Paste
+          </button>
+          <button type="button" onClick={() => void browseFile()} className="subtle-button flex items-center gap-2 px-3 text-xs">
+            <FilePlus2 className="size-3.5" /> Browse
+          </button>
+          <button type="button" onClick={() => void browseBatch()} className="subtle-button flex items-center gap-2 px-3 text-xs">
+            <Files className="size-3.5" /> Batch
+          </button>
+          <button
+            type="button"
+            disabled={loadingPlaylist || running}
+            onClick={() => void loadPlaylist()}
+            className="subtle-button flex items-center gap-2 px-3 text-xs disabled:opacity-50"
+          >
+            <ListMusic className="size-3.5" /> {loadingPlaylist ? "Loading..." : "Playlist tracks"}
+          </button>
         </div>
 
+        {/* Account Access */}
         <div className="mt-5 border-t border-white/[0.06] pt-4">
           <div className="flex items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-xs text-zinc-400"><LockKeyhole className="size-3.5 text-zinc-600" /> Optional account access <span className="text-zinc-700">- session only</span></div>
-            <span className={`text-[11px] ${access.bridgeConnected ? "text-emerald-400" : access.browser ? "text-emerald-400" : access.active ? "text-amber-300" : "text-zinc-600"}`}>{access.bridgeConnected ? `Browser capture received through ${access.browser || "browser"}` : access.browser ? `Access confirmed in ${access.browser}` : access.active ? "Access page open" : "Public-only extraction"}</span>
+            <div className="flex items-center gap-2 text-xs text-zinc-400">
+              <LockKeyhole className="size-3.5 text-zinc-600" /> Optional account access <span className="text-zinc-700">- session only</span>
+            </div>
+            <span
+              className={`text-[11px] ${
+                access.bridgeConnected
+                  ? "text-emerald-400"
+                  : access.browser
+                  ? "text-emerald-400"
+                  : access.active
+                  ? "text-amber-300"
+                  : "text-zinc-600"
+              }`}
+            >
+              {access.bridgeConnected
+                ? `Browser capture received through ${access.browser || "browser"}`
+                : access.browser
+                ? `Access confirmed in ${access.browser}`
+                : access.active
+                ? "Access page open"
+                : "Public-only extraction"}
+            </span>
           </div>
-            <p className="mt-2 max-w-3xl text-[11px] leading-relaxed text-zinc-600">{selectedCapture ? "Fetched media selected from the browser capture inbox. Choose your output settings and convert it whenever you are ready." : access.bridgeConnected ? "Browser Capture connected for this session. Keep capturing from the active browser page; every item is kept temporarily in the Fetched Media tab. This access session does not affect unrelated URL or local-file conversions." : access.active ? "Open the media in this browser, sign in if needed, confirm access here, then open the JaneConverter Browser Capture extension. Choose Capture current media or Capture story sequence. Unrelated URL and local-file conversions remain public/local." : "Create a temporary local link with or without a source URL. JaneConverter receives only media you explicitly capture with the optional extension; it never reads or stores your password, cookies, cache, or browser profile."}</p>
+          <p className="mt-2 max-w-3xl text-[11px] leading-relaxed text-zinc-600">
+            {selectedCapture
+              ? "Fetched media selected from the browser capture inbox. Choose your output settings and convert it whenever you are ready."
+              : access.bridgeConnected
+              ? "Browser Capture connected for this session. Keep capturing from the active browser page; every item is kept temporarily in the Fetched Media tab. This access session does not affect unrelated URL or local-file conversions."
+              : access.active
+              ? "Open the media in this browser, sign in if needed, confirm access here, then open the JaneConverter Browser Capture extension. Choose Capture current media or Capture story sequence. Unrelated URL and local-file conversions remain public/local."
+              : "Create a temporary local link with or without a source URL. JaneConverter receives only media you explicitly capture with the optional extension; it never reads or stores your password, cookies, cache, or browser profile."}
+          </p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
-            {access.link && <button type="button" disabled={accessBusy} onClick={() => void copyAccessLink()} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"><Link2 className="size-3.5" /> Copy link</button>}
-            {access.link && <button type="button" disabled={accessBusy} onClick={() => void openAccessLink()} className="subtle-button px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50">Open link</button>}
-            {access.active ? <button type="button" disabled={accessBusy} onClick={() => void clearAccess()} className="subtle-button px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50">{accessBusy ? "Working..." : "Clear access"}</button> : <button type="button" disabled={accessBusy || running} onClick={() => void createAccess()} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50">{accessBusy ? <LoaderCircle className="size-3.5 animate-spin" /> : <ShieldCheck className="size-3.5" />} {accessBusy ? "Opening access page..." : "Create access link"}</button>}
+            {access.link && (
+              <button type="button" disabled={accessBusy} onClick={() => void copyAccessLink()} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50">
+                <Link2 className="size-3.5" /> Copy link
+              </button>
+            )}
+            {access.link && (
+              <button type="button" disabled={accessBusy} onClick={() => void openAccessLink()} className="subtle-button px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50">
+                Open link
+              </button>
+            )}
+            {access.active ? (
+              <button type="button" disabled={accessBusy} onClick={() => void clearAccess()} className="subtle-button px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50">
+                {accessBusy ? "Working..." : "Clear access"}
+              </button>
+            ) : (
+              <button
+                type="button"
+                disabled={accessBusy || running}
+                onClick={() => void createAccess()}
+                className="subtle-button flex items-center gap-2 px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {accessBusy ? <LoaderCircle className="size-3.5 animate-spin" /> : <ShieldCheck className="size-3.5" />}{" "}
+                {accessBusy ? "Opening access page..." : "Create access link"}
+              </button>
+            )}
             {access.link && <span className="max-w-[420px] truncate text-[11px] text-zinc-700">{access.link}</span>}
           </div>
-          {accessNotice && <div role="status" aria-live="polite" className={`mt-3 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[11px] leading-relaxed ${accessNoticeTone === "success" ? "border-emerald-400/20 bg-emerald-400/[0.05] text-emerald-300" : accessNoticeTone === "error" ? "border-rose-400/20 bg-rose-400/[0.05] text-rose-300" : "border-white/[0.08] bg-white/[0.025] text-zinc-400"}`}>
-            {accessNoticeTone === "success" ? <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" /> : accessNoticeTone === "error" ? <AlertCircle className="mt-0.5 size-3.5 shrink-0" /> : <Info className="mt-0.5 size-3.5 shrink-0" />}
-            <span>{accessNotice}</span>
-          </div>}
+          {accessNotice && (
+            <div
+              role="status"
+              aria-live="polite"
+              className={`mt-3 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-[11px] leading-relaxed ${
+                accessNoticeTone === "success"
+                  ? "border-emerald-400/20 bg-emerald-400/[0.05] text-emerald-300"
+                  : accessNoticeTone === "error"
+                  ? "border-rose-400/20 bg-rose-400/[0.05] text-rose-300"
+                  : "border-white/[0.08] bg-white/[0.025] text-zinc-400"
+              }`}
+            >
+              {accessNoticeTone === "success" ? (
+                <CheckCircle2 className="mt-0.5 size-3.5 shrink-0" />
+              ) : accessNoticeTone === "error" ? (
+                <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
+              ) : (
+                <Info className="mt-0.5 size-3.5 shrink-0" />
+              )}
+              <span>{accessNotice}</span>
+            </div>
+          )}
         </div>
 
-        <button type="button" onClick={() => setNotesOpen((value) => !value)} className="mt-4 flex items-center gap-2 text-xs text-zinc-500 transition-colors hover:text-zinc-300"><Info className="size-3.5" /> Source notes and common failures <span className="text-zinc-700">{notesOpen ? "Hide" : "Show"}</span></button>
-        {notesOpen && <div className="mt-3 grid gap-3 rounded-xl border border-white/[0.06] bg-black/15 p-4 text-[11px] leading-relaxed text-zinc-500 md:grid-cols-3">
-          <div><div className="mb-1 text-zinc-300">Apple Music</div>Public catalog links provide metadata and artwork, not a normal downloadable subscription stream. Region restrictions, removed tracks, music videos, alternate versions, and missing public matches can fail. Direct song links with a track selector work best.</div>
-          <div><div className="mb-1 text-zinc-300">Spotify</div>Spotify provides metadata; JaneConverter searches supported public sources for a matching stream. Private, deleted, region-locked, or mismatched tracks can fail.</div>
-          <div><div className="mb-1 text-zinc-300">Other sources and files</div>Age gates, login walls, bot checks, rate limits, provider changes, unreadable local files, FFmpeg availability, permissions, and free disk space can affect conversion. Console has the exact detail.</div>
-        </div>}
+        <button
+          type="button"
+          onClick={() => setNotesOpen((value) => !value)}
+          className="mt-4 flex items-center gap-2 text-xs text-zinc-500 transition-colors hover:text-zinc-300"
+        >
+          <Info className="size-3.5" /> Source notes and common failures <span className="text-zinc-700">{notesOpen ? "Hide" : "Show"}</span>
+        </button>
+        {notesOpen && (
+          <div className="mt-3 grid gap-3 rounded-xl border border-white/[0.06] bg-black/15 p-4 text-[11px] leading-relaxed text-zinc-500 md:grid-cols-3">
+            <div>
+              <div className="mb-1 text-zinc-300">Apple Music</div>
+              Public catalog links provide metadata and artwork, not a normal downloadable subscription stream. Region restrictions, removed tracks, music videos, alternate versions, and missing public matches can fail. Direct song links with a track selector work best.
+            </div>
+            <div>
+              <div className="mb-1 text-zinc-300">Spotify</div>
+              Spotify provides metadata; JaneConverter searches supported public sources for a matching stream. Private, deleted, region-locked, or mismatched tracks can fail.
+            </div>
+            <div>
+              <div className="mb-1 text-zinc-300">Other sources and files</div>
+              Age gates, login walls, bot checks, rate limits, provider changes, unreadable local files, FFmpeg availability, permissions, and free disk space can affect conversion. Console has the exact detail.
+            </div>
+          </div>
+        )}
       </section>
 
+      {/* Lightweight Batch Queue Section */}
+      {queue.length > 0 && (
+        <section className="panel p-5">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <Files className="size-4 text-[#c52b68]" />
+              <div className="text-sm font-medium text-zinc-200">Conversion Queue</div>
+              <span className="rounded-full bg-white/[0.08] px-2 py-0.5 text-[10px] text-zinc-400">{queue.length} items</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setQueue([])}
+                disabled={queueRunning}
+                className="subtle-button px-2.5 py-1 text-xs text-zinc-500 hover:text-rose-400 disabled:opacity-50"
+              >
+                Clear queue
+              </button>
+            </div>
+          </div>
+          <div className="mt-3 divide-y divide-white/[0.05] rounded-xl border border-white/[0.06] bg-black/15">
+            {queue.map((item) => (
+              <div key={item.id} className="flex flex-wrap items-center justify-between gap-3 p-3 text-xs">
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                  {item.category === "Image" ? (
+                    <FileImage className="size-4 text-sky-400 shrink-0" />
+                  ) : item.category === "Video" ? (
+                    <FileVideo className="size-4 text-[#c52b68] shrink-0" />
+                  ) : (
+                    <FileAudio className="size-4 text-emerald-400 shrink-0" />
+                  )}
+                  <div className="min-w-0">
+                    <div className="truncate text-zinc-200">{item.name}</div>
+                    <div className="truncate text-[10px] text-zinc-600">{item.source}</div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  {item.status === "converting" && (
+                    <span className="flex items-center gap-1.5 text-[11px] text-amber-300">
+                      <LoaderCircle className="size-3 animate-spin" /> Converting...
+                    </span>
+                  )}
+                  {item.status === "completed" && (
+                    <div className="flex items-center gap-2">
+                      <span className="flex items-center gap-1 text-[11px] text-emerald-400">
+                        <CheckCircle2 className="size-3" /> Done
+                      </span>
+                      {item.outputPath && (
+                        <button
+                          type="button"
+                          onClick={() => void bridge.openFile(item.outputPath!)}
+                          className="subtle-button px-2 py-0.5 text-[10px] text-emerald-300"
+                        >
+                          Open
+                        </button>
+                      )}
+                    </div>
+                  )}
+                  {item.status === "failed" && (
+                    <div className="flex items-center gap-2">
+                      <span className="flex items-center gap-1 text-[11px] text-rose-400" title={item.errorMessage}>
+                        <AlertCircle className="size-3" /> Failed
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setQueue((curr) =>
+                            curr.map((it) => (it.id === item.id ? { ...it, status: "queued", errorMessage: undefined } : it))
+                          );
+                          if (!queueRunning) setQueueRunning(true);
+                        }}
+                        className="subtle-button px-2 py-0.5 text-[10px] text-zinc-400 hover:text-white"
+                      >
+                        <RotateCcw className="size-2.5" /> Retry
+                      </button>
+                    </div>
+                  )}
+                  {item.status === "queued" && <span className="text-[11px] text-zinc-600">Queued</span>}
+                  <button
+                    type="button"
+                    disabled={item.status === "converting"}
+                    onClick={() => setQueue((curr) => curr.filter((it) => it.id !== item.id))}
+                    className="text-zinc-600 hover:text-rose-400 disabled:opacity-30"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {/* Output & Presets Parameters */}
       <section className="panel p-5">
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <div><div className="text-sm font-medium text-zinc-200">Output and transcode parameters</div><div className="mt-1 text-xs text-zinc-600">Every legacy format and quality control remains available.</div></div>
+          <div>
+            <div className="text-sm font-medium text-zinc-200">Output and conversion presets</div>
+            <div className="mt-1 text-xs text-zinc-600">Select an intent goal or fine-tune settings below.</div>
+          </div>
           <div className="flex items-center gap-1 rounded-xl border border-white/[0.07] bg-black/15 p-1">
-            {(["Music", "Video", "Image", "Miscellaneous"] as const).map((category) => <button key={category} type="button" onClick={() => update({ category })} className={`rounded-lg px-3 py-1.5 text-[11px] transition-colors ${activeCategory === category ? "bg-white/[0.09] text-white" : "text-zinc-600 hover:text-zinc-300"}`}>{category}</button>)}
+            {(["Music", "Video", "Image", "Miscellaneous"] as const).map((category) => (
+              <button
+                key={category}
+                type="button"
+                onClick={() => update({ category })}
+                className={`rounded-lg px-3 py-1.5 text-[11px] transition-colors ${
+                  activeCategory === category ? "bg-white/[0.09] text-white" : "text-zinc-600 hover:text-zinc-300"
+                }`}
+              >
+                {category}
+              </button>
+            ))}
           </div>
         </div>
 
-        <div className="mt-5 grid gap-3 md:grid-cols-3">
-          <SelectField label="Container format" value={activeFormat} values={formats} onChange={(format) => update({ format, bitrate: qualitiesFor(format)[0] })} />
-          <SelectField label={isVideo ? "Video quality" : isImage ? "Image quality" : "Audio bitrate / quality"} value={isImage ? "best" : settings.bitrate} values={qualities} onChange={(bitrate) => update({ bitrate })} />
-          <SelectField label={isImage ? "Image resolution" : "Video resolution"} value={settings.resolution} values={resolutions} onChange={(resolution) => update({ resolution })} disabled={isAudio} />
+        {/* Intent Presets Toolbar */}
+        <div className="mt-4 rounded-xl border border-white/[0.05] bg-black/15 p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <Wand2 className="size-3.5 text-[#c52b68]" />
+            <span className="text-[11px] font-medium text-zinc-400">1-Click Presets:</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {intentPresets.map((preset) => {
+              const isSelected =
+                settings.category === preset.category &&
+                settings.format === preset.format &&
+                settings.bitrate === preset.bitrate;
+              return (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => applyPreset(preset)}
+                  className={`rounded-lg px-2.5 py-1 text-xs transition-colors ${
+                    isSelected
+                      ? "bg-[#c52b68] text-white font-medium shadow-sm shadow-[#c52b68]/30"
+                      : "border border-white/[0.08] bg-black/20 text-zinc-400 hover:border-white/[0.18] hover:text-white"
+                  }`}
+                  title={preset.description}
+                >
+                  {preset.name}
+                </button>
+              );
+            })}
+          </div>
         </div>
-        <div className="mt-3 grid gap-3 md:grid-cols-3">
-          <SelectField label="Audio sample rate" value={settings.sampleRate} values={[44100, 48000, 96000]} onChange={(sampleRate) => update({ sampleRate: Number(sampleRate) })} disabled={!isAudio} />
-          <div className="md:col-span-2 flex items-end text-[11px] leading-relaxed text-zinc-600">Use the quality menu for WAV/FLAC bit depth, OGG quality, image quality, or video quality. The selected values are sent directly to the existing Python engine.</div>
+
+        {/* Primary Controls */}
+        <div className="mt-5 grid gap-3 md:grid-cols-2">
+          <SelectField
+            label="Container format"
+            value={activeFormat}
+            values={formats}
+            onChange={(format) => update({ format, bitrate: qualitiesFor(format)[0] })}
+          />
+          <div className="flex items-end">
+            <button
+              type="button"
+              onClick={() => setShowAdvanced((v) => !v)}
+              className="subtle-button flex w-full items-center justify-between px-3 py-2.5 text-xs text-zinc-400 hover:text-white"
+            >
+              <span>{showAdvanced ? "Hide advanced parameters" : "Show advanced parameters (bitrate, sample rate, GPU)"}</span>
+              {showAdvanced ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+            </button>
+          </div>
         </div>
-        <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-          <Toggle checked={settings.normalize} onChange={(normalize) => update({ normalize })} label="EBU R128 normalization" hint="-14 LUFS streaming target" />
-          <Toggle checked={settings.useGpu} onChange={(useGpu) => update({ useGpu })} label="Hardware acceleration" hint={runtime?.gpuAvailable ? runtime.gpuLabel : "CPU mode available"} />
-          <Toggle checked={settings.saveCover} onChange={(saveCover) => update({ saveCover })} label="Embed and save cover art" hint="Artwork / thumbnail where available" />
-          <Toggle checked={settings.saveMetadata} onChange={(saveMetadata) => update({ saveMetadata })} label="Export metadata and credits" hint="Human-readable .txt metadata" />
-        </div>
+
+        {/* Collapsible Advanced Parameters */}
+        <AnimatePresence>
+          {showAdvanced && (
+            <motion.div
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: "auto" }}
+              exit={{ opacity: 0, height: 0 }}
+              className="overflow-hidden"
+            >
+              <div className="mt-4 border-t border-white/[0.06] pt-4">
+                <div className="grid gap-3 md:grid-cols-3">
+                  <SelectField
+                    label={isVideo ? "Video quality" : isImage ? "Image quality" : "Audio bitrate / quality"}
+                    value={isImage ? "best" : settings.bitrate}
+                    values={qualities}
+                    onChange={(bitrate) => update({ bitrate })}
+                  />
+                  {isVideo && (
+                    <SelectField
+                      label="Video resolution"
+                      value={settings.resolution}
+                      values={resolutions}
+                      onChange={(resolution) => update({ resolution })}
+                    />
+                  )}
+                  {isAudio && (
+                    <SelectField
+                      label="Audio sample rate"
+                      value={settings.sampleRate}
+                      values={[44100, 48000, 96000]}
+                      onChange={(sampleRate) => update({ sampleRate: Number(sampleRate) })}
+                    />
+                  )}
+                </div>
+                <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                  {isAudio && (
+                    <Toggle
+                      checked={settings.normalize}
+                      onChange={(normalize) => update({ normalize })}
+                      label="EBU R128 normalization"
+                      hint="-14 LUFS streaming target"
+                    />
+                  )}
+                  {isVideo && (
+                    <Toggle
+                      checked={settings.useGpu}
+                      onChange={(useGpu) => update({ useGpu })}
+                      label="Hardware acceleration"
+                      hint={runtime?.gpuAvailable ? runtime.gpuLabel : "CPU mode available"}
+                    />
+                  )}
+                  {!isImage && (
+                    <>
+                      <Toggle
+                        checked={settings.saveCover}
+                        onChange={(saveCover) => update({ saveCover })}
+                        label="Embed and save cover art"
+                        hint="Artwork / thumbnail where available"
+                      />
+                      <Toggle
+                        checked={settings.saveMetadata}
+                        onChange={(saveMetadata) => update({ saveMetadata })}
+                        label="Export metadata and credits"
+                        hint="Human-readable .txt metadata"
+                      />
+                    </>
+                  )}
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </section>
 
+      {/* Export Destination Section */}
       <section className="panel p-5">
-        <div className="flex items-center gap-2 text-sm font-medium text-zinc-200"><FolderOpen className="size-4 text-zinc-500" /> Export folder</div>
+        <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
+          <FolderOpen className="size-4 text-zinc-500" /> Export folder
+        </div>
         <div className="mt-3 flex gap-2">
-          <input aria-label="Export folder" value={settings.outputDir} onChange={(event) => update({ outputDir: event.target.value })} className="field min-w-0 flex-1 px-3 py-2.5 text-sm" />
-          <button type="button" onClick={() => void browseOutput()} className="subtle-button px-3 text-xs">Browse</button>
-          <button type="button" onClick={() => void bridge.openPath(settings.outputDir)} className="subtle-button flex items-center gap-2 px-3 text-xs"><FolderOpen className="size-3.5" /> Open folder</button>
+          <input
+            aria-label="Export folder"
+            value={settings.outputDir}
+            onChange={(event) => update({ outputDir: event.target.value })}
+            className="field min-w-0 flex-1 px-3 py-2.5 text-sm"
+          />
+          <button type="button" onClick={() => void browseOutput()} className="subtle-button px-3 text-xs">
+            Browse
+          </button>
+          <button type="button" onClick={() => void bridge.openPath(settings.outputDir)} className="subtle-button flex items-center gap-2 px-3 text-xs">
+            <FolderOpen className="size-3.5" /> Open folder
+          </button>
         </div>
         <div className="mt-2 text-[11px] text-zinc-700">Default: project-local converted media. Choose another folder when you explicitly want exports elsewhere.</div>
       </section>
 
+      {/* 1-Click Completion Banner */}
+      {completedItem && (
+        <motion.div
+          initial={{ opacity: 0, y: -6 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] p-4 text-xs text-zinc-200"
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <CheckCircle2 className="size-4 text-emerald-400 shrink-0" />
+              <div>
+                <div className="font-medium text-white">{completedItem.name}</div>
+                <div className="text-[11px] text-zinc-400">Conversion finished and verified via ffprobe.</div>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-2">
+              {completedItem.path && (
+                <button
+                  type="button"
+                  onClick={() => void bridge.openFile(completedItem.path!)}
+                  className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs text-emerald-300 hover:text-white"
+                >
+                  <ExternalLink className="size-3.5" /> Open file
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => void bridge.openPath(settings.outputDir)}
+                className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
+              >
+                <FolderOpen className="size-3.5" /> Open folder
+              </button>
+              {completedItem.path && (
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await navigator.clipboard.writeText(completedItem.path!);
+                    setCopiedCompleted(true);
+                    setTimeout(() => setCopiedCompleted(false), 2000);
+                  }}
+                  className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
+                >
+                  <Copy className="size-3.5" /> {copiedCompleted ? "Copied!" : "Copy path"}
+                </button>
+              )}
+              {completedItem.path && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleSourceInput(completedItem.path!);
+                    setCompletedItem(null);
+                    onStatus("Output file loaded as new conversion source.");
+                  }}
+                  className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs"
+                >
+                  Use as source
+                </button>
+              )}
+            </div>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Convert & Execution Section */}
       <section className="panel overflow-hidden p-5">
         <div className="flex flex-wrap items-center gap-3">
-          <button type="button" disabled={running} onClick={() => void convert()} className="primary-button flex min-h-11 flex-1 items-center justify-center gap-2 px-5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"><Play className="size-4" /> {running ? "Conversion running" : "Convert media"}</button>
-          {running && <button type="button" onClick={() => void onCancel()} className="danger-button flex min-h-11 items-center gap-2 px-4 text-sm"><Square className="size-3.5" /> Abort</button>}
+          <button
+            type="button"
+            disabled={running || (queue.length > 0 && queueRunning)}
+            onClick={() => void convert()}
+            className="primary-button flex min-h-11 flex-1 items-center justify-center gap-2 px-5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Play className="size-4" />{" "}
+            {running
+              ? "Conversion running"
+              : queue.length > 0
+              ? `Convert queue (${queue.filter((q) => q.status === "queued").length} remaining)`
+              : "Convert media"}
+          </button>
+          {running && (
+            <button type="button" onClick={() => void onCancel()} className="danger-button flex min-h-11 items-center gap-2 px-4 text-sm">
+              <Square className="size-3.5" /> Abort
+            </button>
+          )}
         </div>
-        <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/[0.06]"><motion.div className="h-full rounded-full bg-[#c52b68]" animate={{ width: `${Math.round(progress * 100)}%` }} transition={{ ease: "easeOut", duration: .25 }} /></div>
+        <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
+          <motion.div
+            className="h-full rounded-full bg-[#c52b68]"
+            animate={{ width: `${Math.round(progress * 100)}%` }}
+            transition={{ ease: "easeOut", duration: 0.25 }}
+          />
+        </div>
         <div className="mt-3 flex items-center justify-between gap-3 text-xs">
           <span className={`truncate ${running ? "text-zinc-300" : "text-zinc-500"}`}>{status || "Ready. Paste a link or choose a file to begin."}</span>
           <span className="shrink-0 font-mono text-zinc-700">{Math.round(progress * 100)}%</span>
         </div>
-        {lastEvent && <div className="mt-3 flex items-center gap-2 text-[11px] text-zinc-700"><RefreshCw className={`size-3 ${running ? "animate-spin" : ""}`} /> Latest engine message: {lastEvent.message}</div>}
+        {lastEvent && (
+          <div className="mt-3 flex items-center gap-2 text-[11px] text-zinc-700">
+            <RefreshCw className={`size-3 ${running ? "animate-spin" : ""}`} /> Latest engine message: {lastEvent.message}
+          </div>
+        )}
       </section>
 
       {playlist && <PlaylistDialog catalog={playlist} onClose={() => setPlaylist(null)} onConfirm={(indexes) => { setPlaylist(null); void convert(indexes); }} />}
-      {loadingPlaylist && <div className="fixed inset-0 z-40 grid place-items-center bg-black/45 backdrop-blur-sm"><div className="panel flex items-center gap-3 px-5 py-4 text-sm text-zinc-300"><RefreshCw className="size-4 animate-spin text-zinc-500" /> Reading playlist catalog...</div></div>}
+      {loadingPlaylist && (
+        <div className="fixed inset-0 z-40 grid place-items-center bg-black/45 backdrop-blur-sm">
+          <div className="panel flex items-center gap-3 px-5 py-4 text-sm text-zinc-300">
+            <RefreshCw className="size-4 animate-spin text-zinc-500" /> Reading playlist catalog...
+          </div>
+        </div>
+      )}
     </div>
   );
 }

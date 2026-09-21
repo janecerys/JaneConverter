@@ -118,6 +118,15 @@ fn choose_file() -> Option<String> {
 }
 
 #[tauri::command]
+fn choose_files() -> Vec<String> {
+    FileDialog::new()
+        .set_title("Choose media files")
+        .pick_files()
+        .map(|paths| paths.into_iter().map(|path| path.display().to_string()).collect())
+        .unwrap_or_default()
+}
+
+#[tauri::command]
 fn choose_folder() -> Option<String> {
     FileDialog::new()
         .set_title("Choose export folder")
@@ -670,6 +679,7 @@ pub fn run() {
             settings_save,
             set_data_root_path,
             choose_file,
+            choose_files,
             choose_folder,
             open_path,
             open_file,

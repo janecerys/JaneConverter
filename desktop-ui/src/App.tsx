@@ -36,6 +36,21 @@ export default function App() {
   const accessDiagnosticIds = useRef(new Set<number>());
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState("Ready. Paste a link or choose a file to begin.");
+  const [theme, setTheme] = useState<"dark" | "light">(() => {
+    if (typeof window === "undefined") return "dark";
+    try {
+      return (window.localStorage.getItem("janecoverter.theme") as "light" | null) ?? "dark";
+    } catch {
+      return "dark";
+    }
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    try {
+      window.localStorage.setItem("janecoverter.theme", theme);
+    } catch {}
+  }, [theme]);
 
   useEffect(() => {
     let mounted = true;
@@ -170,10 +185,10 @@ export default function App() {
       ? <LibraryView settings={settings} onSettings={updateSettings} onStatus={statusMessage} />
       : activeView === "console"
         ? <ConsoleView events={events} onClear={() => setEvents([])} onStatus={statusMessage} />
-        : <SettingsView runtime={runtime} onStatus={statusMessage} />;
+        : <SettingsView runtime={runtime} theme={theme} onToggleTheme={setTheme} onStatus={statusMessage} />;
 
   return (
-    <div onContextMenu={(event) => event.preventDefault()} className="relative flex min-h-screen overflow-hidden bg-[#02000a] text-zinc-200">
+    <div data-theme={theme} onContextMenu={(event) => event.preventDefault()} className={`app-shell relative flex min-h-screen overflow-hidden ${theme === "light" ? "bg-[#fdf7fa] text-[#1f1222]" : "bg-[#02000a] text-zinc-200"}`}>
       <div className="pointer-events-none absolute -left-32 -top-24 size-[460px] rounded-full bg-[#c52b68]/[0.055] blur-3xl ambient-orb" />
       <div className="pointer-events-none absolute -right-28 -top-36 h-[390px] w-[700px] rounded-full top-right-glow ambient-orb" style={{ animationDelay: "-6s" }} />
       <div className="pointer-events-none absolute right-0 top-16 h-px w-[58%] top-right-glow-line" />

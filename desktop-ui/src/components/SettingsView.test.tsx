@@ -119,4 +119,30 @@ describe("Settings updates", () => {
     await act(async () => { root.unmount(); });
     container.remove();
   });
+
+  it("toggles interface theme between dark and white pink", async () => {
+    const onToggleTheme = vi.fn();
+    const onStatus = vi.fn();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<SettingsView runtime={sourceRuntime} theme="dark" onToggleTheme={onToggleTheme} onStatus={onStatus} />);
+    });
+
+    const themeButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("White Pink Theme"));
+    expect(themeButton).toBeDefined();
+
+    await act(async () => {
+      themeButton?.click();
+      await Promise.resolve();
+    });
+
+    expect(onToggleTheme).toHaveBeenCalledWith("light");
+    expect(onStatus).toHaveBeenCalledWith("Theme changed to White Pink.");
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
 });

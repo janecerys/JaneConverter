@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, ArrowRight, FileAudio, FileImage, FileVideo, FolderOpen, Inbox, RefreshCw, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowRight, Check, Copy, FileAudio, FileImage, FileVideo, FolderOpen, HelpCircle, Inbox, RefreshCw, Trash2, X } from "lucide-react";
 import type { AccessStatus, ConverterSettings, FetchedMedia } from "../bridge";
 import { bridge } from "../bridge";
 
@@ -55,6 +55,8 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
   const [moving, setMoving] = useState(false);
   const [pendingMove, setPendingMove] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [showGuide, setShowGuide] = useState(false);
+  const [copiedPath, setCopiedPath] = useState(false);
   const refreshInFlight = useRef(false);
   const mountedRef = useRef(true);
   const thumbnailPaths = useRef(new Set<string>());
@@ -170,10 +172,19 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="mono-label">BROWSER CAPTURE INBOX</div>
-          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white">Fetched media</h1>
+          <h1 className="mt-3 text-3xl font-semibold tracking-tight text-white">Fetched media.</h1>
           <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-500">Captured media is saved in the folder below. The browser session controls what can be fetched; the files remain here until you open, convert, or discard them.</p>
         </div>
         <div className="flex items-center gap-2 text-xs text-zinc-500">
+          <button
+            type="button"
+            onClick={() => setShowGuide(true)}
+            className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs text-pink-300 border-[#c52b68]/30 hover:border-[#c52b68]/60"
+            title="How to install and use the browser extension"
+          >
+            <HelpCircle className="size-3.5 text-[#d75b88]" />
+            Extension guide
+          </button>
           <button type="button" aria-label="Refresh fetched media" title="Refresh fetched media" disabled={refreshing} onClick={() => void refresh(true)} className="subtle-button grid size-7 place-items-center rounded-full disabled:cursor-wait disabled:opacity-60"><RefreshCw className={"size-3.5 " + (refreshing ? "animate-spin" : "")} /></button>
           {items.length + (access.active ? " item" : " saved item") + (items.length === 1 ? "" : "s")}
         </div>
@@ -239,6 +250,57 @@ export function FetchedMediaView({ access, settings, onSettings, onSelect, onDis
             <div className="mt-5 flex justify-end gap-2">
               <button type="button" className="subtle-button px-3 py-2 text-xs" onClick={() => setPendingMove(null)}>Cancel</button>
               <button type="button" disabled={moving} className="primary-button px-3 py-2 text-xs disabled:cursor-wait disabled:opacity-60" onClick={() => void confirmMove()}>{moving ? "Moving..." : "Move folder"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {showGuide && (
+        <div className="fixed inset-0 z-50 grid place-items-center bg-black/65 p-6" role="presentation" onMouseDown={(e) => { if (e.target === e.currentTarget) setShowGuide(false); }}>
+          <div className="panel relative w-full max-w-xl p-6" role="dialog" aria-modal="true" aria-labelledby="extension-guide-title">
+            <button type="button" onClick={() => setShowGuide(false)} className="absolute right-4 top-4 grid size-8 place-items-center rounded-lg text-zinc-500 hover:bg-white/[0.06] hover:text-zinc-200" aria-label="Close guide"><X className="size-4" /></button>
+            <div className="mono-label">AIR-GAPPED BROWSER BRIDGE</div>
+            <h2 id="extension-guide-title" className="mt-2 text-xl font-semibold text-white">How to Install & Use the Browser Extension</h2>
+            <p className="mt-2 text-xs leading-relaxed text-zinc-400">
+              The JaneConverter Browser Bridge lets you capture media directly from your active browser tabs. It operates with strict air-gapped privacy: <strong>it never reads, exports, or shares cookies, passwords, or session tokens</strong>.
+            </p>
+            <div className="mt-4 space-y-3 text-xs leading-relaxed text-zinc-300">
+              <div className="rounded-xl border border-white/[0.06] bg-black/25 p-3">
+                <div className="font-semibold text-pink-300">1. Open Extension Management in Your Browser</div>
+                <div className="mt-1 text-zinc-400">Works in Chrome, Microsoft Edge, Brave, Vivaldi, or Opera:</div>
+                <div className="mt-1 font-mono text-[11px] text-zinc-300">chrome://extensions &nbsp;|&nbsp; edge://extensions &nbsp;|&nbsp; vivaldi://extensions</div>
+              </div>
+              <div className="rounded-xl border border-white/[0.06] bg-black/25 p-3">
+                <div className="font-semibold text-pink-300">2. Turn On Developer Mode</div>
+                <div className="mt-1 text-zinc-400">Toggle the <strong>Developer mode</strong> switch in the top-right corner of the extensions page.</div>
+              </div>
+              <div className="rounded-xl border border-white/[0.06] bg-black/25 p-3">
+                <div className="font-semibold text-pink-300">3. Click "Load Unpacked"</div>
+                <div className="mt-1 text-zinc-400">Click the <strong>Load unpacked</strong> button and select the <code className="rounded bg-white/10 px-1 py-0.5 font-mono text-zinc-200">browser-extension</code> directory in your JaneConverter root.</div>
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText("browser-extension");
+                        setCopiedPath(true);
+                        setTimeout(() => setCopiedPath(false), 2000);
+                        onStatus("Copied 'browser-extension' folder name to clipboard.");
+                      } catch {}
+                    }}
+                    className="subtle-button flex items-center gap-1.5 px-3 py-1.5 text-[11px]"
+                  >
+                    {copiedPath ? <Check className="size-3 text-emerald-400" /> : <Copy className="size-3 text-zinc-400" />}
+                    {copiedPath ? "Copied folder name" : "Copy folder name: browser-extension"}
+                  </button>
+                </div>
+              </div>
+              <div className="rounded-xl border border-white/[0.06] bg-black/25 p-3">
+                <div className="font-semibold text-pink-300">4. Capture Media with Zero Cookie Leakage</div>
+                <div className="mt-1 text-zinc-400">Navigate to your media page, click the JaneConverter extension icon, and select <strong>Capture current media</strong>. Raw binary bytes transfer directly into this Fetched Media inbox!</div>
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end">
+              <button type="button" onClick={() => setShowGuide(false)} className="primary-button px-5 py-2 text-xs">Got it</button>
             </div>
           </div>
         </div>

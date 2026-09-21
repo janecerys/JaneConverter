@@ -11,6 +11,7 @@ import time
 import shutil
 import threading
 import subprocess
+import json
 from pathlib import Path
 from typing import Optional, Dict, Any, Callable
 
@@ -102,6 +103,196 @@ def probe_media_duration(input_path: str) -> Optional[float]:
     except Exception:
         pass
     return None
+
+def probe_media_streams(input_path: str) -> Optional[Dict[str, Any]]:
+    """
+    Returns media information (format and streams) via ffprobe as a parsed dict,
+    or None if probing fails or the input is invalid.
+    """
+    if not input_path or not os.path.exists(input_path):
+        return None
+    try:
+        no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        res = subprocess.run(
+            [
+                get_ffprobe_binary(),
+                "-v", "error",
+                "-show_format",
+                "-show_streams",
+                "-of", "json",
+                input_path,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=15.0,
+            creationflags=no_window,
+        )
+        if res.returncode == 0 and res.stdout.strip():
+            return json.loads(res.stdout)
+    except Exception:
+        pass
+    return None
+
+def validate_output_file(
+    output_path: str,
+    target_format: str,
+    min_size_bytes: int = 100
+) -> None:
+    """
+    Validates that a converted file exists, is non-empty, and passes ffprobe structure checks.
+    Raises RuntimeError with 'ValidationFailed:' prefix if validation fails.
+    """
+    if not os.path.isfile(output_path):
+        raise RuntimeError(
+            f"ValidationFailed: destination file '{output_path}' was not created."
+        )
+
+    size = os.path.getsize(output_path)
+    if size < min_size_bytes:
+        raise RuntimeError(
+            f"ValidationFailed: destination file '{output_path}' is corrupted or empty ({size} bytes)."
+        )
+
+    target_format = target_format.lower().strip(".")
+    probe = probe_media_streams(output_path)
+    if not probe or not probe.get("streams"):
+        raise RuntimeError(
+            f"ValidationFailed: destination file '{output_path}' has invalid or unreadable media headers."
+        )
+
+    streams = probe.get("streams", [])
+    if target_format in SUPPORTED_AUDIO_FORMATS:
+        has_audio = any(s.get("codec_type") == "audio" for s in streams)
+        if not has_audio:
+            raise RuntimeError(
+                f"ValidationFailed: output file '{output_path}' does not contain an audio stream."
+            )
+    elif target_format in SUPPORTED_VIDEO_FORMATS:
+        has_video = any(s.get("codec_type") == "video" for s in streams)
+        if not has_video:
+            raise RuntimeError(
+                f"ValidationFailed: output file '{output_path}' does not contain a video stream."
+            )
+    elif target_format in SUPPORTED_IMAGE_FORMATS:
+        has_image = any(s.get("codec_type") == "video" for s in streams)
+        if not has_image:
+            raise RuntimeError(
+                f"ValidationFailed: output file '{output_path}' does not contain valid image frame data."
+            )
+
+_soxr_supported: Optional[bool] = None
+_soxr_lock = threading.Lock()
+
+def has_soxr_support() -> bool:
+    """Checks if the active FFmpeg binary has libsoxr resampling filter enabled."""
+    global _soxr_supported
+    with _soxr_lock:
+        if _soxr_supported is not None:
+            return _soxr_supported
+        try:
+            no_win = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+            res = subprocess.run(
+                [get_ffmpeg_binary(), "-f", "lavfi", "-i", "sine=duration=0.05",
+                 "-af", "aresample=resampler=soxr:precision=28", "-f", "null", "-"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                timeout=5.0, creationflags=no_win
+            )
+            _soxr_supported = (res.returncode == 0)
+        except Exception:
+            _soxr_supported = False
+        return _soxr_supported
+
+def is_stream_copy_safe(
+    input_path: str,
+    target_format: str,
+    sample_rate: Optional[int] = None,
+    normalize_audio: bool = False,
+    resolution: str = "original",
+    cover_path: Optional[str] = None,
+    probed_info: Optional[Dict[str, Any]] = None,
+) -> bool:
+    """
+    Determines if stream copy (-c copy) is safe without quality loss or container corruption.
+
+    Guardrails:
+    1. normalize_audio must be False (EBU R128 requires decoding and filtering).
+    2. cover_path must not be active (embedding new cover art requires transcode/mux pipelines).
+    3. resolution must be 'original' (downscaling requires video filter and transcode).
+    4. Codec must be natively supported by the target container format.
+    5. Sample rate must match the source audio stream (no resampling requested).
+    """
+    if normalize_audio:
+        return False
+    if cover_path and os.path.exists(cover_path):
+        return False
+    if resolution and resolution.lower() != "original":
+        return False
+
+    target_format = target_format.lower().strip(".")
+    if target_format in SUPPORTED_IMAGE_FORMATS or target_format == "gif":
+        return False
+
+    info = probed_info if probed_info is not None else probe_media_streams(input_path)
+    if not info or not info.get("streams"):
+        return False
+
+    streams = info.get("streams", [])
+    audio_streams = [s for s in streams if s.get("codec_type") == "audio"]
+    video_streams = [
+        s for s in streams
+        if s.get("codec_type") == "video" and s.get("disposition", {}).get("attached_pic", 0) != 1
+    ]
+
+    if target_format in SUPPORTED_AUDIO_FORMATS:
+        if not audio_streams:
+            return False
+        a_stream = audio_streams[0]
+        a_codec = (a_stream.get("codec_name") or "").lower()
+        a_sr = a_stream.get("sample_rate")
+
+        if sample_rate and a_sr and str(sample_rate) != str(a_sr):
+            return False
+
+        if target_format in ("aac", "m4a") and a_codec == "aac":
+            return True
+        if target_format == "mp3" and a_codec in ("mp3", "mp3float"):
+            return True
+        if target_format == "flac" and a_codec == "flac":
+            return True
+        if target_format == "ogg" and a_codec in ("vorbis", "opus"):
+            return True
+        return False
+
+    if target_format in SUPPORTED_VIDEO_FORMATS:
+        if not video_streams:
+            return False
+        v_stream = video_streams[0]
+        v_codec = (v_stream.get("codec_name") or "").lower()
+        a_codec = (audio_streams[0].get("codec_name") or "").lower() if audio_streams else None
+        a_sr = audio_streams[0].get("sample_rate") if audio_streams else None
+
+        if sample_rate and a_sr and str(sample_rate) != str(a_sr):
+            return False
+
+        if target_format == "mp4":
+            v_ok = v_codec in ("h264", "hevc", "av1")
+            a_ok = a_codec is None or a_codec in ("aac", "mp3", "opus")
+            return v_ok and a_ok
+        if target_format == "mkv":
+            v_ok = v_codec in ("h264", "hevc", "vp8", "vp9", "av1")
+            a_ok = a_codec is None or a_codec in ("aac", "mp3", "opus", "flac", "vorbis")
+            return v_ok and a_ok
+        if target_format == "webm":
+            v_ok = v_codec in ("vp8", "vp9", "av1")
+            a_ok = a_codec is None or a_codec in ("opus", "vorbis")
+            return v_ok and a_ok
+        if target_format == "mov":
+            v_ok = v_codec in ("h264", "hevc", "prores")
+            a_ok = a_codec is None or a_codec in ("aac", "pcm_s16le", "pcm_s24le")
+            return v_ok and a_ok
+
+    return False
 
 def get_unique_target_path(directory: str, filename: str) -> str:
     """Appends an incrementing counter if a file already exists to prevent overwriting."""
@@ -331,12 +522,29 @@ def build_ffmpeg_args(
     gpu_codec: Optional[str] = None,
     metadata: Optional[Dict[str, str]] = None,
     cover_path: Optional[str] = None,
-    fps: Optional[int] = None
+    fps: Optional[int] = None,
+    stream_copy: bool = False
 ) -> list:
-    """Constructs command line argument list for FFmpeg transcode, including optional cover art embedding."""
+    """Constructs command line argument list for FFmpeg transcode or instant stream remuxing."""
     target_format = target_format.lower().strip(".")
     active_gpu = use_gpu if use_gpu is not None else use_nvenc
     has_valid_cover = bool(cover_path and os.path.exists(cover_path))
+
+    # Fast-path: Instant zero-loss stream copy when safe and requested
+    if stream_copy:
+        ffmpeg_bin = get_ffmpeg_binary()
+        cmd = [ffmpeg_bin, "-y", "-thread_queue_size", "1024", "-i", input_path]
+        if metadata:
+            for k, v in metadata.items():
+                if v:
+                    cmd.extend(["-metadata", f"{k}={v}"])
+        if target_format in SUPPORTED_AUDIO_FORMATS:
+            cmd.extend(["-vn", "-c:a", "copy"])
+        elif target_format in SUPPORTED_VIDEO_FORMATS:
+            cmd.extend(["-c:v", "copy", "-c:a", "copy"])
+        cmd.extend(["-threads", "0"])
+        cmd.append(output_path)
+        return cmd
 
     # Determine if target container format supports attached picture stream
     can_embed_art = has_valid_cover and target_format in ("mp3", "flac", "m4a", "aac")
@@ -377,6 +585,9 @@ def build_ffmpeg_args(
         if normalize_audio:
             # Industry standard EBU R128 loudness normalization
             audio_filters.append(LOUDNORM_FILTER)
+
+        if sample_rate and has_soxr_support():
+            audio_filters.append("aresample=resampler=soxr:precision=28:cutoff=0.99")
 
         if audio_filters:
             cmd.extend(["-af", ",".join(audio_filters)])
@@ -524,12 +735,15 @@ def convert_media(
     cover_path: Optional[str] = None,
     abort_event: Optional[Any] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
-    fps: Optional[int] = None
+    fps: Optional[int] = None,
+    allow_stream_copy: bool = True
 ) -> str:
     """
-    Transcodes input_path into the specified target format and writes to output_dir.
+    Transcodes or stream-remuxes input_path into the specified target format and writes to output_dir.
     Optionally embeds cover art image and tags metadata.
-    Automatically handles hardware GPU fallback to multi-core CPU, and cover embedding fallback if needed.
+    Automatically handles instant zero-loss stream-copying when safe, with fallback to transcode,
+    hardware GPU fallback to multi-core CPU, and cover embedding fallback if needed.
+    Validates output headers via ffprobe before reporting completion.
     """
     os.makedirs(output_dir, exist_ok=True)
     target_format = target_format.lower().strip(".")
@@ -558,23 +772,50 @@ def convert_media(
         if progress_callback:
             progress_callback(frac, msg)
 
-    report(0.70, f"Transcoding media to {target_format.upper()}...")
-
-    cmd = build_ffmpeg_args(
+    can_copy = allow_stream_copy and is_stream_copy_safe(
         input_path=input_path,
-        output_path=destination_path,
         target_format=target_format,
-        bitrate=bitrate,
         sample_rate=sample_rate,
         normalize_audio=normalize_audio,
         resolution=resolution,
-        use_nvenc=active_gpu,
-        use_gpu=active_gpu,
-        gpu_codec=gpu_codec,
-        metadata=metadata,
         cover_path=cover_path,
-        fps=fps
     )
+
+    if can_copy:
+        report(0.70, f"Compatible streams detected: instant stream remuxing to {target_format.upper()}...")
+        cmd = build_ffmpeg_args(
+            input_path=input_path,
+            output_path=destination_path,
+            target_format=target_format,
+            bitrate=bitrate,
+            sample_rate=sample_rate,
+            normalize_audio=False,
+            resolution=resolution,
+            use_nvenc=False,
+            use_gpu=False,
+            metadata=metadata,
+            cover_path=None,
+            fps=fps,
+            stream_copy=True,
+        )
+    else:
+        report(0.70, f"Transcoding media to {target_format.upper()}...")
+        cmd = build_ffmpeg_args(
+            input_path=input_path,
+            output_path=destination_path,
+            target_format=target_format,
+            bitrate=bitrate,
+            sample_rate=sample_rate,
+            normalize_audio=normalize_audio,
+            resolution=resolution,
+            use_nvenc=active_gpu,
+            use_gpu=active_gpu,
+            gpu_codec=gpu_codec,
+            metadata=metadata,
+            cover_path=cover_path,
+            fps=fps,
+            stream_copy=False,
+        )
     # Request machine-readable progress on stdout (inserted before the output path)
     cmd = cmd[:-1] + ["-progress", "pipe:1", "-nostats"] + [cmd[-1]]
 
@@ -674,6 +915,29 @@ def convert_media(
             except Exception:
                 pass
 
+        # If stream remuxing failed, retry with full transcode
+        if can_copy:
+            report(0.75, "Stream remux encountered container incompatibility, falling back to full transcode...")
+            return convert_media(
+                input_path=input_path,
+                output_dir=output_dir,
+                output_filename=output_filename,
+                target_format=target_format,
+                bitrate=bitrate,
+                sample_rate=sample_rate,
+                normalize_audio=normalize_audio,
+                resolution=resolution,
+                use_nvenc=use_nvenc,
+                use_gpu=active_gpu,
+                gpu_codec=gpu_codec,
+                metadata=metadata,
+                cover_path=cover_path,
+                abort_event=abort_event,
+                progress_callback=progress_callback,
+                fps=fps,
+                allow_stream_copy=False
+            )
+
         # If hardware GPU transcode failed, retry with multi-core CPU libx264
         if active_gpu and target_format in ("mp4", "mkv", "mov", "webm"):
             report(0.85, "Hardware GPU encoder unavailable or failed, switching to multi-core CPU transcode...")
@@ -691,7 +955,9 @@ def convert_media(
                 metadata=metadata,
                 cover_path=cover_path,
                 abort_event=abort_event,
-                progress_callback=progress_callback
+                progress_callback=progress_callback,
+                fps=fps,
+                allow_stream_copy=False
             )
         # If cover art embedding failed, retry without cover art
         if cover_path:
@@ -711,10 +977,22 @@ def convert_media(
                 metadata=metadata,
                 cover_path=None,
                 abort_event=abort_event,
-                progress_callback=progress_callback
+                progress_callback=progress_callback,
+                fps=fps,
+                allow_stream_copy=False
             )
         err_detail = e.stderr.decode("utf-8", errors="ignore") if e.stderr else ""
         raise RuntimeError(f"FFmpeg transcode error: {err_detail}") from e
+
+    try:
+        validate_output_file(destination_path, target_format)
+    except Exception as val_err:
+        if os.path.exists(destination_path):
+            try:
+                os.remove(destination_path)
+            except Exception:
+                pass
+        raise RuntimeError(f"Output validation error: {val_err}") from val_err
 
     report(1.0, f"Conversion complete: {os.path.basename(destination_path)}")
     return destination_path

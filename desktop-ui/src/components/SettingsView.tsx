@@ -1,9 +1,14 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, ExternalLink, FolderOpen, HardDrive, RefreshCw, RotateCw } from "lucide-react";
+import { CheckCircle2, ExternalLink, FolderOpen, HardDrive, Moon, RefreshCw, RotateCw, Sun } from "lucide-react";
 import type { RuntimeInfo } from "../bridge";
 import { bridge } from "../bridge";
 
-export function SettingsView({ runtime, onStatus }: { runtime: RuntimeInfo | null; onStatus: (message: string) => void }) {
+export function SettingsView({ runtime, theme = "dark", onToggleTheme, onStatus }: {
+  runtime: RuntimeInfo | null;
+  theme?: "dark" | "light";
+  onToggleTheme?: (next: "dark" | "light") => void;
+  onStatus: (message: string) => void;
+}) {
   const [checking, setChecking] = useState(false);
   const [relaunching, setRelaunching] = useState(false);
   const [message, setMessage] = useState("");
@@ -84,6 +89,29 @@ export function SettingsView({ runtime, onStatus }: { runtime: RuntimeInfo | nul
           <button type="button" className="subtle-button px-3 text-xs" onClick={() => void chooseDataRoot()}>Browse</button>
           <button type="button" disabled={changingDataRoot} className="primary-button flex items-center gap-2 px-3 text-xs disabled:cursor-wait disabled:opacity-60" onClick={() => void changeDataRoot()}><FolderOpen className={"size-3.5 " + (changingDataRoot ? "animate-pulse" : "")} /> {changingDataRoot ? "Applying..." : "Apply and relaunch"}</button>
         </div>
+      </section>
+      <section className="panel flex flex-wrap items-center justify-between gap-4 p-5">
+        <div>
+          <div className="flex items-center gap-2 text-sm text-zinc-200">
+            {theme === "light" ? <Sun size={16} className="text-[#c52b68]" /> : <Moon size={16} className="text-zinc-500" />}
+            Interface Theme
+          </div>
+          <div className="mt-1 text-xs text-zinc-600">
+            {theme === "light" ? "White pink theme is active." : "Dark pink theme is active."} Invert the interface between dark neon and white pink aesthetics.
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            const next = theme === "dark" ? "light" : "dark";
+            onToggleTheme?.(next);
+            onStatus(`Theme changed to ${next === "light" ? "White Pink" : "Dark Pink"}.`);
+          }}
+          className="subtle-button flex items-center gap-2 px-4 py-2 text-xs"
+        >
+          {theme === "light" ? <Moon className="size-3.5 text-zinc-600" /> : <Sun className="size-3.5 text-amber-400" />}
+          Switch to {theme === "light" ? "Dark Pink Theme" : "White Pink Theme"}
+        </button>
       </section>
       <section className="panel flex flex-wrap items-center justify-between gap-4 p-5"><div><div className="text-sm text-zinc-200">Relaunch JaneConverter</div><div className="mt-1 text-xs text-zinc-600">Close this window and start the current desktop application again.</div></div><button type="button" disabled={relaunching} onClick={() => void relaunch()} className="subtle-button flex items-center gap-2 px-4 py-2 text-xs disabled:cursor-wait disabled:opacity-60"><RotateCw className={"size-3.5 " + (relaunching ? "animate-spin" : "")} /> {relaunching ? "Relaunching..." : "Relaunch now"}</button></section>
       <section className="panel flex flex-wrap items-center justify-between gap-4 p-5"><div><div className="text-sm text-zinc-200">Check for updates</div><div className="mt-1 text-xs text-zinc-600">Checks the latest published JaneConverter release on GitHub and the extractor service. Nothing is installed silently.</div></div><button type="button" disabled={checking} onClick={() => void updates()} className="subtle-button flex items-center gap-2 px-4 py-2 text-xs"><RefreshCw className={`size-3.5 ${checking ? "animate-spin" : ""}`} /> {checking ? "Checking..." : "Check now"}</button></section>

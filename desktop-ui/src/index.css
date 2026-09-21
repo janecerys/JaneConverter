@@ -35,3 +35,98 @@ button { cursor: pointer; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }
+
+/* White Pink Theme (Light Mode) */
+[data-theme="light"],
+[data-theme="light"] body {
+  background: #fdf7fa !important;
+  color: #1f1222 !important;
+}
+
+[data-theme="light"] ::selection {
+  background: rgba(232, 44, 117, 0.25);
+  color: #a21852;
+}
+
+[data-theme="light"] .panel {
+  background: #ffffff !important;
+  border-color: rgba(197, 43, 104, 0.15) !important;
+  box-shadow: 0 4px 20px -2px rgba(197, 43, 104, 0.05);
+}
+
+[data-theme="light"] .field {
+  background: #ffffff !important;
+  border-color: rgba(197, 43, 104, 0.22) !important;
+  color: #1f1222 !important;
+}
+
+[data-theme="light"] .field:focus {
+  outline: 2px solid rgba(197, 43, 104, 0.55) !important;
+  outline-offset: 2px;
+  border-color: #c52b68 !important;
+}
+
+[data-theme="light"] .subtle-button {
+  background: #ffffff !important;
+  border-color: rgba(197, 43, 104, 0.18) !important;
+  color: #4a2842 !important;
+}
+
+[data-theme="light"] .subtle-button:hover {
+  background: #fdf2f7 !important;
+  border-color: rgba(197, 43, 104, 0.38) !important;
+  color: #c52b68 !important;
+}
+
+[data-theme="light"] .primary-button {
+  background: #c52b68 !important;
+  color: #ffffff !important;
+}
+
+[data-theme="light"] .primary-button:hover {
+  background: #da3a78 !important;
+}
+
+[data-theme="light"] .text-white {
+  color: #1f1222 !important;
+}
+
+[data-theme="light"] .text-zinc-200,
+[data-theme="light"] .text-zinc-300 {
+  color: #2b1730 !important;
+}
+
+[data-theme="light"] .text-zinc-400,
+[data-theme="light"] .text-zinc-500 {
+  color: #684f66 !important;
+}
+
+[data-theme="light"] .text-zinc-600,
+[data-theme="light"] .text-zinc-700 {
+  color: #8c718a !important;
+}
+
+[data-theme="light"] .mono-label {
+  color: #b3396b !important;
+}
+
+[data-theme="light"] .console-line {
+  color: #3b223a !important;
+}
+
+[data-theme="light"] aside {
+  background: #faeef3 !important;
+  border-right-color: rgba(197, 43, 104, 0.14) !important;
+}
+
+[data-theme="light"] header {
+  border-bottom-color: rgba(197, 43, 104, 0.14) !important;
+}
+
+[data-theme="light"] .top-right-glow {
+  background: radial-gradient(ellipse at center, rgba(236, 72, 153, 0.14), rgba(244, 114, 182, 0.05) 44%, transparent 75%) !important;
+}
+
+[data-theme="light"] .top-right-glow-line {
+  background: linear-gradient(90deg, transparent, rgba(236, 72, 153, 0.12), rgba(236, 72, 153, 0.35)) !important;
+}
