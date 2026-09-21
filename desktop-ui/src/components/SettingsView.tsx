@@ -1,12 +1,49 @@
 import { useEffect, useState } from "react";
-import { CheckCircle2, ExternalLink, FolderOpen, HardDrive, Moon, RefreshCw, RotateCw, Sun } from "lucide-react";
+import { CheckCircle2, ExternalLink, FolderOpen, HardDrive, Moon, Paintbrush, Palette, Pipette, RefreshCw, RotateCcw, RotateCw, Sun } from "lucide-react";
 import type { RuntimeInfo } from "../bridge";
 import { bridge } from "../bridge";
 
-export function SettingsView({ runtime, theme = "dark", onToggleTheme, onStatus }: {
+const ACCENT_PRESETS = [
+  { name: "Hot Pink (Default)", hex: "#c52b68" },
+  { name: "Neon Rose", hex: "#f43f5e" },
+  { name: "Electric Purple", hex: "#8b5cf6" },
+  { name: "Cyber Cyan", hex: "#06b6d4" },
+  { name: "Sky Blue", hex: "#3b82f6" },
+  { name: "Emerald Green", hex: "#10b981" },
+  { name: "Amber Gold", hex: "#f59e0b" },
+  { name: "Sunset Coral", hex: "#f97316" },
+];
+
+const BG_PRESETS = [
+  { name: "Void Black (Default)", hex: "#02000a" },
+  { name: "Deep Obsidian", hex: "#09090b" },
+  { name: "Midnight Navy", hex: "#0b0f17" },
+  { name: "Abyssal Plum", hex: "#12071a" },
+  { name: "Rosy Pearl (Light)", hex: "#fdf7fa" },
+  { name: "Pure White", hex: "#ffffff" },
+  { name: "Soft Zinc", hex: "#f4f4f5" },
+  { name: "Warm Cream", hex: "#faf8f5" },
+];
+
+export function SettingsView({
+  runtime,
+  theme = "dark",
+  accentColor = "#c52b68",
+  bgColor = "#02000a",
+  onToggleTheme,
+  onAccentColorChange,
+  onBgColorChange,
+  onResetColors,
+  onStatus,
+}: {
   runtime: RuntimeInfo | null;
   theme?: "dark" | "light";
+  accentColor?: string;
+  bgColor?: string;
   onToggleTheme?: (next: "dark" | "light") => void;
+  onAccentColorChange?: (color: string) => void;
+  onBgColorChange?: (color: string) => void;
+  onResetColors?: () => void;
   onStatus: (message: string) => void;
 }) {
   const [checking, setChecking] = useState(false);
@@ -90,28 +127,119 @@ export function SettingsView({ runtime, theme = "dark", onToggleTheme, onStatus 
           <button type="button" disabled={changingDataRoot} className="primary-button flex items-center gap-2 px-3 text-xs disabled:cursor-wait disabled:opacity-60" onClick={() => void changeDataRoot()}><FolderOpen className={"size-3.5 " + (changingDataRoot ? "animate-pulse" : "")} /> {changingDataRoot ? "Applying..." : "Apply and relaunch"}</button>
         </div>
       </section>
-      <section className="panel flex flex-wrap items-center justify-between gap-4 p-5">
-        <div>
-          <div className="flex items-center gap-2 text-sm text-zinc-200">
-            {theme === "light" ? <Sun size={16} className="text-[#c52b68]" /> : <Moon size={16} className="text-zinc-500" />}
-            Interface Theme
+
+      {/* Interface Theme & Custom Color Suite */}
+      <section className="panel p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
+              <Palette size={16} style={{ color: "var(--accent-color, #c52b68)" }} />
+              Interface Theme & Color Palette
+            </div>
+            <div className="mt-1 text-xs text-zinc-500">
+              Personalize JaneConverter in real-time. Pick custom accent & background colors or choose preset styles.
+            </div>
           </div>
-          <div className="mt-1 text-xs text-zinc-600">
-            {theme === "light" ? "White pink theme is active." : "Dark pink theme is active."} Invert the interface between dark neon and white pink aesthetics.
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                const next = theme === "dark" ? "light" : "dark";
+                onToggleTheme?.(next);
+                onStatus(`Theme changed to ${next === "light" ? "White Pink" : "Dark Pink"}.`);
+              }}
+              className="subtle-button flex items-center gap-2 px-3.5 py-2 text-xs"
+            >
+              {theme === "light" ? <Moon className="size-3.5 text-zinc-600" /> : <Sun className="size-3.5 text-amber-400" />}
+              Switch to {theme === "light" ? "Dark Pink Theme" : "White Pink Theme"}
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                onResetColors?.();
+                onStatus("Theme colors reset to default palette.");
+              }}
+              className="subtle-button flex items-center gap-1.5 px-3 py-2 text-xs text-zinc-400 hover:text-white"
+              title="Reset accent and background to default"
+            >
+              <RotateCcw className="size-3" /> Reset colors
+            </button>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => {
-            const next = theme === "dark" ? "light" : "dark";
-            onToggleTheme?.(next);
-            onStatus(`Theme changed to ${next === "light" ? "White Pink" : "Dark Pink"}.`);
-          }}
-          className="subtle-button flex items-center gap-2 px-4 py-2 text-xs"
-        >
-          {theme === "light" ? <Moon className="size-3.5 text-zinc-600" /> : <Sun className="size-3.5 text-amber-400" />}
-          Switch to {theme === "light" ? "Dark Pink Theme" : "White Pink Theme"}
-        </button>
+
+        <div className="grid gap-4 md:grid-cols-2 pt-2 border-t border-white/[0.06]">
+          {/* Accent Color Customizer */}
+          <div className="rounded-xl border border-white/[0.06] bg-black/10 p-3.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-medium text-zinc-200 flex items-center gap-1.5">
+                <Pipette className="size-3.5" style={{ color: "var(--accent-color, #c52b68)" }} />
+                Accent Color
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  aria-label="Accent color picker"
+                  value={accentColor}
+                  onChange={(event) => onAccentColorChange?.(event.target.value)}
+                  className="size-7 cursor-pointer rounded-lg border border-white/20 bg-transparent p-0.5"
+                />
+                <span className="font-mono text-xs uppercase text-zinc-400">{accentColor}</span>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-1.5">
+              {ACCENT_PRESETS.map((swatch) => (
+                <button
+                  key={swatch.hex}
+                  type="button"
+                  onClick={() => onAccentColorChange?.(swatch.hex)}
+                  title={swatch.name}
+                  className={`size-6 rounded-lg transition-transform hover:scale-110 relative ${
+                    accentColor.toLowerCase() === swatch.hex.toLowerCase()
+                      ? "ring-2 ring-white ring-offset-2 ring-offset-black scale-105"
+                      : "border border-white/10"
+                  }`}
+                  style={{ backgroundColor: swatch.hex }}
+                />
+              ))}
+            </div>
+          </div>
+
+          {/* Main Theme Color (Background) Customizer */}
+          <div className="rounded-xl border border-white/[0.06] bg-black/10 p-3.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-medium text-zinc-200 flex items-center gap-1.5">
+                <Paintbrush className="size-3.5 text-zinc-400" />
+                Main Theme Color (Background)
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  aria-label="Theme background color picker"
+                  value={bgColor}
+                  onChange={(event) => onBgColorChange?.(event.target.value)}
+                  className="size-7 cursor-pointer rounded-lg border border-white/20 bg-transparent p-0.5"
+                />
+                <span className="font-mono text-xs uppercase text-zinc-400">{bgColor}</span>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-1.5">
+              {BG_PRESETS.map((swatch) => (
+                <button
+                  key={swatch.hex}
+                  type="button"
+                  onClick={() => onBgColorChange?.(swatch.hex)}
+                  title={swatch.name}
+                  className={`size-6 rounded-lg transition-transform hover:scale-110 relative ${
+                    bgColor.toLowerCase() === swatch.hex.toLowerCase()
+                      ? "ring-2 ring-white ring-offset-2 ring-offset-black scale-105"
+                      : "border border-white/10"
+                  }`}
+                  style={{ backgroundColor: swatch.hex }}
+                />
+              ))}
+            </div>
+          </div>
+        </div>
       </section>
       <section className="panel flex flex-wrap items-center justify-between gap-4 p-5"><div><div className="text-sm text-zinc-200">Relaunch JaneConverter</div><div className="mt-1 text-xs text-zinc-600">Close this window and start the current desktop application again.</div></div><button type="button" disabled={relaunching} onClick={() => void relaunch()} className="subtle-button flex items-center gap-2 px-4 py-2 text-xs disabled:cursor-wait disabled:opacity-60"><RotateCw className={"size-3.5 " + (relaunching ? "animate-spin" : "")} /> {relaunching ? "Relaunching..." : "Relaunch now"}</button></section>
       <section className="panel flex flex-wrap items-center justify-between gap-4 p-5"><div><div className="text-sm text-zinc-200">Check for updates</div><div className="mt-1 text-xs text-zinc-600">Checks the latest published JaneConverter release on GitHub and the extractor service. Nothing is installed silently.</div></div><button type="button" disabled={checking} onClick={() => void updates()} className="subtle-button flex items-center gap-2 px-4 py-2 text-xs"><RefreshCw className={`size-3.5 ${checking ? "animate-spin" : ""}`} /> {checking ? "Checking..." : "Check now"}</button></section>

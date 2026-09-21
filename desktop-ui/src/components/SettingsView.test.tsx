@@ -145,4 +145,72 @@ describe("Settings updates", () => {
     await act(async () => { root.unmount(); });
     container.remove();
   });
+
+  it("triggers accent and background color changes from pickers and reset button", async () => {
+    const onAccentColorChange = vi.fn();
+    const onBgColorChange = vi.fn();
+    const onResetColors = vi.fn();
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(
+        <SettingsView
+          runtime={sourceRuntime}
+          theme="dark"
+          accentColor="#c52b68"
+          bgColor="#02000a"
+          onAccentColorChange={onAccentColorChange}
+          onBgColorChange={onBgColorChange}
+          onResetColors={onResetColors}
+          onStatus={vi.fn()}
+        />,
+      );
+    });
+
+    const setNativeValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+
+    const accentPicker = container.querySelector<HTMLInputElement>('input[aria-label="Accent color picker"]');
+    expect(accentPicker).toBeDefined();
+    await act(async () => {
+      if (accentPicker) {
+        setNativeValue?.call(accentPicker, "#06b6d4");
+        accentPicker.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      await Promise.resolve();
+    });
+    expect(onAccentColorChange).toHaveBeenCalledWith("#06b6d4");
+
+    const bgPicker = container.querySelector<HTMLInputElement>('input[aria-label="Theme background color picker"]');
+    expect(bgPicker).toBeDefined();
+    await act(async () => {
+      if (bgPicker) {
+        setNativeValue?.call(bgPicker, "#09090b");
+        bgPicker.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      await Promise.resolve();
+    });
+    expect(onBgColorChange).toHaveBeenCalledWith("#09090b");
+
+    // Also test swatch click
+    const cyanSwatch = Array.from(container.querySelectorAll("button")).find((button) => button.getAttribute("title")?.includes("Cyber Cyan"));
+    expect(cyanSwatch).toBeDefined();
+    await act(async () => {
+      cyanSwatch?.click();
+      await Promise.resolve();
+    });
+    expect(onAccentColorChange).toHaveBeenCalledWith("#06b6d4");
+
+    const resetButton = Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.includes("Reset colors"));
+    expect(resetButton).toBeDefined();
+    await act(async () => {
+      resetButton?.click();
+      await Promise.resolve();
+    });
+    expect(onResetColors).toHaveBeenCalled();
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
 });

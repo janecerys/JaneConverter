@@ -47,7 +47,10 @@ export function Sidebar({ activeView, onChange }: { activeView: ViewKey; onChang
     >
       <div className={["flex min-h-9 items-center gap-3", collapsed ? "justify-center" : "justify-start"].join(" ")}>
         <div className="grid size-9 shrink-0 place-items-center rounded-xl border border-white/10 bg-[#11101b] shadow-[0_8px_24px_rgba(0,0,0,.28)]">
-          <span className="size-2 rounded-full bg-[#c52b68] shadow-[0_0_14px_rgba(197,43,104,.55)]" />
+          <span
+            className="size-2 rounded-full"
+            style={{ backgroundColor: "var(--accent-color, #c52b68)", boxShadow: "0 0 14px var(--accent-glow, rgba(197,43,104,.55))" }}
+          />
         </div>
         {!collapsed && <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold tracking-tight text-white">JaneConverter</div>
@@ -69,8 +72,19 @@ export function Sidebar({ activeView, onChange }: { activeView: ViewKey; onChang
               onClick={() => onChange(key)}
               className={["group relative flex w-full items-center rounded-xl py-2.5 text-left text-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#3b82f6]", collapsed ? "justify-center px-2" : "gap-3 px-3", active ? "text-white" : "text-zinc-500 hover:bg-white/[0.035] hover:text-zinc-200"].join(" ")}
             >
-              {active && <motion.span layoutId="active-nav" className="absolute inset-0 rounded-xl border border-[#c52b68]/35 bg-white/[0.045]" transition={{ type: "spring", stiffness: 420, damping: 34 }} />}
-              <Icon className={["relative z-10 size-4", active ? "text-[#d75b88]" : "text-zinc-600 group-hover:text-zinc-300"].join(" ")} strokeWidth={1.8} />
+              {active && (
+                <motion.span
+                  layoutId="active-nav"
+                  className="absolute inset-0 rounded-xl border bg-white/[0.045]"
+                  style={{ borderColor: "var(--accent-glow, rgba(197,43,104,0.35))" }}
+                  transition={{ type: "spring", stiffness: 420, damping: 34 }}
+                />
+              )}
+              <Icon
+                className={["relative z-10 size-4", active ? "" : "text-zinc-600 group-hover:text-zinc-300"].join(" ")}
+                style={active ? { color: "var(--accent-color, #d75b88)" } : undefined}
+                strokeWidth={1.8}
+              />
               {!collapsed && <span className="relative z-10 truncate">{label}</span>}
             </button>
           );

@@ -563,14 +563,14 @@ export function ConverterView({
   }
 
   return (
-    <div className="mx-auto max-w-[1180px] space-y-5 pb-10">
+    <div className="mx-auto max-w-[1180px] space-y-3.5 pb-2">
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }} className="flex items-end justify-between gap-5">
         <div>
           <div className="mono-label">Universal media studio</div>
-          <h1 className="mt-2 text-3xl font-semibold tracking-[-.04em] text-white">Convert with less friction.</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-relaxed text-zinc-500">Keep the source behavior you already trust, with a calmer workspace around it.</p>
+          <h1 className="mt-1 text-2xl font-semibold tracking-[-.04em] text-white">Convert with less friction.</h1>
+          <p className="mt-1 max-w-2xl text-xs leading-relaxed text-zinc-500">Keep the source behavior you already trust, with a calmer workspace around it.</p>
         </div>
-        <div className="hidden rounded-full border border-white/[0.07] bg-white/[0.025] px-3 py-2 text-[11px] text-zinc-500 md:block">
+        <div className="hidden rounded-full border border-white/[0.07] bg-white/[0.025] px-3 py-1.5 text-[11px] text-zinc-500 md:block">
           <span className={`mr-2 inline-block size-1.5 rounded-full ${runtime?.pythonReady ? "bg-emerald-400" : "bg-amber-400"}`} />
           {runtime?.pythonReady ? "Python engine ready" : "Engine setup required"}
         </div>
@@ -582,7 +582,7 @@ export function ConverterView({
         onDragEnter={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDropEvent}
-        className={`panel p-5 relative transition-all duration-200 ${
+        className={`panel p-4 relative transition-all duration-200 ${
           isDraggingOver
             ? "border-[#c52b68] bg-[#c52b68]/[0.08] shadow-[0_0_30px_rgba(197,43,104,0.22)] ring-1 ring-[#c52b68]"
             : ""
@@ -837,11 +837,11 @@ export function ConverterView({
       )}
 
       {/* Output & Presets Parameters */}
-      <section className="panel p-5">
+      <section className="panel p-4">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <div className="text-sm font-medium text-zinc-200">Output and conversion presets</div>
-            <div className="mt-1 text-xs text-zinc-600">Select an intent goal or fine-tune settings below.</div>
+            <div className="mt-0.5 text-xs text-zinc-600">Select an intent goal or fine-tune settings below.</div>
           </div>
           <div className="flex items-center gap-1 rounded-xl border border-white/[0.07] bg-black/15 p-1">
             {(["Music", "Video", "Image", "Miscellaneous"] as const).map((category) => (
@@ -860,12 +860,12 @@ export function ConverterView({
         </div>
 
         {/* Intent Presets Toolbar */}
-        <div className="mt-4 rounded-xl border border-white/[0.05] bg-black/15 p-3">
-          <div className="flex items-center gap-2 mb-2">
-            <Wand2 className="size-3.5 text-[#c52b68]" />
+        <div className="mt-3 rounded-xl border border-white/[0.05] bg-black/15 p-2.5">
+          <div className="flex items-center gap-2 mb-1.5">
+            <Wand2 className="size-3.5" style={{ color: "var(--accent-color, #c52b68)" }} />
             <span className="text-[11px] font-medium text-zinc-400">1-Click Presets:</span>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-wrap items-center gap-1.5">
             {intentPresets.map((preset) => {
               const isSelected =
                 settings.category === preset.category &&
@@ -878,9 +878,10 @@ export function ConverterView({
                   onClick={() => applyPreset(preset)}
                   className={`rounded-lg px-2.5 py-1 text-xs transition-colors ${
                     isSelected
-                      ? "bg-[#c52b68] text-white font-medium shadow-sm shadow-[#c52b68]/30"
+                      ? "text-white font-medium"
                       : "border border-white/[0.08] bg-black/20 text-zinc-400 hover:border-white/[0.18] hover:text-white"
                   }`}
+                  style={isSelected ? { backgroundColor: "var(--accent-color, #c52b68)", boxShadow: "0 1px 6px var(--accent-glow, rgba(197,43,104,0.3))" } : undefined}
                   title={preset.description}
                 >
                   {preset.name}
@@ -891,7 +892,7 @@ export function ConverterView({
         </div>
 
         {/* Primary Controls */}
-        <div className="mt-5 grid gap-3 md:grid-cols-2">
+        <div className="mt-3.5 grid gap-3 md:grid-cols-2">
           <SelectField
             label="Container format"
             value={activeFormat}
@@ -984,34 +985,12 @@ export function ConverterView({
         </AnimatePresence>
       </section>
 
-      {/* Export Destination Section */}
-      <section className="panel p-5">
-        <div className="flex items-center gap-2 text-sm font-medium text-zinc-200">
-          <FolderOpen className="size-4 text-zinc-500" /> Export folder
-        </div>
-        <div className="mt-3 flex gap-2">
-          <input
-            aria-label="Export folder"
-            value={settings.outputDir}
-            onChange={(event) => update({ outputDir: event.target.value })}
-            className="field min-w-0 flex-1 px-3 py-2.5 text-sm"
-          />
-          <button type="button" onClick={() => void browseOutput()} className="subtle-button px-3 text-xs">
-            Browse
-          </button>
-          <button type="button" onClick={() => void bridge.openPath(settings.outputDir)} className="subtle-button flex items-center gap-2 px-3 text-xs">
-            <FolderOpen className="size-3.5" /> Open folder
-          </button>
-        </div>
-        <div className="mt-2 text-[11px] text-zinc-700">Default: project-local converted media. Choose another folder when you explicitly want exports elsewhere.</div>
-      </section>
-
       {/* 1-Click Completion Banner */}
       {completedItem && (
         <motion.div
           initial={{ opacity: 0, y: -6 }}
           animate={{ opacity: 1, y: 0 }}
-          className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] p-4 text-xs text-zinc-200"
+          className="rounded-xl border border-emerald-500/20 bg-emerald-500/[0.06] p-3.5 text-xs text-zinc-200"
         >
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2.5">
@@ -1069,44 +1048,92 @@ export function ConverterView({
         </motion.div>
       )}
 
-      {/* Convert & Execution Section */}
-      <section className="panel overflow-hidden p-5">
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            type="button"
-            disabled={running || (queue.length > 0 && queueRunning)}
-            onClick={() => void convert()}
-            className="primary-button flex min-h-11 flex-1 items-center justify-center gap-2 px-5 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            <Play className="size-4" />{" "}
-            {running
-              ? "Conversion running"
-              : queue.length > 0
-              ? `Convert queue (${queue.filter((q) => q.status === "queued").length} remaining)`
-              : "Convert media"}
-          </button>
-          {running && (
-            <button type="button" onClick={() => void onCancel()} className="danger-button flex min-h-11 items-center gap-2 px-4 text-sm">
-              <Square className="size-3.5" /> Abort
-            </button>
-          )}
-        </div>
-        <div className="mt-4 h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
-          <motion.div
-            className="h-full rounded-full bg-[#c52b68]"
-            animate={{ width: `${Math.round(progress * 100)}%` }}
-            transition={{ ease: "easeOut", duration: 0.25 }}
-          />
-        </div>
-        <div className="mt-3 flex items-center justify-between gap-3 text-xs">
-          <span className={`truncate ${running ? "text-zinc-300" : "text-zinc-500"}`}>{status || "Ready. Paste a link or choose a file to begin."}</span>
-          <span className="shrink-0 font-mono text-zinc-700">{Math.round(progress * 100)}%</span>
-        </div>
-        {lastEvent && (
-          <div className="mt-3 flex items-center gap-2 text-[11px] text-zinc-700">
-            <RefreshCw className={`size-3 ${running ? "animate-spin" : ""}`} /> Latest engine message: {lastEvent.message}
+      {/* Unified Export Destination & Convert Action Panel */}
+      <section className="panel overflow-hidden p-4">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-12 lg:items-center">
+          {/* Left Column: Export Destination */}
+          <div className="lg:col-span-7">
+            <div className="flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2 text-xs font-medium text-zinc-200">
+                <FolderOpen className="size-3.5 text-zinc-400" /> Export folder
+              </div>
+              <span className="hidden sm:inline text-[10px] text-zinc-500 truncate">Default: project-local converted media</span>
+            </div>
+            <div className="mt-2 flex gap-2">
+              <input
+                aria-label="Export folder"
+                value={settings.outputDir}
+                onChange={(event) => update({ outputDir: event.target.value })}
+                className="field min-w-0 flex-1 px-3 py-2 text-xs"
+              />
+              <button type="button" onClick={() => void browseOutput()} className="subtle-button px-3 py-2 text-xs whitespace-nowrap">
+                Browse
+              </button>
+              <button type="button" onClick={() => void bridge.openPath(settings.outputDir)} className="subtle-button flex items-center gap-1.5 px-3 py-2 text-xs whitespace-nowrap">
+                <FolderOpen className="size-3.5" /> Open
+              </button>
+            </div>
           </div>
-        )}
+
+          {/* Right Column: Compact Convert Action & High-Visibility Progress Bar */}
+          <div className="flex flex-col justify-center border-t border-white/[0.06] pt-3 lg:col-span-5 lg:border-t-0 lg:border-l lg:pl-5 lg:pt-0">
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                disabled={running || (queue.length > 0 && queueRunning)}
+                onClick={() => void convert()}
+                className="primary-button flex h-9.5 flex-1 items-center justify-center gap-2 px-4 text-xs font-semibold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Play className="size-3.5 fill-current" />
+                {running
+                  ? "Conversion running"
+                  : queue.length > 0
+                  ? `Convert queue (${queue.filter((q) => q.status === "queued").length} remaining)`
+                  : "Convert media"}
+              </button>
+              {running && (
+                <button type="button" onClick={() => void onCancel()} className="danger-button flex h-9.5 items-center gap-1.5 px-3 text-xs">
+                  <Square className="size-3" /> Abort
+                </button>
+              )}
+            </div>
+
+            {/* High-visibility progress bar & percentage */}
+            <div className="mt-2">
+              <div className="flex items-center justify-between gap-2 text-[11px]">
+                <span className={`truncate ${running ? "text-zinc-200 font-medium" : "text-zinc-500"}`}>
+                  {status || "Ready to convert"}
+                </span>
+                <span
+                  className="shrink-0 font-mono font-bold text-xs"
+                  style={{ color: running ? "var(--accent-color, #ec4899)" : "#71717a" }}
+                >
+                  {Math.round(progress * 100)}%
+                </span>
+              </div>
+              <div className="mt-1 h-2 overflow-hidden rounded-full bg-white/[0.06] p-[1px] ring-1 ring-white/10">
+                <motion.div
+                  className="h-full rounded-full"
+                  style={{
+                    background: "linear-gradient(to right, var(--accent-color, #c52b68), var(--accent-hover, #e0407b))",
+                    boxShadow: "0 0 8px var(--accent-glow, rgba(197,43,104,0.4))",
+                  }}
+                  animate={{ width: `${Math.round(progress * 100)}%` }}
+                  transition={{ ease: "easeOut", duration: 0.25 }}
+                />
+              </div>
+              {lastEvent && (
+                <div className="mt-1 flex items-center gap-1.5 text-[10px] text-zinc-500 truncate">
+                  <RefreshCw
+                    className={`size-2.5 shrink-0 ${running ? "animate-spin" : ""}`}
+                    style={running ? { color: "var(--accent-color, #ec4899)" } : undefined}
+                  />
+                  <span className="truncate">Engine: {lastEvent.message}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       </section>
 
       {playlist && <PlaylistDialog catalog={playlist} onClose={() => setPlaylist(null)} onConfirm={(indexes) => { setPlaylist(null); void convert(indexes); }} />}

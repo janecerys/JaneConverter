@@ -123,14 +123,15 @@ export function ConsoleView({
               if (next) scrollToBottom();
             }}
             className={`subtle-button flex items-center gap-1.5 px-3 py-1.5 text-xs transition-colors ${
-              autoScroll && !userHasScrolledUp ? "border-[#c52b68]/40 text-pink-300" : "text-zinc-500"
+              autoScroll && !userHasScrolledUp ? "border-[var(--accent-color,#c52b68)]/40 text-[var(--accent-color,#c52b68)]" : "text-zinc-500"
             }`}
             title={autoScroll ? "Auto-scroll is enabled" : "Auto-scroll is paused"}
           >
             <span
               className={`size-1.5 rounded-full ${
-                autoScroll && !userHasScrolledUp ? "bg-[#c52b68] shadow-[0_0_8px_rgba(197,43,104,0.6)]" : "bg-zinc-600"
+                autoScroll && !userHasScrolledUp ? "" : "bg-zinc-600"
               }`}
+              style={autoScroll && !userHasScrolledUp ? { backgroundColor: "var(--accent-color, #c52b68)", boxShadow: "0 0 8px var(--accent-glow, rgba(197,43,104,0.6))" } : undefined}
             />
             {autoScroll && !userHasScrolledUp ? "Auto-scroll: On" : "Auto-scroll: Paused"}
           </button>

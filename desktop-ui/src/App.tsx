@@ -44,12 +44,86 @@ export default function App() {
     }
   });
 
+  const [accentColor, setAccentColor] = useState<string>(() => {
+    if (typeof window === "undefined") return "#c52b68";
+    try {
+      return window.localStorage.getItem("janecoverter.accentColor") ?? "#c52b68";
+    } catch {
+      return "#c52b68";
+    }
+  });
+
+  const [bgColor, setBgColor] = useState<string>(() => {
+    if (typeof window === "undefined") return "#02000a";
+    try {
+      return window.localStorage.getItem("janecoverter.bgColor") ?? "#02000a";
+    } catch {
+      return "#02000a";
+    }
+  });
+
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
+    const root = document.documentElement;
+    root.setAttribute("data-theme", theme);
+    const clean = accentColor.replace("#", "");
+    const full = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
+    const num = parseInt(full, 16);
+    const r = isNaN(num) ? 197 : (num >> 16) & 255;
+    const g = isNaN(num) ? 43 : (num >> 8) & 255;
+    const b = isNaN(num) ? 104 : num & 255;
+
+    const clamp = (v: number) => Math.min(255, Math.max(0, Math.round(v * 1.15)));
+    const hoverHex = `#${clamp(r).toString(16).padStart(2, "0")}${clamp(g).toString(16).padStart(2, "0")}${clamp(b).toString(16).padStart(2, "0")}`;
+
+    root.style.setProperty("--accent-color", accentColor);
+    root.style.setProperty("--accent-hover", hoverHex);
+    root.style.setProperty("--accent-glow", `rgba(${r}, ${g}, ${b}, 0.35)`);
+    root.style.setProperty("--accent-subtle", `rgba(${r}, ${g}, ${b}, 0.12)`);
+    root.style.setProperty("--bg-color", bgColor);
+
     try {
       window.localStorage.setItem("janecoverter.theme", theme);
+      window.localStorage.setItem("janecoverter.accentColor", accentColor);
+      window.localStorage.setItem("janecoverter.bgColor", bgColor);
     } catch {}
-  }, [theme]);
+  }, [theme, accentColor, bgColor]);
+
+  function handleToggleTheme(next: "dark" | "light") {
+    setTheme(next);
+    if (next === "light") {
+      setBgColor("#fdf7fa");
+    } else {
+      setBgColor("#02000a");
+    }
+  }
+
+  function handleAccentChange(color: string) {
+    setAccentColor(color);
+  }
+
+  function handleBgChange(color: string) {
+    setBgColor(color);
+    const clean = color.replace("#", "");
+    const full = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
+    const num = parseInt(full, 16);
+    if (!isNaN(num)) {
+      const r = (num >> 16) & 255;
+      const g = (num >> 8) & 255;
+      const b = num & 255;
+      const isLight = (r * 299 + g * 587 + b * 114) / 1000 > 135;
+      if (isLight && theme !== "light") {
+        setTheme("light");
+      } else if (!isLight && theme !== "dark") {
+        setTheme("dark");
+      }
+    }
+  }
+
+  function handleResetColors() {
+    setTheme("dark");
+    setAccentColor("#c52b68");
+    setBgColor("#02000a");
+  }
 
   useEffect(() => {
     let mounted = true;
@@ -184,17 +258,34 @@ export default function App() {
       ? <LibraryView settings={settings} onSettings={updateSettings} onStatus={statusMessage} />
       : activeView === "console"
         ? <ConsoleView events={events} onClear={() => setEvents([])} onStatus={statusMessage} />
-        : <SettingsView runtime={runtime} theme={theme} onToggleTheme={setTheme} onStatus={statusMessage} />;
+        : (
+          <SettingsView
+            runtime={runtime}
+            theme={theme}
+            accentColor={accentColor}
+            bgColor={bgColor}
+            onToggleTheme={handleToggleTheme}
+            onAccentColorChange={handleAccentChange}
+            onBgColorChange={handleBgChange}
+            onResetColors={handleResetColors}
+            onStatus={statusMessage}
+          />
+        );
 
   return (
     <div
       data-theme={theme}
       onContextMenu={(event) => event.preventDefault()}
-      className={`app-shell relative flex h-screen max-h-screen w-screen overflow-hidden ${
-        theme === "light" ? "bg-[#fdf7fa] text-[#1f1222]" : "bg-[#02000a] text-zinc-200"
-      }`}
+      className="app-shell relative flex h-screen max-h-screen w-screen overflow-hidden transition-colors duration-200"
+      style={{
+        backgroundColor: "var(--bg-color, #02000a)",
+        color: theme === "light" ? "#1f1222" : "#ededed",
+      }}
     >
-      <div className="pointer-events-none absolute -left-32 -top-24 size-[460px] rounded-full bg-[#c52b68]/[0.055] blur-3xl ambient-orb" />
+      <div
+        className="pointer-events-none absolute -left-32 -top-24 size-[460px] rounded-full blur-3xl ambient-orb transition-colors duration-300"
+        style={{ backgroundColor: "var(--accent-subtle, rgba(197, 43, 104, 0.06))" }}
+      />
       <div className="pointer-events-none absolute -right-28 -top-36 h-[390px] w-[700px] rounded-full top-right-glow ambient-orb" style={{ animationDelay: "-6s" }} />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,rgba(255,255,255,.018),transparent_35%)]" />
       <Sidebar activeView={activeView} onChange={setActiveView} />
