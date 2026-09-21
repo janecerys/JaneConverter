@@ -93,7 +93,7 @@ def test_macos_build_is_native_arch_specific_and_ad_hoc_signed():
     assert "assert_macho_arch" in script
     assert "xattr -dr com.apple.quarantine" in script
     assert "codesign --force --sign -" in script
-    assert 'config["bundle"]["targets"] = ["dmg"]' in script
+    assert 'config["bundle"]["targets"] = ["app", "dmg"]' in script
     assert 'setdefault("macOS", {})["signingIdentity"] = "-"' in script
     assert "macos-$ARCH.dmg" in script
     assert "shasum -a 256" in script
@@ -164,6 +164,7 @@ def test_release_workflow_builds_and_publishes_all_agreed_platforms():
     assert "actions/upload-artifact@v4" in workflow
     assert "actions/download-artifact@v4" in workflow
     assert "gh release create" in workflow
+    assert "--prerelease" in workflow
     assert "github.token" in workflow
     assert workflow.count("uv run --locked python packaging/set_version.py --check") == 3
     assert "AppImage" not in workflow

@@ -265,4 +265,5 @@ jobs:
         run: >-
           gh release create "$GITHUB_REF_NAME" artifacts/*
           --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
+          --prerelease
           --title "JaneConverter $GITHUB_REF_NAME"

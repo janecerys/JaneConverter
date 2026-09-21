@@ -184,7 +184,8 @@ config["productName"] = "JaneConverter"
 config["version"] = os.environ["JANECONVERTER_RELEASE_VERSION"]
 config["build"]["beforeBuildCommand"] = ""
 config["bundle"]["active"] = True
-config["bundle"]["targets"] = ["dmg"]
+# Keep the app bundle so it can be verified after Tauri creates the DMG.
+config["bundle"]["targets"] = ["app", "dmg"]
 config["bundle"]["resources"] = {
     os.environ["JANECONVERTER_RUNTIME_ROOT"]: "runtime",
     os.environ["JANECONVERTER_STAGED_LICENSE"]: "LICENSE",
