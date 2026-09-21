@@ -6,6 +6,7 @@ CLI validation, disk-space checks, and hardware encoder argument construction.
 
 import os
 import argparse
+import re
 
 import pytest
 
@@ -304,6 +305,11 @@ def test_webm_video_args_use_vp9():
 # ---------------------------------------------------------------------------
 
 def test_version_constant_is_semver_like():
-    parts = __version__.split(".")
-    assert len(parts) == 3
-    assert all(p.isdigit() for p in parts)
+    identifier = r"(?:0|[1-9][0-9]*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+    pattern = (
+        rf"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)"
+        rf"(?:-{identifier}(?:\.{identifier})*)?"
+        r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?"
+    )
+
+    assert re.fullmatch(pattern, __version__)

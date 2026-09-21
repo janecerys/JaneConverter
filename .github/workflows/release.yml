@@ -37,6 +37,7 @@ jobs:
         run: uv sync --locked
       - name: Validate packaging contracts
         run: |
+          uv run --locked python packaging/set_version.py --check
           uv pip check
           uv run --locked pytest -q tests/test_consumer_packaging.py
       - name: Download and verify static FFmpeg
@@ -111,6 +112,7 @@ jobs:
         run: uv sync --locked
       - name: Validate packaging contracts
         run: |
+          uv run --locked python packaging/set_version.py --check
           uv pip check
           uv run --locked pytest -q tests/test_consumer_packaging.py
       - name: Download and verify static FFmpeg
@@ -205,6 +207,7 @@ jobs:
         run: uv sync --locked
       - name: Validate packaging contracts
         run: |
+          uv run --locked python packaging/set_version.py --check
           uv pip check
           uv run --locked pytest -q tests/test_consumer_packaging.py
       - name: Download and verify FFmpeg tools

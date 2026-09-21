@@ -2,6 +2,8 @@
 
 import json
 from pathlib import Path
+import subprocess
+import sys
 import zipfile
 
 from janeconverter.version import __version__
@@ -163,6 +165,7 @@ def test_release_workflow_builds_and_publishes_all_agreed_platforms():
     assert "actions/download-artifact@v4" in workflow
     assert "gh release create" in workflow
     assert "github.token" in workflow
+    assert workflow.count("uv run --locked python packaging/set_version.py --check") == 3
     assert "AppImage" not in workflow
 
 
@@ -214,14 +217,27 @@ def test_python_project_exposes_the_supported_console_command():
 
 def test_application_versions_are_aligned():
     package = json.loads(read("desktop-ui/package.json"))
+    package_lock = json.loads(read("desktop-ui/package-lock.json"))
     tauri = json.loads(read("desktop-ui/src-tauri/tauri.conf.json"))
-    browser_bridge = json.loads(read("browser-extension/manifest.json"))
     cargo = read("desktop-ui/src-tauri/Cargo.toml")
     cargo_lock = read("desktop-ui/src-tauri/Cargo.lock")
 
-    assert __version__ == "2.0.0"
     assert package["version"] == __version__
+    assert package_lock["version"] == __version__
+    assert package_lock["packages"][""]["version"] == __version__
     assert tauri["version"] == __version__
-    assert browser_bridge["version"] == __version__
-    assert f'version = "{__version__}"' in cargo
+    assert f'name = "janeconverter-desktop"\nversion = "{__version__}"' in cargo
     assert f'name = "janeconverter-desktop"\nversion = "{__version__}"' in cargo_lock
+
+
+def test_version_tool_check_mode_reports_aligned_metadata():
+    result = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "packaging" / "set_version.py"), "--check"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert f"synchronized at {__version__}" in result.stdout

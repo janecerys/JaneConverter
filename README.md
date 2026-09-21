@@ -92,6 +92,14 @@ The Python backend uses the `src/janeconverter/` package. Its supported entry po
 
 ## Release builds
 
+`src/janeconverter/version.py` is the canonical application version. Set it and synchronize all desktop metadata with one command:
+
+```bash
+uv run --locked python packaging/set_version.py 2.0.1-alpha
+```
+
+Run the command without a version to resynchronize from the canonical value, or pass `--check` to verify metadata without writing. The optional Browser Bridge is independently versioned and is not changed by this tool.
+
 Windows x64:
 
 ```powershell
