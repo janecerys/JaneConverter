@@ -1347,9 +1347,17 @@ mod tests {
             .expect("test request should be written");
 
         let mut response = String::new();
-        stream
-            .read_to_string(&mut response)
-            .expect("test response should be readable");
+        if let Err(error) = stream.read_to_string(&mut response) {
+            assert_eq!(
+                error.kind(),
+                std::io::ErrorKind::ConnectionReset,
+                "test response should be readable"
+            );
+            assert!(
+                !response.is_empty(),
+                "a reset connection should still contain the response"
+            );
+        }
         assert!(response.starts_with("HTTP/1.1 200 OK\r\n"));
         assert!(response.contains("\r\n\r\n"));
         assert!(!response.contains(r"\r\n"));
