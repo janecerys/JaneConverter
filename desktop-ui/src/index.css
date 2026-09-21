@@ -54,7 +54,6 @@ button { cursor: pointer; }
 }
 .ambient-orb { animation: ambient-drift 14s ease-in-out infinite; will-change: transform, opacity; }
 .top-right-glow { background: radial-gradient(ellipse at center, rgba(197,43,104,.12), rgba(95,23,70,.045) 44%, transparent 75%); filter: blur(48px); }
-.top-right-glow-line { background: linear-gradient(90deg, transparent, rgba(197,43,104,.08), rgba(197,43,104,.3)); }
 .panel { border: 1px solid rgba(255,255,255,.075); background: rgba(255,255,255,.028); border-radius: 18px; }
 .field { border: 1px solid rgba(255,255,255,.09); background: rgba(0,0,0,.24); color: #ededed; border-radius: 10px; }
 .field:focus { outline: 2px solid rgba(59,130,246,.65); outline-offset: 2px; border-color: rgba(59,130,246,.55); }
@@ -158,10 +157,6 @@ button { cursor: pointer; }
 
 [data-theme="light"] .top-right-glow {
   background: radial-gradient(ellipse at center, rgba(236, 72, 153, 0.14), rgba(244, 114, 182, 0.05) 44%, transparent 75%) !important;
-}
-
-[data-theme="light"] .top-right-glow-line {
-  background: linear-gradient(90deg, transparent, rgba(236, 72, 153, 0.12), rgba(236, 72, 153, 0.35)) !important;
 }
 
 [data-theme="light"] .context-menu {

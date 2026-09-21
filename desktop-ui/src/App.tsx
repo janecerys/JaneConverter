@@ -196,7 +196,6 @@ export default function App() {
     >
       <div className="pointer-events-none absolute -left-32 -top-24 size-[460px] rounded-full bg-[#c52b68]/[0.055] blur-3xl ambient-orb" />
       <div className="pointer-events-none absolute -right-28 -top-36 h-[390px] w-[700px] rounded-full top-right-glow ambient-orb" style={{ animationDelay: "-6s" }} />
-      <div className="pointer-events-none absolute right-0 top-16 h-px w-[58%] top-right-glow-line" />
       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(120deg,rgba(255,255,255,.018),transparent_35%)]" />
       <Sidebar activeView={activeView} onChange={setActiveView} />
       <div className="relative flex min-w-0 flex-1 flex-col h-full overflow-hidden">
