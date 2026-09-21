@@ -173,7 +173,7 @@ export default function App() {
         : <SettingsView runtime={runtime} onStatus={statusMessage} />;
 
   return (
-    <div className="relative flex min-h-screen overflow-hidden bg-[#02000a] text-zinc-200">
+    <div onContextMenu={(event) => event.preventDefault()} className="relative flex min-h-screen overflow-hidden bg-[#02000a] text-zinc-200">
       <div className="pointer-events-none absolute -left-32 -top-24 size-[460px] rounded-full bg-[#c52b68]/[0.055] blur-3xl ambient-orb" />
       <div className="pointer-events-none absolute -right-28 -top-36 h-[390px] w-[700px] rounded-full top-right-glow ambient-orb" style={{ animationDelay: "-6s" }} />
       <div className="pointer-events-none absolute right-0 top-16 h-px w-[58%] top-right-glow-line" />
