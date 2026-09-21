@@ -5,13 +5,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-### Fixed
-- Windows setup now discovers all usable Python executables on PATH, the Python launcher, and registered install locations instead of assuming one standard directory.
-- Windows setup now repairs incomplete private `.venv` directories and stops with a useful diagnostic before attempting pip when the venv interpreter was not created.
-
 ### Added
-- Added a self-contained Windows consumer installer that bundles the Main UI, all three launcher paths, the conversion engine, FFmpeg/ffprobe, and the Browser Bridge files.
-- Preserved the source-visible portable ZIP as a developer and recovery safety net, with SHA-256 checksums for both distribution paths.
+- Self-contained Windows x64 installer, Windows portable ZIP, and Linux x86_64 tarball.
+- Bundled frozen conversion engine, FFmpeg, FFprobe, and Node.js runtime.
+- Tagged release publishing with SHA-256 checksums through GitHub Actions.
+
+### Changed
+- Made the Tauri application the only supported desktop interface.
+- Moved packaged settings, temporary files, and converted media to OS user-data directories.
+- Updated release checks for versioned installer filenames.
+
+### Removed
+- Legacy Python and Rust desktop interfaces and the C# launcher.
+- Source installer, launcher, uninstall, compatibility-build, and staged-update scripts.
 
 ## [1.2.0] - 2026-09-20
 

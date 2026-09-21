@@ -1,5 +1,5 @@
 use crate::model::{ConversionRequest, ConverterEvent, PlaylistCatalog, PlaylistItem};
-use crate::paths::{find_python, prepare_command, project_root};
+use crate::paths::{find_python, packaged_engine, prepare_command, project_root};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -71,11 +71,17 @@ pub fn build_conversion_args(
     if ![44100, 48000, 96000].contains(&request.sample_rate) {
         return Err("Unsupported sample rate.".into());
     }
-    let mut args = vec![
-        project_root()
-            .join("run_converter.py")
-            .display()
-            .to_string(),
+    let engine = find_python();
+    let mut args = Vec::new();
+    if !packaged_engine(&engine) {
+        args.push(
+            project_root()
+                .join("run_converter.py")
+                .display()
+                .to_string(),
+        );
+    }
+    args.extend([
         "--source".into(),
         request.source.trim().into(),
         "--format".into(),
@@ -93,7 +99,7 @@ pub fn build_conversion_args(
         "--retries".into(),
         request.retries.min(5).to_string(),
         "--no-update".into(),
-    ];
+    ]);
     if !request.use_gpu {
         args.push("--no-gpu".into());
     }
@@ -303,12 +309,12 @@ pub fn load_playlist(
     browser: Option<String>,
     bridge_payload: Option<String>,
 ) -> Result<PlaylistCatalog, String> {
-    let script = project_root().join("run_converter.py");
-    let script_text = script.display().to_string();
-    let mut command = Command::new(find_python());
-    command
-        .arg(script_text)
-        .args(["--source", source.trim(), "--list-playlist", "--no-update"]);
+    let engine = find_python();
+    let mut command = Command::new(&engine);
+    if !packaged_engine(&engine) {
+        command.arg(project_root().join("run_converter.py"));
+    }
+    command.args(["--source", source.trim(), "--list-playlist", "--no-update"]);
     if let Some(browser) = browser.filter(|value| !value.trim().is_empty()) {
         let browser = normalize_browser_session_arg(&browser)?;
         command.args(["--browser-session", browser.as_str()]);

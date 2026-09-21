@@ -87,12 +87,12 @@ def test_published_release_check_finds_newer_github_version_and_installer(monkey
                 "html_url": "https://github.com/janecerys/JaneConverter/releases/tag/v1.3.0",
                 "assets": [
                     {
-                        "name": "JaneConverter-Setup.exe",
-                        "browser_download_url": "https://github.com/janecerys/JaneConverter/releases/download/v1.3.0/JaneConverter-Setup.exe",
+                        "name": "JaneConverter-1.3.0-windows-x64-setup.exe",
+                        "browser_download_url": "https://github.com/janecerys/JaneConverter/releases/download/v1.3.0/JaneConverter-1.3.0-windows-x64-setup.exe",
                     },
                     {
-                        "name": "JaneConverter-Setup.exe.sha256",
-                        "browser_download_url": "https://github.com/janecerys/JaneConverter/releases/download/v1.3.0/JaneConverter-Setup.exe.sha256",
+                        "name": "JaneConverter-1.3.0-windows-x64-setup.exe.sha256",
+                        "browser_download_url": "https://github.com/janecerys/JaneConverter/releases/download/v1.3.0/JaneConverter-1.3.0-windows-x64-setup.exe.sha256",
                     },
                 ],
             }
@@ -112,6 +112,10 @@ def test_published_release_check_finds_newer_github_version_and_installer(monkey
     assert result["current_version"] == "1.2.0"
     assert result["latest_version"] == "1.3.0"
     assert result["installer_available"] is True
+    assert result["installer_url"].endswith("JaneConverter-1.3.0-windows-x64-setup.exe")
+    assert result["installer_checksum_url"].endswith(
+        "JaneConverter-1.3.0-windows-x64-setup.exe.sha256"
+    )
     assert result["release_url"].endswith("/v1.3.0")
     assert requested["url"] == updater.GITHUB_LATEST_RELEASE_URL
     assert requested["kwargs"]["headers"]["User-Agent"].startswith("JaneConverter/")
