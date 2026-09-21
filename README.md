@@ -52,6 +52,8 @@ Spotify and Apple Music links provide public catalog metadata. JaneConverter doe
 
 Use **Create Access Link** only for media your signed-in account is authorized to access. The optional [Browser Bridge](browser-extension/README.md) is available to source-checkout users and is not bundled in production packages.
 
+Browser-captured files appear in the **Fetched Media** tab and are saved in the configured fetched-media folder. The default is a etched folder beside the converted library; clearing access ends the browser session without deleting those files. Each item supports **Open file**, **Open path**, **Use for conversion**, and **Discard**. **Capture story sequence** remains experimental because story viewers can change their media identifiers and expose unrelated page assets.
+
 ## Command line
 
 Source use requires Python 3.10+, FFmpeg with FFprobe, and Node.js:

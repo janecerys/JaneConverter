@@ -114,17 +114,18 @@ def test_frozen_engine_entrypoint_keeps_source_cli_compatibility():
 
 def test_browser_bridge_archive_matches_the_source_extension():
     manifest = json.loads(read("browser-extension/manifest.json"))
-    archives = sorted(
-        (REPO_ROOT / "browser-extension" / "releases").glob(
-            "JaneConverter-Browser-Bridge-*.zip"
-        )
-    )
+    source_popup = (REPO_ROOT / "browser-extension" / "popup.js").read_text(encoding="utf-8")
+    archives = sorted((REPO_ROOT / "browser-extension" / "releases").glob("JaneConverter-Browser-Bridge-*.zip"))
     assert archives
     assert archives[-1].stem.endswith(manifest["version"])
+    assert "allFrames: true" in source_popup
+    assert "blob:" in source_popup
+    assert "captureStream" in source_popup
+    assert "MAX_RENDERED_CAPTURE_BYTES" in source_popup
 
     with zipfile.ZipFile(archives[-1]) as archive:
         names = set(archive.namelist())
-        assert names == {"manifest.json", "popup.html", "popup.js", "README.md"}
+        assert names == {"manifest.json", "media-utils.js", "popup.html", "popup.js", "README.md", "collect.js", "service-worker.js", "network-capture.js", "extension-worker.js"}
         packaged_manifest = json.loads(archive.read("manifest.json"))
 
     assert packaged_manifest == manifest
@@ -132,7 +133,10 @@ def test_browser_bridge_archive_matches_the_source_extension():
         "http://127.0.0.1/*",
         "http://localhost/*",
     ]
-    assert packaged_manifest["optional_host_permissions"] == ["*://*/*"]
+    assert packaged_manifest["optional_host_permissions"] == manifest["optional_host_permissions"]
+    assert "*://*/*" not in json.dumps(packaged_manifest["optional_host_permissions"])
+    assert "https://facebook.com/*" in packaged_manifest["optional_host_permissions"]
+    assert "debugger" in packaged_manifest["permissions"]
 
 
 def test_engine_has_a_packaged_update_check_mode():

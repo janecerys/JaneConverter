@@ -1,15 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { bridge, type AccessStatus, type ConverterEvent, type ConverterSettings, type RuntimeInfo } from "./bridge";
+import { bridge, type AccessStatus, type ConverterEvent, type ConverterSettings, type FetchedMedia, type RuntimeInfo } from "./bridge";
 import { Sidebar, type ViewKey } from "./components/Sidebar";
 import { Topbar } from "./components/Topbar";
 import { ConverterView } from "./components/ConverterView";
 import { LibraryView } from "./components/LibraryView";
 import { ConsoleView } from "./components/ConsoleView";
 import { SettingsView } from "./components/SettingsView";
+import { FetchedMediaView } from "./components/FetchedMediaView";
 
 const defaultSettings: ConverterSettings = {
   outputDir: "converted",
+  fetchedDir: "fetched",
   category: "Music",
   format: "mp3",
   bitrate: "320k",
@@ -27,9 +29,11 @@ export default function App() {
   const [runtime, setRuntime] = useState<RuntimeInfo | null>(null);
   const [settings, setSettings] = useState<ConverterSettings>(defaultSettings);
   const [events, setEvents] = useState<ConverterEvent[]>([]);
-  const [access, setAccess] = useState<AccessStatus>({ active: false, link: "", browser: "", bridgeConnected: false });
+  const [access, setAccess] = useState<AccessStatus>({ active: false, link: "", browser: "", source: null, bridgeConnected: false });
+  const [selectedCapture, setSelectedCapture] = useState<FetchedMedia | null>(null);
   const [jobId, setJobId] = useState("");
   const activeJobRef = useRef("");
+  const accessDiagnosticIds = useRef(new Set<number>());
   const [progress, setProgress] = useState(0);
   const [status, setStatus] = useState("Ready. Paste a link or choose a file to begin.");
 
@@ -65,7 +69,20 @@ export default function App() {
 
   useEffect(() => {
     if (!access.active) return;
-    const timer = window.setInterval(() => { void bridge.accessStatus().then(setAccess); }, 700);
+    const refreshAccess = async () => {
+      try {
+        const [nextAccess, diagnostics] = await Promise.all([bridge.accessStatus(), bridge.accessDiagnostics()]);
+        setAccess(nextAccess);
+        const unseen = diagnostics.filter((entry) => !accessDiagnosticIds.current.has(entry.id));
+        if (!unseen.length) return;
+        for (const entry of unseen) accessDiagnosticIds.current.add(entry.id);
+        setEvents((current) => [...current.slice(-1499), ...unseen.map((entry) => ({ jobId: "browser-session", kind: "status" as const, message: entry.message }))]);
+      } catch (error) {
+        statusMessage(error instanceof Error ? error.message : String(error));
+      }
+    };
+    void refreshAccess();
+    const timer = window.setInterval(() => { void refreshAccess(); }, 700);
     return () => window.clearInterval(timer);
   }, [access.active]);
 
@@ -96,7 +113,10 @@ export default function App() {
 
   async function start(source: string, playlistIndexes?: string) {
     try {
-      const nextJob = await bridge.startConversion({ ...settings, source, playlistIndexes, browserSession: access.browser || undefined });
+      const normalizedSource = source.trim();
+      const accessSource = access.source?.trim() || "";
+      const browserSession = accessSource && normalizedSource && accessSource === normalizedSource ? access.browser || undefined : undefined;
+      const nextJob = await bridge.startConversion({ ...settings, source, playlistIndexes, browserSession, browserCapturePath: !normalizedSource ? selectedCapture?.path : undefined });
       activeJobRef.current = nextJob;
       setJobId(nextJob);
       setProgress(.02);
@@ -116,6 +136,7 @@ export default function App() {
   async function createAccess(source: string): Promise<AccessStatus> {
     try {
       const nextAccess = await bridge.createAccessLink(source);
+      accessDiagnosticIds.current.clear();
       setAccess(nextAccess);
       await bridge.openUrl(nextAccess.link);
       statusMessage("Temporary access link opened in your browser.");
@@ -130,7 +151,9 @@ export default function App() {
   async function clearAccess() {
     try {
       await bridge.clearAccessLink();
-      setAccess({ active: false, link: "", browser: "", bridgeConnected: false });
+      accessDiagnosticIds.current.clear();
+      setAccess({ active: false, link: "", browser: "", source: null, bridgeConnected: false });
+      setSelectedCapture(null);
       statusMessage("Account access cleared. Public-only extraction is active.");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -140,8 +163,10 @@ export default function App() {
   }
 
   const content = activeView === "converter"
-    ? <ConverterView settings={settings} runtime={runtime} events={events} access={access} running={Boolean(jobId)} progress={progress} status={status} onSettings={updateSettings} onStart={start} onCancel={cancel} onCreateAccess={createAccess} onClearAccess={clearAccess} onStatus={statusMessage} />
-    : activeView === "library"
+    ? <ConverterView settings={settings} runtime={runtime} events={events} access={access} selectedCapture={selectedCapture} running={Boolean(jobId)} progress={progress} status={status} onSettings={updateSettings} onStart={start} onCancel={cancel} onCreateAccess={createAccess} onClearAccess={clearAccess} onStatus={statusMessage} />
+    : activeView === "fetched"
+      ? <FetchedMediaView access={access} settings={settings} onSettings={updateSettings} onSelect={(item) => { setSelectedCapture(item); setActiveView("converter"); statusMessage(item.name + " selected and ready to convert."); }} onDiscard={(item) => { if (selectedCapture?.path === item.path) setSelectedCapture(null); }} onStatus={statusMessage} />
+      : activeView === "library"
       ? <LibraryView settings={settings} onSettings={updateSettings} onStatus={statusMessage} />
       : activeView === "console"
         ? <ConsoleView events={events} onClear={() => setEvents([])} onStatus={statusMessage} />

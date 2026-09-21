@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-export type Category = "Music" | "Video" | "Miscellaneous";
+export type Category = "Music" | "Video" | "Image" | "Miscellaneous";
 export type EventKind = "started" | "log" | "progress" | "status" | "finished" | "failed" | "cancelled";
 
 export interface RuntimeInfo {
@@ -18,6 +18,7 @@ export interface RuntimeInfo {
 
 export interface ConverterSettings {
   outputDir: string;
+  fetchedDir: string;
   category: Category;
   format: string;
   bitrate: string;
@@ -30,10 +31,11 @@ export interface ConverterSettings {
   retries: number;
 }
 
-export interface ConversionRequest extends ConverterSettings {
+export interface ConversionRequest extends Omit<ConverterSettings, "fetchedDir"> {
   source: string;
   playlistIndexes?: string;
   browserSession?: string;
+  browserCapturePath?: string;
 }
 
 export interface ConverterEvent {
@@ -61,7 +63,25 @@ export interface AccessStatus {
   active: boolean;
   link: string;
   browser: string;
+  source?: string | null;
   bridgeConnected: boolean;
+  captureCount?: number;
+  capturedMediaKind?: "video" | "audio" | "image";
+}
+
+export interface FetchedMedia {
+  path: string;
+  name: string;
+  mediaKind: "video" | "audio" | "image";
+  mimeType: string;
+  captureMode: "current" | "sequence" | "collect" | "network" | "saved";
+  title: string;
+  size: number;
+}
+
+export interface AccessDiagnostic {
+  id: number;
+  message: string;
 }
 
 export interface LibraryEntry {
@@ -94,6 +114,10 @@ export interface JaneBridge {
   deleteLibraryEntry(root: string, path: string): Promise<void>;
   createAccessLink(source: string): Promise<AccessStatus>;
   accessStatus(): Promise<AccessStatus>;
+  fetchedMedia(): Promise<FetchedMedia[]>;
+  accessDiagnostics(): Promise<AccessDiagnostic[]>;
+  fetchedMediaThumbnail(path: string): Promise<string | null>;
+  discardFetchedMedia(path: string): Promise<void>;
   clearAccessLink(): Promise<void>;
   relaunch(): Promise<void>;
   checkUpdates(): Promise<string>;
@@ -101,6 +125,7 @@ export interface JaneBridge {
 
 const demoSettings: ConverterSettings = {
   outputDir: "Project-local/converted",
+  fetchedDir: "Project-local/fetched",
   category: "Music",
   format: "mp3",
   bitrate: "320k",
@@ -135,6 +160,10 @@ const demoBridge: JaneBridge = {
   async deleteLibraryEntry() {},
   async createAccessLink() { return { active: true, link: "Preview mode", browser: "", bridgeConnected: false }; },
   async accessStatus() { return { active: false, link: "", browser: "", bridgeConnected: false }; },
+  async fetchedMedia() { return []; },
+  async accessDiagnostics() { return []; },
+  async fetchedMediaThumbnail() { return null; },
+  async discardFetchedMedia() {},
   async clearAccessLink() {},
   async relaunch() {},
   async checkUpdates() { return "Preview mode: update checks are available in the desktop build."; },
@@ -162,6 +191,10 @@ const tauriBridge: JaneBridge = {
   deleteLibraryEntry: (root, path) => invoke<void>("delete_library_entry", { root, path }),
   createAccessLink: (source) => invoke<AccessStatus>("create_access_link", { source }),
   accessStatus: () => invoke<AccessStatus>("access_status"),
+  fetchedMedia: () => invoke<FetchedMedia[]>("fetched_media"),
+  accessDiagnostics: () => invoke<AccessDiagnostic[]>("access_diagnostics"),
+  fetchedMediaThumbnail: (path) => invoke<string | null>("fetched_media_thumbnail", { path }),
+  discardFetchedMedia: (path) => invoke<void>("discard_fetched_media", { path }),
   clearAccessLink: () => invoke<void>("clear_access_link"),
   relaunch: () => invoke<void>("relaunch"),
   checkUpdates: () => invoke<string>("check_updates"),

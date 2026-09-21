@@ -150,152 +150,30 @@ def test_default_browser_detection_reads_real_host_association():
     assert detected in {None, "chrome", "edge", "firefox", "brave", "vivaldi", "opera"}
 
 
-def test_fetch_media_stream_passes_browser_session_without_cookie_file(tmp_path, monkeypatch):
-    captured = {}
-    progress_messages = []
-    downloaded = tmp_path / "authorized_video.mp4"
+def test_fetch_media_stream_uses_direct_browser_capture_without_cookie_options(tmp_path, monkeypatch):
+    captured = tmp_path / "captured.mp4"
+    captured.write_bytes(b"selected-media")
 
-    class FakeYoutubeDL:
-        def __init__(self, options):
-            captured.update(options)
+    def fail_if_yt_dlp_is_called(*_args, **_kwargs):
+        pytest.fail("direct browser captures must not invoke yt-dlp")
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def extract_info(self, _source, download=True):
-            assert download is True
-            downloaded.write_bytes(b"media")
-            return {"title": "Authorized video", "id": "abc", "uploader": "Creator"}
-
-        def prepare_filename(self, _info):
-            return str(downloaded)
-
-    monkeypatch.setattr(extractor.yt_dlp, "YoutubeDL", FakeYoutubeDL)
-    monkeypatch.setattr(extractor, "load_browser_cookies_read_only", lambda *_args: None)
+    monkeypatch.setattr(extractor.yt_dlp, "YoutubeDL", fail_if_yt_dlp_is_called)
     info = extractor.fetch_media_stream(
         "https://www.facebook.com/watch/?v=123",
-        str(tmp_path),
-        auth_browser="Chrome",
-        progress_callback=lambda _pct, message: progress_messages.append(message),
-    )
-
-    assert info["media_path"] == str(downloaded.resolve())
-    assert captured["cookiesfrombrowser"] == ("chrome", None, None, None)
-    assert "cookiefile" not in captured
-    captured["logger"].error("ERROR: Could not copy Chrome cookie database")
-    assert progress_messages[-1] == "ERROR: Could not copy Chromium cookie database"
-
-
-def test_fetch_media_stream_attaches_read_only_browser_jar_in_memory(tmp_path, monkeypatch):
-    downloaded = tmp_path / "authorized_video.mp4"
-    attached = []
-    jar = http.cookiejar.CookieJar()
-    jar.set_cookie(http.cookiejar.Cookie(
-        version=0,
-        name="c_user",
-        value="123",
-        port=None,
-        port_specified=False,
-        domain=".facebook.com",
-        domain_specified=True,
-        domain_initial_dot=True,
-        path="/",
-        path_specified=True,
-        secure=True,
-        expires=None,
-        discard=True,
-        comment=None,
-        comment_url=None,
-        rest={},
-    ))
-
-    class FakeYoutubeDL:
-        def __init__(self, options):
-            self.cookiejar = http.cookiejar.CookieJar()
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def extract_info(self, _source, download=True):
-            assert download is True
-            attached.extend(self.cookiejar)
-            downloaded.write_bytes(b"media")
-            return {"title": "Authorized video", "id": "abc", "uploader": "Creator"}
-
-        def prepare_filename(self, _info):
-            return str(downloaded)
-
-    monkeypatch.setattr(extractor.yt_dlp, "YoutubeDL", FakeYoutubeDL)
-    monkeypatch.setattr(extractor, "load_browser_cookies_read_only", lambda *_args: jar)
-    extractor.fetch_media_stream(
-        "https://www.facebook.com/watch/?v=123",
-        str(tmp_path),
+        str(tmp_path / "work"),
         auth_browser="Vivaldi",
+        browser_media_path=str(captured),
     )
 
-    assert [(cookie.name, cookie.value) for cookie in attached] == [("c_user", "123")]
+    assert info["media_path"].endswith("browser-capture.mp4")
+    assert open(info["media_path"], "rb").read() == b"selected-media"
+    assert info["source_type"] == "facebook"
 
 
-def test_fetch_media_stream_prefers_bridge_jar_over_browser_database(tmp_path, monkeypatch):
-    downloaded = tmp_path / "bridge_video.mp4"
-    attached = []
-    jar = http.cookiejar.CookieJar()
-    jar.set_cookie(http.cookiejar.Cookie(
-        version=0,
-        name="c_user",
-        value="bridge-value",
-        port=None,
-        port_specified=False,
-        domain=".facebook.com",
-        domain_specified=True,
-        domain_initial_dot=True,
-        path="/",
-        path_specified=True,
-        secure=True,
-        expires=None,
-        discard=True,
-        comment=None,
-        comment_url=None,
-        rest={},
-    ))
-
-    class FakeYoutubeDL:
-        def __init__(self, _options):
-            self.cookiejar = http.cookiejar.CookieJar()
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-        def extract_info(self, _source, download=True):
-            assert download is True
-            attached.extend(self.cookiejar)
-            downloaded.write_bytes(b"media")
-            return {"title": "Bridge video", "id": "bridge", "uploader": "Creator"}
-
-        def prepare_filename(self, _info):
-            return str(downloaded)
-
-    monkeypatch.setattr(extractor.yt_dlp, "YoutubeDL", FakeYoutubeDL)
-    monkeypatch.setattr(extractor, "get_active_browser_cookie_jar", lambda: jar)
-    monkeypatch.setattr(
-        extractor,
-        "load_browser_cookies_read_only",
-        lambda *_args: pytest.fail("the locked browser database should not be read when the bridge jar exists"),
-    )
-
-    extractor.fetch_media_stream(
-        "https://www.facebook.com/watch/?v=bridge",
-        str(tmp_path),
-        auth_browser="Vivaldi",
-    )
-
-    assert [(cookie.name, cookie.value) for cookie in attached] == [("c_user", "bridge-value")]
+def test_fetch_media_stream_requires_direct_capture_for_authenticated_access(tmp_path):
+    with pytest.raises(RuntimeError, match="Browser Capture extension"):
+        extractor.fetch_media_stream(
+            "https://www.facebook.com/watch/?v=123",
+            str(tmp_path),
+            auth_browser="Vivaldi",
+        )

@@ -33,3 +33,10 @@ desktop-ui/.npm-cache/
 desktop-ui/.cargo-target/
 .cargo-local/
 .rustup-local/
+
+# Retired local launchers and pre-Tauri build state
+JaneConverter.exe
+JaneConverterDesktop.exe
+JaneConverterNative.exe
+frontend.preference
+native_ui/

@@ -170,6 +170,18 @@ def test_build_ffmpeg_args_gif():
     assert any("palettegen" in arg for arg in cmd)
     assert cmd[-1] == "output.gif"
 
+def test_build_ffmpeg_args_image_png_exports_one_frame_without_audio():
+    cmd = build_ffmpeg_args(
+        input_path="input.jpg",
+        output_path="output.png",
+        target_format="png",
+    )
+    assert "-frames:v" in cmd
+    assert "1" in cmd
+    assert "-an" in cmd
+    assert "png" in cmd
+    assert cmd[-1] == "output.png"
+
 def test_unsupported_format_raises_error():
     with pytest.raises(ValueError) as exc:
         build_ffmpeg_args("in.mp4", "out.xyz", "xyz")

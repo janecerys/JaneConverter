@@ -20,6 +20,7 @@ vi.mock("../bridge", () => ({ bridge: fakeBridge }));
 
 const settings = {
   outputDir: "D:\\JaneConverter\\converted",
+  fetchedDir: "fetched",
   category: "Music" as const,
   format: "mp3",
   bitrate: "320k",

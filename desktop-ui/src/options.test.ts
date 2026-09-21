@@ -8,6 +8,11 @@ describe("converter option parity", () => {
     expect(formatsFor("Miscellaneous")).toContain("flac");
   });
 
+  it("offers dedicated image formats", () => {
+    expect(formatsFor("Image")).toEqual(["jpg", "png", "webp"]);
+    expect(qualitiesFor("png")).toEqual(["best"]);
+  });
+
   it("keeps legacy quality controls mapped by output format", () => {
     expect(qualitiesFor("wav")).toEqual(["16-bit", "24-bit", "32-bit"]);
     expect(qualitiesFor("flac")).toEqual(["16-bit", "24-bit"]);

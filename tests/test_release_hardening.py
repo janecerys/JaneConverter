@@ -6,7 +6,7 @@ from engine.events import BoundedLogQueue, CoalescingCallbackQueue
 from engine.extractor import identify_source_type, is_playlist_url
 from engine import updater
 from engine.updater import check_and_apply_all_updates, update_engine
-from run_converter import media_library_folder, _metadata_folder
+from run_converter import CLI_CATEGORIES, media_library_folder, _metadata_folder
 
 
 def test_progress_queue_coalesces_and_bounds_callbacks():
@@ -41,6 +41,11 @@ def test_library_folder_keeps_sources_separate_except_miscellaneous(tmp_path):
     assert media_library_folder(root, "mp3", "spotify", "Music").endswith(os.path.join("Music", "Spotify"))
     assert media_library_folder(root, "mp4", "youtube", "Video").endswith(os.path.join("Videos", "YouTube"))
     assert media_library_folder(root, "mp3", "spotify", "Miscellaneous").endswith(os.path.join("Miscellaneous", "Audio"))
+    assert media_library_folder(root, "png", "facebook", "Image").endswith(os.path.join("Images", "Facebook"))
+
+
+def test_cli_categories_include_image_capture_output():
+    assert "Image" in CLI_CATEGORIES
 
 
 def test_single_item_metadata_isolated_by_source(tmp_path):

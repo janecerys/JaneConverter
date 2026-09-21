@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "camelCase")]
 pub struct ConverterSettings {
     pub output_dir: String,
+    pub fetched_dir: String,
     pub category: String,
     pub format: String,
     pub bitrate: String,
@@ -33,6 +34,7 @@ pub struct ConversionRequest {
     pub retries: u8,
     pub playlist_indexes: Option<String>,
     pub browser_session: Option<String>,
+    pub browser_capture_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -81,7 +83,29 @@ pub struct AccessStatus {
     pub active: bool,
     pub link: String,
     pub browser: String,
+    pub source: Option<String>,
     pub bridge_connected: bool,
+    pub capture_count: usize,
+    pub captured_media_kind: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AccessDiagnostic {
+    pub id: u64,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FetchedMedia {
+    pub path: String,
+    pub name: String,
+    pub media_kind: String,
+    pub mime_type: String,
+    pub capture_mode: String,
+    pub title: String,
+    pub size: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -15,6 +15,7 @@ from typing import Optional, Dict, Any, Callable
 
 SUPPORTED_AUDIO_FORMATS = {"mp3", "wav", "flac", "aac", "m4a", "ogg"}
 SUPPORTED_VIDEO_FORMATS = {"mp4", "mkv", "webm", "mov", "gif"}
+SUPPORTED_IMAGE_FORMATS = {"jpg", "jpeg", "png", "webp"}
 VIDEO_QUALITY_SETTINGS = {
     "best": {"crf": 18, "audio_bitrate": "192k", "gif_fps": 30},
     "high": {"crf": 20, "audio_bitrate": "160k", "gif_fps": 24},
@@ -482,6 +483,18 @@ def build_ffmpeg_args(
 
             if video_filters:
                 cmd.extend(["-vf", ",".join(video_filters)])
+    # 3. Still-image export (stories and captured image media)
+    elif target_format in SUPPORTED_IMAGE_FORMATS:
+        cmd.extend(["-an", "-frames:v", "1"])
+        if target_format in ("jpg", "jpeg"):
+            cmd.extend(["-c:v", "mjpeg", "-q:v", "2"])
+        elif target_format == "png":
+            cmd.extend(["-c:v", "png", "-compression_level", "9"])
+        else:
+            image_quality = {"best": "95", "high": "90", "balanced": "80", "small": "65"}.get(
+                (bitrate or "").lower(), "90"
+            )
+            cmd.extend(["-c:v", "libwebp", "-q:v", image_quality])
     else:
         raise ValueError(f"Unsupported conversion format: '{target_format}'")
 

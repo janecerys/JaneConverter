@@ -1,6 +1,7 @@
 use crate::model::{ConversionRequest, ConverterEvent, PlaylistCatalog, PlaylistItem};
 use crate::paths::{find_python, packaged_engine, prepare_command, project_root};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read};
+use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -62,7 +63,15 @@ pub fn build_conversion_args(
     request: &ConversionRequest,
     browser: Option<String>,
 ) -> Result<Vec<String>, String> {
-    if request.source.trim().is_empty() {
+    build_conversion_args_with_capture(request, browser, None)
+}
+
+pub fn build_conversion_args_with_capture(
+    request: &ConversionRequest,
+    browser: Option<String>,
+    browser_media_path: Option<PathBuf>,
+) -> Result<Vec<String>, String> {
+    if request.source.trim().is_empty() && browser_media_path.is_none() {
         return Err("Paste a media URL or choose a local file first.".into());
     }
     if request.output_dir.trim().is_empty() {
@@ -121,6 +130,15 @@ pub fn build_conversion_args(
             normalize_browser_session_arg(&browser)?,
         ]);
     }
+    if let Some(path) = browser_media_path {
+        if !path.is_file() {
+            return Err("The browser capture file is no longer available. Capture the media again.".into());
+        }
+        args.extend([
+            "--browser-media-path".into(),
+            path.display().to_string(),
+        ]);
+    }
     if let Some(indexes) = &request.playlist_indexes {
         if !indexes.trim().is_empty() {
             args.extend([
@@ -159,15 +177,12 @@ pub fn start_conversion(
     job_id: String,
     request: ConversionRequest,
     browser: Option<String>,
-    bridge_payload: Option<String>,
+    browser_media_path: Option<PathBuf>,
     child_slot: Arc<Mutex<Option<Arc<Mutex<Child>>>>>,
     cancel_slot: Arc<Mutex<Option<Arc<AtomicBool>>>>,
     output: impl FnOnce(i32, bool) + Send + 'static,
 ) -> Result<(), String> {
-    let mut args = build_conversion_args(&request, browser)?;
-    if bridge_payload.is_some() {
-        args.push("--browser-bridge-stdin".into());
-    }
+    let args = build_conversion_args_with_capture(&request, browser, browser_media_path)?;
     std::fs::create_dir_all(&request.output_dir)
         .map_err(|error| format!("Could not use the export folder: {error}"))?;
     let mut command = Command::new(find_python());
@@ -175,29 +190,13 @@ pub fn start_conversion(
         .args(&args)
         .current_dir(project_root())
         .env("PYTHONUNBUFFERED", "1")
-        .stdin(if bridge_payload.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     prepare_command(&mut command);
     let mut child = command
         .spawn()
         .map_err(|error| format!("Could not start the Python engine: {error}"))?;
-    if let Some(payload) = bridge_payload {
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "Could not open the browser bridge handoff.".to_owned())?;
-        if let Err(error) = stdin.write_all(payload.as_bytes()) {
-            terminate_child(&mut child);
-            return Err(format!(
-                "Could not send the browser bridge handoff: {error}"
-            ));
-        }
-    }
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let child = Arc::new(Mutex::new(child));
@@ -307,7 +306,6 @@ pub fn parse_playlist_output(output: &str) -> Result<PlaylistCatalog, String> {
 pub fn load_playlist(
     source: &str,
     browser: Option<String>,
-    bridge_payload: Option<String>,
 ) -> Result<PlaylistCatalog, String> {
     let engine = find_python();
     let mut command = Command::new(&engine);
@@ -319,35 +317,16 @@ pub fn load_playlist(
         let browser = normalize_browser_session_arg(&browser)?;
         command.args(["--browser-session", browser.as_str()]);
     }
-    if bridge_payload.is_some() {
-        command.arg("--browser-bridge-stdin");
-    }
     command
         .current_dir(project_root())
         .env("PYTHONUNBUFFERED", "1")
-        .stdin(if bridge_payload.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
+        .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     prepare_command(&mut command);
     let mut child = command
         .spawn()
         .map_err(|error| format!("Could not start playlist loading: {error}"))?;
-    if let Some(payload) = bridge_payload {
-        let mut stdin = child
-            .stdin
-            .take()
-            .ok_or_else(|| "Could not open the browser bridge handoff.".to_owned())?;
-        if let Err(error) = stdin.write_all(payload.as_bytes()) {
-            terminate_child(&mut child);
-            return Err(format!(
-                "Could not send the browser bridge handoff: {error}"
-            ));
-        }
-    }
     let output = child
         .wait_with_output()
         .map_err(|error| format!("Could not wait for playlist loading: {error}"))?;
@@ -402,6 +381,7 @@ mod tests {
             retries: 2,
             playlist_indexes: None,
             browser_session: Some("Chrome".into()),
+            browser_capture_path: None,
         };
         let args =
             build_conversion_args(&request, None).expect("display labels should be accepted");
@@ -410,5 +390,63 @@ mod tests {
             .position(|value| value == "--browser-session")
             .expect("browser session flag should be forwarded");
         assert_eq!(args[flag + 1], "chrome");
+    }
+
+    #[test]
+    fn browser_capture_allows_empty_source_when_capture_file_exists() {
+        let capture_path = std::env::temp_dir().join(format!(
+            "janeconverter-capture-test-{}.webm",
+            std::process::id()
+        ));
+        std::fs::write(&capture_path, b"captured").expect("test capture should be writable");
+        let request = ConversionRequest {
+            source: "".into(),
+            output_dir: "out".into(),
+            category: "Video".into(),
+            format: "mp4".into(),
+            bitrate: "original".into(),
+            sample_rate: 48000,
+            resolution: "original".into(),
+            normalize: false,
+            use_gpu: false,
+            save_cover: true,
+            save_metadata: true,
+            retries: 2,
+            playlist_indexes: None,
+            browser_session: None,
+            browser_capture_path: None,
+        };
+
+        let args = build_conversion_args_with_capture(&request, None, Some(capture_path.clone()))
+            .expect("a valid browser capture should satisfy source validation");
+        let flag = args
+            .iter()
+            .position(|value| value == "--browser-media-path")
+            .expect("browser capture path should be forwarded");
+        assert_eq!(args[flag + 1], capture_path.display().to_string());
+        let _ = std::fs::remove_file(capture_path);
+    }
+
+    #[test]
+    fn public_conversion_does_not_add_browser_session_flag() {
+        let request = ConversionRequest {
+            source: "https://soundcloud.com/example/track".into(),
+            output_dir: "out".into(),
+            category: "Music".into(),
+            format: "mp3".into(),
+            bitrate: "320k".into(),
+            sample_rate: 48000,
+            resolution: "original".into(),
+            normalize: false,
+            use_gpu: false,
+            save_cover: true,
+            save_metadata: true,
+            retries: 2,
+            playlist_indexes: None,
+            browser_session: None,
+            browser_capture_path: None,
+        };
+        let args = build_conversion_args(&request, None).expect("public conversion should be valid");
+        assert!(!args.iter().any(|value| value == "--browser-session"));
     }
 }

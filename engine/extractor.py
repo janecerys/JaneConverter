@@ -6,6 +6,7 @@ Facebook, Reddit, Vimeo, Twitch, adult sites, Spotify metadata matching, and App
 
 import os
 import re
+import shutil
 import time
 import urllib.parse
 from typing import Optional, Dict, Any, Callable
@@ -13,14 +14,10 @@ import json
 import requests
 import yt_dlp
 from engine.auth import (
-    browser_session_label,
     describe_authenticated_extraction_failure,
     normalize_browser_session,
     normalize_browser_error_message,
-    yt_dlp_cookie_option,
 )
-from engine.browser_cookies import load_browser_cookies_read_only
-from engine.browser_bridge import get_active_browser_cookie_jar
 
 
 class _AuthenticatedYtdlpLogger:
@@ -48,13 +45,6 @@ class _AuthenticatedYtdlpLogger:
             self.progress_callback(0.15, normalized)
         return None
 
-
-def _apply_browser_cookie_jar(ydl: Any, cookie_jar: Any) -> None:
-    """Attach a temporary browser jar to yt-dlp without creating a file."""
-    if not cookie_jar:
-        return
-    for cookie in cookie_jar:
-        ydl.cookiejar.set_cookie(cookie)
 
 def is_url(path_or_url: str) -> bool:
     """Checks if input string is a valid HTTP/HTTPS URL."""
@@ -468,7 +458,8 @@ def fetch_media_stream(
     fallback_artist: Optional[str] = None,
     abort_event: Optional[Any] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
-    auth_browser: Optional[str] = None
+    auth_browser: Optional[str] = None,
+    browser_media_path: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Fetches the media stream from a URL (or validates local file) into output_dir.
@@ -496,6 +487,46 @@ def fetch_media_stream(
                 progress_callback(max(0.0, min(1.0, pct)), msg)
 
     source_type = identify_source_type(source)
+
+    # The browser bridge delivers a user-selected media file directly. This
+    # fast path intentionally bypasses yt-dlp and every browser profile/cookie
+    # reader. The confirmed page URL remains the source for library grouping.
+    if browser_media_path:
+        captured_path = os.path.abspath(os.fspath(browser_media_path))
+        if not os.path.isfile(captured_path):
+            raise FileNotFoundError("The browser capture file is no longer available. Capture the media again.")
+        try:
+            captured_size = os.path.getsize(captured_path)
+        except OSError as error:
+            raise RuntimeError(f"Could not inspect the browser capture: {error}") from error
+        if captured_size <= 0:
+            raise RuntimeError("The browser capture was empty. Capture the media again.")
+        suffix = os.path.splitext(captured_path)[1].lower() or ".bin"
+        copied_path = os.path.join(output_dir, "browser-capture" + suffix)
+        shutil.copy2(captured_path, copied_path)
+        report(0.75, "Browser capture received. Preparing conversion...", force=True)
+        return {
+            "media_path": os.path.abspath(copied_path),
+            "title": "Captured media",
+            "artist": "Browser capture",
+            "album": "",
+            "year": "",
+            "description": "",
+            "tags": [],
+            "categories": [],
+            "webpage_url": source,
+            "thumbnail_url": "",
+            "thumbnail_path": None,
+            "duration": 0,
+            "source_type": source_type,
+            "is_local": False,
+        }
+
+    if auth_browser:
+        raise RuntimeError(
+            "Account access is ready, but no browser capture has arrived. "
+            "Open the JaneConverter Browser Capture extension and capture the visible media first."
+        )
 
     # 1. Local File
     if source_type == "local_file":
@@ -600,22 +631,11 @@ def fetch_media_stream(
         "remote_components": ["ejs:github"],
         "progress_hooks": [progress_hook]
     }
-    cookie_option = yt_dlp_cookie_option(auth_browser)
-    browser_cookie_jar = get_active_browser_cookie_jar() if auth_browser else None
-    if auth_browser:
-        if browser_cookie_jar is None:
-            browser_cookie_jar = load_browser_cookies_read_only(auth_browser, source)
-        if browser_cookie_jar and progress_callback:
-            report(0.15, f"Read the {browser_session_label(auth_browser)} session in memory; the browser can remain open.", force=True)
-    if cookie_option and browser_cookie_jar is None:
-        ydl_opts["cookiesfrombrowser"] = cookie_option
-        ydl_opts["logger"] = _AuthenticatedYtdlpLogger(progress_callback)
 
     try:
         info = None
         last_error = None
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            _apply_browser_cookie_jar(ydl, browser_cookie_jar)
             for query_item in candidates:
                 if abort_event and abort_event.is_set():
                     raise KeyboardInterrupt("Stream extraction aborted by user.")
@@ -724,6 +744,11 @@ def fetch_playlist_entries(
     source_type = identify_source_type(url)
     clean_url = url.strip()
     auth_browser = normalize_browser_session(auth_browser)
+    if auth_browser:
+        raise RuntimeError(
+            "Playlist account access requires direct media capture. "
+            "Use the public playlist loader, or capture individual visible media items with the Browser Capture extension."
+        )
 
     if source_type == "apple_music":
         return fetch_apple_music_playlist_entries(clean_url, progress_callback=progress_callback)
@@ -812,18 +837,8 @@ def fetch_playlist_entries(
         "js_runtimes": {"node": {"path": None}},
         "remote_components": ["ejs:github"]
     }
-    cookie_option = yt_dlp_cookie_option(auth_browser)
-    browser_cookie_jar = get_active_browser_cookie_jar() if auth_browser else None
-    if auth_browser:
-        if browser_cookie_jar is None:
-            browser_cookie_jar = load_browser_cookies_read_only(auth_browser, clean_url)
-    if cookie_option and browser_cookie_jar is None:
-        ydl_opts["cookiesfrombrowser"] = cookie_option
-        ydl_opts["logger"] = _AuthenticatedYtdlpLogger(progress_callback)
-
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            _apply_browser_cookie_jar(ydl, browser_cookie_jar)
             report(0.3, "Extracting playlist index and track listings...")
             info = ydl.extract_info(clean_url, download=False)
             if not info:

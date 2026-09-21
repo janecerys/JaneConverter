@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertCircle, CheckCircle2, Clipboard, FilePlus2, FolderOpen, Info, Link2, ListMusic, LoaderCircle, LockKeyhole, Play, RefreshCw, ShieldCheck, Square } from "lucide-react";
 import { motion } from "framer-motion";
-import type { AccessStatus, ConverterEvent, ConverterSettings, PlaylistCatalog, RuntimeInfo } from "../bridge";
+import type { AccessStatus, ConverterEvent, ConverterSettings, FetchedMedia, PlaylistCatalog, RuntimeInfo } from "../bridge";
 import { bridge } from "../bridge";
-import { formatsFor, qualitiesFor, resolutions, videoFormats } from "../options";
+import { formatsFor, imageFormats, qualitiesFor, resolutions, videoFormats } from "../options";
 import { PlaylistDialog } from "./PlaylistDialog";
 
 function SelectField({ label, value, values, onChange, disabled = false }: { label: string; value: string | number; values: Array<string | number>; onChange: (value: string) => void; disabled?: boolean }) {
   return (
     <label className="block min-w-0">
       <span className="mb-2 block text-[11px] font-medium text-zinc-500">{label}</span>
-      <select disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)} className="field w-full px-3 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-50">
+      <select aria-label={label} disabled={disabled} value={value} onChange={(event) => onChange(event.target.value)} className="field w-full px-3 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-50">
         {values.map((item) => <option key={item} value={item}>{String(item)}</option>)}
       </select>
     </label>
@@ -31,6 +31,7 @@ export function ConverterView({
   runtime,
   events,
   access,
+  selectedCapture,
   running,
   progress,
   status,
@@ -45,6 +46,7 @@ export function ConverterView({
   runtime: RuntimeInfo | null;
   events: ConverterEvent[];
   access: AccessStatus;
+  selectedCapture?: FetchedMedia | null;
   running: boolean;
   progress: number;
   status: string;
@@ -62,9 +64,15 @@ export function ConverterView({
   const [accessBusy, setAccessBusy] = useState(false);
   const [accessNotice, setAccessNotice] = useState("");
   const [accessNoticeTone, setAccessNoticeTone] = useState<"neutral" | "success" | "error">("neutral");
-  const formats = useMemo(() => formatsFor(settings.category), [settings.category]);
-  const qualities = useMemo(() => qualitiesFor(settings.format), [settings.format]);
-  const isVideo = videoFormats.includes(settings.format);
+  const capturedCategory = selectedCapture?.mediaKind ? selectedCapture.mediaKind === "image" ? "Image" : selectedCapture.mediaKind === "audio" ? "Music" : "Video" : null;
+  const capturedFormat = selectedCapture?.mediaKind ? selectedCapture.mediaKind === "image" ? "jpg" : selectedCapture.mediaKind === "audio" ? "mp3" : "mp4" : null;
+  const activeCategory = capturedCategory || settings.category;
+  const activeFormat = capturedFormat || settings.format;
+  const formats = useMemo(() => formatsFor(activeCategory), [activeCategory]);
+  const qualities = useMemo(() => qualitiesFor(activeFormat), [activeFormat]);
+  const isVideo = videoFormats.includes(activeFormat);
+  const isImage = imageFormats.includes(activeFormat);
+  const isAudio = !isVideo && !isImage;
   const lastEvent = events.length ? events[events.length - 1] : null;
 
   useEffect(() => {
@@ -74,16 +82,25 @@ export function ConverterView({
   useEffect(() => {
     if (access.bridgeConnected) {
       setAccessBusy(false);
-      setAccessNotice(`Browser bridge connected through ${access.browser || "your browser"}. The source-scoped session is ready for conversion while the browser stays open.`);
+      setAccessNotice(`Browser capture received through ${access.browser || "your browser"}. The selected media is ready to convert.`);
       setAccessNoticeTone("success");
       return;
     }
     if (access.browser) {
       setAccessBusy(false);
-      setAccessNotice(`Selected ${access.browser}. JaneConverter will first try a read-only in-memory session, so you can keep the browser open. If Windows blocks that path, the conversion error will explain when a full exit is needed.`);
+      setAccessNotice(`Access confirmed in ${access.browser}. Open the JaneConverter Browser Capture extension and capture the visible media before converting.`);
       setAccessNoticeTone("success");
     }
-  }, [access.browser]);
+  }, [access.bridgeConnected, access.browser]);
+
+  useEffect(() => {
+    if (!selectedCapture?.mediaKind) return;
+    const nextCategory = selectedCapture.mediaKind === "image" ? "Image" : selectedCapture.mediaKind === "audio" ? "Music" : "Video";
+    const nextFormat = selectedCapture.mediaKind === "image" ? "jpg" : selectedCapture.mediaKind === "audio" ? "mp3" : "mp4";
+    if (settings.category !== nextCategory || settings.format !== nextFormat) {
+      onSettings({ ...settings, category: nextCategory, format: nextFormat, bitrate: qualitiesFor(nextFormat)[0] });
+    }
+  }, [selectedCapture?.mediaKind]);
 
   const update = (patch: Partial<ConverterSettings>) => onSettings({ ...settings, ...patch });
 
@@ -122,24 +139,17 @@ export function ConverterView({
   }
 
   async function createAccess() {
-    if (!source.trim()) {
-      const message = "Paste an online source URL first to create account access.";
-      setAccessNotice(message);
-      setAccessNoticeTone("error");
-      onStatus(message);
-      return;
-    }
-
     setAccessBusy(true);
-    setAccessNotice("Creating a temporary access page and opening your browser...");
+    const sourceUrl = source.trim();
+    setAccessNotice(sourceUrl ? "Creating a temporary access page and opening your browser..." : "Creating a browser capture session and opening your browser...");
     setAccessNoticeTone("neutral");
     try {
-      const nextAccess = await onCreateAccess(source.trim());
+      const nextAccess = await onCreateAccess(sourceUrl);
       if (nextAccess.browser) {
-        setAccessNotice(`Selected ${nextAccess.browser}. JaneConverter will first try a read-only in-memory session, so you can keep the browser open. If Windows blocks that path, the conversion error will explain when a full exit is needed.`);
+        setAccessNotice(`Access page opened in ${nextAccess.browser}. Confirm access there, then use the Browser Capture extension to capture the visible media.`);
         setAccessNoticeTone("success");
       } else {
-        setAccessNotice("Access page opened. Sign in there if needed, then click “I am signed in — confirm access” before converting.");
+        setAccessNotice("Access page opened. Sign in there if needed, confirm access, then use the Browser Capture extension.");
         setAccessNoticeTone("neutral");
       }
     } catch (error) {
@@ -181,7 +191,7 @@ export function ConverterView({
   async function openAccessLink() {
     try {
       await bridge.openUrl(access.link);
-      setAccessNotice("Access page opened in your browser. Return here after confirming the browser session.");
+      setAccessNotice("Access page opened in your browser. Confirm it there, then use Browser Capture on the source page.");
       setAccessNoticeTone("neutral");
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -191,7 +201,7 @@ export function ConverterView({
   }
 
   async function convert(indexes?: string) {
-    if (!source.trim()) { onStatus("Paste a source URL or choose a local file first."); return; }
+    if (!source.trim() && !access.bridgeConnected) { onStatus("Paste a source URL, choose a local file, or capture media in the browser first."); return; }
     await onStart(source.trim(), indexes);
   }
 
@@ -224,9 +234,9 @@ export function ConverterView({
         <div className="mt-5 border-t border-white/[0.06] pt-4">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-xs text-zinc-400"><LockKeyhole className="size-3.5 text-zinc-600" /> Optional account access <span className="text-zinc-700">- session only</span></div>
-            <span className={`text-[11px] ${access.bridgeConnected ? "text-emerald-400" : access.browser ? "text-emerald-400" : access.active ? "text-amber-300" : "text-zinc-600"}`}>{access.bridgeConnected ? `Bridge connected through ${access.browser || "browser"}` : access.browser ? `Browser selected: ${access.browser}` : access.active ? "Access page open" : "Public-only extraction"}</span>
+            <span className={`text-[11px] ${access.bridgeConnected ? "text-emerald-400" : access.browser ? "text-emerald-400" : access.active ? "text-amber-300" : "text-zinc-600"}`}>{access.bridgeConnected ? `Browser capture received through ${access.browser || "browser"}` : access.browser ? `Access confirmed in ${access.browser}` : access.active ? "Access page open" : "Public-only extraction"}</span>
           </div>
-            <p className="mt-2 max-w-3xl text-[11px] leading-relaxed text-zinc-600">{access.bridgeConnected ? "Browser Bridge connected for this source. Keep the browser open; JaneConverter is using only the current source-scoped session in memory." : access.active ? "Sign in in the browser page if needed, confirm access there, then click the JaneConverter Browser Bridge extension's Connect button. The link only identifies the browser; JaneConverter does not capture, upload, or save your password or cookies." : "Create a temporary local link and open it in the browser whose session you want to use. JaneConverter retries a short read-only in-memory session path first, so you can keep the browser open when Windows allows it. The link only identifies the browser; JaneConverter does not capture, upload, or save your password or cookies."}</p>
+            <p className="mt-2 max-w-3xl text-[11px] leading-relaxed text-zinc-600">{selectedCapture ? "Fetched media selected from the browser capture inbox. Choose your output settings and convert it whenever you are ready." : access.bridgeConnected ? "Browser Capture connected for this session. Keep capturing from the active browser page; every item is kept temporarily in the Fetched Media tab. This access session does not affect unrelated URL or local-file conversions." : access.active ? "Open the media in this browser, sign in if needed, confirm access here, then open the JaneConverter Browser Capture extension. Choose Capture current media or Capture story sequence. Unrelated URL and local-file conversions remain public/local." : "Create a temporary local link with or without a source URL. JaneConverter receives only media you explicitly capture with the optional extension; it never reads or stores your password, cookies, cache, or browser profile."}</p>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {access.link && <button type="button" disabled={accessBusy} onClick={() => void copyAccessLink()} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50"><Link2 className="size-3.5" /> Copy link</button>}
             {access.link && <button type="button" disabled={accessBusy} onClick={() => void openAccessLink()} className="subtle-button px-3 py-2 text-xs disabled:cursor-not-allowed disabled:opacity-50">Open link</button>}
@@ -251,18 +261,18 @@ export function ConverterView({
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div><div className="text-sm font-medium text-zinc-200">Output and transcode parameters</div><div className="mt-1 text-xs text-zinc-600">Every legacy format and quality control remains available.</div></div>
           <div className="flex items-center gap-1 rounded-xl border border-white/[0.07] bg-black/15 p-1">
-            {(["Music", "Video", "Miscellaneous"] as const).map((category) => <button key={category} type="button" onClick={() => update({ category })} className={`rounded-lg px-3 py-1.5 text-[11px] transition-colors ${settings.category === category ? "bg-white/[0.09] text-white" : "text-zinc-600 hover:text-zinc-300"}`}>{category}</button>)}
+            {(["Music", "Video", "Image", "Miscellaneous"] as const).map((category) => <button key={category} type="button" onClick={() => update({ category })} className={`rounded-lg px-3 py-1.5 text-[11px] transition-colors ${activeCategory === category ? "bg-white/[0.09] text-white" : "text-zinc-600 hover:text-zinc-300"}`}>{category}</button>)}
           </div>
         </div>
 
         <div className="mt-5 grid gap-3 md:grid-cols-3">
-          <SelectField label="Container format" value={settings.format} values={formats} onChange={(format) => update({ format, bitrate: qualitiesFor(format)[0] })} />
-          <SelectField label={isVideo ? "Video quality" : "Audio bitrate / quality"} value={settings.bitrate} values={qualities} onChange={(bitrate) => update({ bitrate })} />
-          <SelectField label="Video resolution" value={settings.resolution} values={resolutions} onChange={(resolution) => update({ resolution })} disabled={!isVideo} />
+          <SelectField label="Container format" value={activeFormat} values={formats} onChange={(format) => update({ format, bitrate: qualitiesFor(format)[0] })} />
+          <SelectField label={isVideo ? "Video quality" : isImage ? "Image quality" : "Audio bitrate / quality"} value={isImage ? "best" : settings.bitrate} values={qualities} onChange={(bitrate) => update({ bitrate })} />
+          <SelectField label={isImage ? "Image resolution" : "Video resolution"} value={settings.resolution} values={resolutions} onChange={(resolution) => update({ resolution })} disabled={isAudio} />
         </div>
         <div className="mt-3 grid gap-3 md:grid-cols-3">
-          <SelectField label="Audio sample rate" value={settings.sampleRate} values={[44100, 48000, 96000]} onChange={(sampleRate) => update({ sampleRate: Number(sampleRate) })} disabled={isVideo} />
-          <div className="md:col-span-2 flex items-end text-[11px] leading-relaxed text-zinc-600">Use the quality menu for WAV/FLAC bit depth, OGG quality, or video quality. The selected values are sent directly to the existing Python engine.</div>
+          <SelectField label="Audio sample rate" value={settings.sampleRate} values={[44100, 48000, 96000]} onChange={(sampleRate) => update({ sampleRate: Number(sampleRate) })} disabled={!isAudio} />
+          <div className="md:col-span-2 flex items-end text-[11px] leading-relaxed text-zinc-600">Use the quality menu for WAV/FLAC bit depth, OGG quality, image quality, or video quality. The selected values are sent directly to the existing Python engine.</div>
         </div>
         <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
           <Toggle checked={settings.normalize} onChange={(normalize) => update({ normalize })} label="EBU R128 normalization" hint="-14 LUFS streaming target" />

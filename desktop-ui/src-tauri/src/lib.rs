@@ -4,7 +4,7 @@ mod model;
 mod paths;
 mod process;
 
-use model::{AccessStatus, ConversionRequest, LibraryEntry, RuntimeInfo};
+use model::{AccessDiagnostic, AccessStatus, ConversionRequest, FetchedMedia, LibraryEntry, RuntimeInfo};
 use paths::{
     command_available, data_root, detect_gpu, find_ffmpeg, find_python, packaged_engine,
     prepare_command, project_root, settings_get_internal, write_settings,
@@ -42,21 +42,20 @@ impl Default for AppState {
     }
 }
 
-fn active_browser(state: &AppState) -> Option<String> {
-    state.access.lock().ok().and_then(|value| {
-        value.as_ref().and_then(|server| {
-            let status = server.status();
-            (!status.browser.trim().is_empty()).then_some(status.browser)
-        })
-    })
-}
-
-fn active_bridge_payload(state: &AppState, source: &str) -> Option<String> {
-    state.access.lock().ok().and_then(|value| {
+fn active_capture_path(state: &AppState, source: &str, requested_path: Option<&str>) -> Option<PathBuf> {
+    let captured = state.access.lock().ok().and_then(|value| {
         value
             .as_ref()
-            .and_then(|server| server.bridge_payload_for(source))
-    })
+            .and_then(|server| server.captured_media_path(source, requested_path))
+    });
+    if captured.is_some() || !source.trim().is_empty() {
+        return captured;
+    }
+
+    let requested = requested_path?.trim();
+    let root = fs::canonicalize(settings_get_internal().fetched_dir).ok()?;
+    let target = fs::canonicalize(requested).ok()?;
+    (target.starts_with(root) && target.is_file()).then_some(target)
 }
 
 fn job_is_active(active_job: Option<&str>, requested_job: &str) -> bool {
@@ -231,8 +230,12 @@ fn start_conversion(
     let cancel_slot_for_worker = Arc::clone(&cancel_slot);
     let active_job_for_worker = Arc::clone(&active_job_slot);
     let completed_job_id = job_id.clone();
-    let browser = active_browser(&state);
-    let bridge_payload = active_bridge_payload(&state, &request.source);
+    let browser = request.browser_session.clone();
+    let capture_path = active_capture_path(
+        &state,
+        &request.source,
+        request.browser_capture_path.as_deref(),
+    );
     {
         let mut active_job = active_job_slot
             .lock()
@@ -247,7 +250,7 @@ fn start_conversion(
         job_id.clone(),
         request,
         browser,
-        bridge_payload,
+        capture_path,
         child_slot,
         cancel_slot,
         move |_code, _cancelled| {
@@ -311,11 +314,10 @@ fn cancel_conversion(state: State<'_, AppState>, job_id: String) -> Result<(), S
 
 #[tauri::command]
 fn load_playlist(
-    state: State<'_, AppState>,
+    _state: State<'_, AppState>,
     source: String,
 ) -> Result<model::PlaylistCatalog, String> {
-    let bridge_payload = active_bridge_payload(&state, &source);
-    load_playlist_engine(&source, active_browser(&state), bridge_payload)
+    load_playlist_engine(&source, None)
 }
 
 #[tauri::command]
@@ -360,10 +362,8 @@ fn delete_library_entry(root: String, path: String) -> Result<(), String> {
 
 #[tauri::command]
 fn create_access_link(state: State<'_, AppState>, source: String) -> Result<AccessStatus, String> {
-    if !(source.trim().starts_with("http://") || source.trim().starts_with("https://")) {
-        return Err("Account access is available for online media URLs only.".into());
-    }
-    let server = access::create(&source, paths::now_stamp())?;
+    let settings = settings_get_internal();
+    let server = access::create_with_root(&source, paths::now_stamp(), PathBuf::from(settings.fetched_dir))?;
     let status = server.status();
     let mut access = state
         .access
@@ -384,8 +384,61 @@ fn access_status(state: State<'_, AppState>) -> AccessStatus {
             active: false,
             link: String::new(),
             browser: String::new(),
+            source: None,
             bridge_connected: false,
+            capture_count: 0,
+            captured_media_kind: None,
         })
+}
+
+#[tauri::command]
+fn fetched_media(state: State<'_, AppState>) -> Vec<FetchedMedia> {
+    let fallback_root = PathBuf::from(settings_get_internal().fetched_dir);
+    state
+        .access
+        .lock()
+        .ok()
+        .and_then(|value| value.as_ref().map(access::AccessServer::fetched_media))
+        .unwrap_or_else(|| access::scan_fetched_media(&fallback_root))
+}
+
+#[tauri::command]
+fn access_diagnostics(state: State<'_, AppState>) -> Vec<AccessDiagnostic> {
+    state
+        .access
+        .lock()
+        .ok()
+        .and_then(|value| value.as_ref().map(access::AccessServer::diagnostics))
+        .unwrap_or_default()
+}
+
+#[tauri::command]
+fn fetched_media_thumbnail(
+    state: State<'_, AppState>,
+    path: String,
+) -> Result<Option<String>, String> {
+    let fallback_root = settings_get_internal().fetched_dir;
+    let access = state
+        .access
+        .lock()
+        .map_err(|_| "The access registry is unavailable.".to_owned())?;
+    match access.as_ref() {
+        Some(server) => server.fetched_media_thumbnail(&path),
+        None => library::thumbnail(&fallback_root, &path),
+    }
+}
+
+#[tauri::command]
+fn discard_fetched_media(state: State<'_, AppState>, path: String) -> Result<(), String> {
+    let fallback_root = settings_get_internal().fetched_dir;
+    let access = state
+        .access
+        .lock()
+        .map_err(|_| "The access registry is unavailable.".to_owned())?;
+    match access.as_ref() {
+        Some(server) => server.discard_fetched_media(&path),
+        None => library::delete_inside(&fallback_root, &path),
+    }
 }
 
 #[tauri::command]
@@ -579,6 +632,10 @@ pub fn run() {
             delete_library_entry,
             create_access_link,
             access_status,
+            fetched_media,
+            access_diagnostics,
+            fetched_media_thumbnail,
+            discard_fetched_media,
             clear_access_link,
             relaunch,
             check_updates
@@ -646,6 +703,7 @@ mod tests {
             retries: 2,
             playlist_indexes: None,
             browser_session: None,
+            browser_capture_path: None,
         };
         assert!(crate::process::build_conversion_args(&request, None).is_err());
     }

@@ -1,26 +1,36 @@
-"""Ephemeral localhost account-access handoff for JaneConverter.
+"""Ephemeral localhost handoff for direct browser-media capture.
 
-This module deliberately does not implement credential capture, cookie export,
-or token collection. It provides a short-lived local page that lets a user open
-the source in a chosen browser, sign in there, and confirm the handoff. An
-optional unpacked browser extension can then pass a source-scoped session to
-the extractor in memory while the browser remains open.
+The access page confirms the user's browser context. The optional extension
+then sends only explicitly selected media bytes to this loopback server. No
+cookie database, cookie value, password, cache, or reusable session token is
+accepted by the bridge.
 """
 
 from html import escape
 from hmac import compare_digest
 import json
+from pathlib import Path
+import secrets
+import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable, Optional
 from urllib.parse import urlparse
-import secrets
 
 from engine.auth import BrowserDetection, detect_browser_from_headers
+from engine.browser_bridge import (
+    BrowserCaptureStore,
+    CaptureBridgeError,
+    MAX_CHUNK_BYTES,
+    MAX_METADATA_BYTES,
+    parse_capture_metadata,
+)
+from engine.paths import DEFAULT_TEMP_DIR
 
 
-MAX_BRIDGE_PAYLOAD_BYTES = 256 * 1024
 BRIDGE_HEADER = "X-JaneConverter-Bridge"
+CAPTURE_ID_HEADER = "X-JaneConverter-Capture-Id"
+CAPTURE_OFFSET_HEADER = "X-JaneConverter-Capture-Offset"
 ALLOWED_BRIDGE_ORIGIN_SCHEMES = {
     "chrome-extension",
     "edge-extension",
@@ -30,12 +40,12 @@ ALLOWED_BRIDGE_ORIGIN_SCHEMES = {
 
 
 class AccountAccessServer:
-    """Short-lived loopback server used to coordinate browser access."""
+    """Short-lived loopback server used to coordinate browser capture."""
 
     def __init__(self, source_url: str, on_ready: Optional[Callable[[BrowserDetection], None]] = None):
         self.source_url = source_url.strip()
-        parsed_source = urlparse(self.source_url)
-        if parsed_source.scheme not in {"http", "https"} or not parsed_source.netloc:
+        parsed_source = urlparse(self.source_url) if self.source_url else None
+        if parsed_source is not None and (parsed_source.scheme not in {"http", "https"} or not parsed_source.netloc):
             raise ValueError("Account access requires a valid HTTP or HTTPS source URL.")
         self.on_ready = on_ready
         self._token = secrets.token_urlsafe(32)
@@ -45,9 +55,12 @@ class AccountAccessServer:
         self._consumed = False
         self._confirmed = False
         self._detected_browser = None
-        self._bridge_payload = None
+        Path(DEFAULT_TEMP_DIR).mkdir(parents=True, exist_ok=True)
+        self._capture_root = Path(tempfile.mkdtemp(prefix="browser-capture-", dir=DEFAULT_TEMP_DIR))
+        self._capture_store: Optional[BrowserCaptureStore] = (
+            BrowserCaptureStore(self._capture_root, self.source_url) if self.source_url else None
+        )
         self._bridge_nonce = secrets.token_urlsafe(24)
-        self._bridge_received = False
 
     @property
     def access_link(self) -> Optional[str]:
@@ -64,13 +77,19 @@ class AccountAccessServer:
 
     @property
     def bridge_connected(self) -> bool:
-        with self._lock:
-            return self._bridge_payload is not None
+        return bool(self.captured_media_paths)
 
     @property
-    def bridge_payload(self) -> Optional[str]:
+    def captured_media_paths(self) -> list[Path]:
         with self._lock:
-            return self._bridge_payload
+            store = self._capture_store
+            source_url = self.source_url
+        return [capture.path for capture in store.captures_for(source_url)] if store and source_url else []
+
+    @property
+    def captured_media_path(self) -> Optional[Path]:
+        paths = self.captured_media_paths
+        return paths[0] if paths else None
 
     @property
     def detected_browser(self) -> Optional[BrowserDetection]:
@@ -116,22 +135,30 @@ class AccountAccessServer:
                 def do_POST(self):  # noqa: N802 - required by BaseHTTPRequestHandler
                     parsed = urlparse(self.path)
                     base_path = f"/access/{owner._token}"
-                    if parsed.path != f"{base_path}/bridge":
+                    origin = owner._bridge_origin(self)
+                    if not parsed.path.startswith(f"{base_path}/bridge/capture/"):
                         owner._send_json(self, {"error": "This access link is not valid."}, status=404)
                         return
-                    origin = owner._bridge_origin(self)
                     if origin == "":
                         owner._send_json(self, {"error": "The browser bridge origin was not allowed."}, status=403)
                         return
+                    limit = MAX_METADATA_BYTES if parsed.path.endswith("/start") else MAX_CHUNK_BYTES
                     try:
                         content_length = int(self.headers.get("Content-Length", "0"))
                     except ValueError:
                         content_length = 0
-                    if content_length <= 0 or content_length > MAX_BRIDGE_PAYLOAD_BYTES:
-                        owner._send_json(self, {"error": "The browser bridge payload is too large or empty."}, status=413, cors_origin=origin)
+                    if content_length < 0 or content_length > limit:
+                        owner._send_json(self, {"error": "The browser capture request is too large."}, status=413, cors_origin=origin)
                         return
                     body = self.rfile.read(content_length)
-                    owner._receive_bridge_payload(self, body, origin)
+                    if parsed.path.endswith("/start"):
+                        owner._receive_capture_start(self, body, origin)
+                    elif parsed.path.endswith("/chunk"):
+                        owner._receive_capture_chunk(self, body, origin)
+                    elif parsed.path.endswith("/finish"):
+                        owner._receive_capture_finish(self, body, origin)
+                    else:
+                        owner._send_json(self, {"error": "This browser capture endpoint is not valid."}, status=404, cors_origin=origin)
 
                 def log_message(self, _format, *_args):
                     # Never log URLs containing the one-time access token.
@@ -156,8 +183,9 @@ class AccountAccessServer:
             server = self._server
             self._server = None
             self._consumed = True
-            self._bridge_payload = None
             self._bridge_nonce = ""
+        if self._capture_store:
+            self._capture_store.close()
         if server is not None:
             server.shutdown()
             server.server_close()
@@ -176,7 +204,6 @@ class AccountAccessServer:
             try:
                 self.on_ready(detected_browser)
             except Exception:
-                # A UI callback must never break the local HTTP response.
                 pass
 
     def _send_bridge_challenge(self, handler):
@@ -186,7 +213,8 @@ class AccountAccessServer:
             return
         with self._lock:
             confirmed = self._confirmed and not self._consumed and self._server is not None
-            connected = self._bridge_received
+            bridge_token = self._bridge_nonce
+            source_url = self.source_url
         if not confirmed:
             self._send_json(
                 handler,
@@ -195,47 +223,95 @@ class AccountAccessServer:
                 cors_origin=origin,
             )
             return
-        response = {"sourceUrl": self.source_url, "confirmed": True, "connected": connected}
-        if not connected:
-            response["bridgeToken"] = self._bridge_nonce
-        self._send_json(handler, response, cors_origin=origin)
+        self._send_json(
+            handler,
+            {
+                "sourceUrl": source_url,
+                "confirmed": True,
+                "connected": self.bridge_connected,
+                "captureCount": len(self.captured_media_paths),
+                "bridgeToken": bridge_token,
+            },
+            cors_origin=origin,
+        )
 
-    def _receive_bridge_payload(self, handler, body: bytes, origin: Optional[str]):
+    def _receive_capture_start(self, handler, body: bytes, origin: Optional[str]):
+        if not self._bridge_request_is_ready(handler, origin):
+            return
+        try:
+            with self._lock:
+                source_url = self.source_url
+            metadata = parse_capture_metadata(body, source_url)
+            with self._lock:
+                if self._capture_store is None:
+                    self.source_url = metadata.page_url
+                    self._capture_store = BrowserCaptureStore(self._capture_root, self.source_url)
+                store = self._capture_store
+            capture_id = store.start(metadata)
+        except (CaptureBridgeError, OSError) as error:
+            self._send_json(handler, {"error": str(error)}, status=400, cors_origin=origin)
+            return
+        self._send_json(handler, {"captureId": capture_id}, cors_origin=origin)
+
+    def _receive_capture_chunk(self, handler, body: bytes, origin: Optional[str]):
+        if not self._bridge_request_is_ready(handler, origin):
+            return
+        capture_id = handler.headers.get(CAPTURE_ID_HEADER, "").strip()
+        try:
+            offset = int(handler.headers.get(CAPTURE_OFFSET_HEADER, ""))
+        except ValueError:
+            offset = -1
+        try:
+            with self._lock:
+                store = self._capture_store
+            if store is None:
+                raise CaptureBridgeError("The browser capture session has not been bound to a media page.")
+            store.append(capture_id, offset, body)
+        except CaptureBridgeError as error:
+            self._send_json(handler, {"error": str(error)}, status=400, cors_origin=origin)
+            return
+        self._send_json(handler, {"ok": True, "offset": offset + len(body)}, cors_origin=origin)
+
+    def _receive_capture_finish(self, handler, body: bytes, origin: Optional[str]):
+        if not self._bridge_request_is_ready(handler, origin):
+            return
+        capture_id = handler.headers.get(CAPTURE_ID_HEADER, "").strip()
+        try:
+            if body:
+                payload = json.loads(body.decode("utf-8"))
+                if isinstance(payload, dict) and payload.get("captureId"):
+                    capture_id = str(payload["captureId"]).strip()
+            with self._lock:
+                store = self._capture_store
+            if store is None:
+                raise CaptureBridgeError("The browser capture session has not been bound to a media page.")
+            captured = store.finish(capture_id)
+        except (CaptureBridgeError, UnicodeDecodeError, json.JSONDecodeError) as error:
+            self._send_json(handler, {"error": str(error)}, status=400, cors_origin=origin)
+            return
+        self._send_json(
+            handler,
+            {
+                "ok": True,
+                "captureId": capture_id,
+                "fileName": captured.file_name,
+                "mediaKind": captured.media_kind,
+                "captureCount": len(self.captured_media_paths),
+            },
+            cors_origin=origin,
+        )
+
+    def _bridge_request_is_ready(self, handler, origin: Optional[str]) -> bool:
         with self._lock:
             confirmed = self._confirmed and not self._consumed and self._server is not None
-            connected = self._bridge_received
             expected_nonce = self._bridge_nonce
         if not confirmed:
             self._send_json(handler, {"error": "Confirm account access in the browser first."}, status=409, cors_origin=origin)
-            return
-        if connected:
-            self._send_json(handler, {"error": "A browser session is already connected. Clear access before connecting again."}, status=409, cors_origin=origin)
-            return
+            return False
         if not compare_digest(handler.headers.get(BRIDGE_HEADER, ""), expected_nonce):
             self._send_json(handler, {"error": "The browser bridge challenge was invalid or expired."}, status=403, cors_origin=origin)
-            return
-        try:
-            from engine.browser_bridge import cookie_jar_from_payload
-
-            cookie_jar_from_payload(body, self.source_url)
-            parsed = json.loads(body.decode("utf-8"))
-            if not isinstance(parsed, dict) or not isinstance(parsed.get("cookies"), list):
-                raise ValueError("The browser bridge payload has an invalid shape.")
-        except Exception as error:
-            self._send_json(handler, {"error": str(error)}, status=400, cors_origin=origin)
-            return
-        with self._lock:
-            if self._bridge_received:
-                self._send_json(
-                    handler,
-                    {"error": "A browser session is already connected. Clear access before connecting again."},
-                    status=409,
-                    cors_origin=origin,
-                )
-                return
-            self._bridge_payload = body.decode("utf-8")
-            self._bridge_received = True
-        self._send_json(handler, {"ok": True}, cors_origin=origin)
+            return False
+        return True
 
     @staticmethod
     def _bridge_origin(handler) -> Optional[str]:
@@ -260,27 +336,42 @@ class AccountAccessServer:
                 self._detected_browser = detection
 
     def _landing_page(self, detected_browser: Optional[BrowserDetection]) -> str:
-        safe_source = escape(self.source_url, quote=True)
         browser_note = ""
         if detected_browser:
             browser_note = f'<p class="note">Browser detected: <strong>{escape(detected_browser.label)}</strong>.</p>'
-        return self._page(
-            "Account access",
+        with self._lock:
+            source_url = self.source_url
+        source_steps = (
             f"""
-            <h1>JaneConverter account access</h1>
-            <p>Use this temporary page in the browser whose session you want to use.
-            The link only identifies that browser; JaneConverter does not receive
-            your password or copy or upload your cookies.</p>
             <ol>
               <li>Open the source link below.</li>
               <li>Sign in normally if the service asks you to.</li>
               <li>Return to this page and confirm access.</li>
             </ol>
-            <p><a class="primary" href="{safe_source}" target="_blank"
+            <p><a class="primary" href="{escape(source_url, quote=True)}" target="_blank"
                rel="noreferrer" referrerpolicy="no-referrer">Open source link</a></p>
+            """
+            if source_url
+            else """
+            <ol>
+              <li>Open the media page you want to capture in this browser.</li>
+              <li>Sign in normally if the service asks you to.</li>
+              <li>Return here and confirm access, then use the Browser Capture extension on the media page.</li>
+            </ol>
+            <p class="note">No source URL was provided. The first capture binds this temporary session to that media page's site.</p>
+            """
+        )
+        return self._page(
+            "Account access",
+            f"""
+            <h1>JaneConverter account access</h1>
+            <p>Use this temporary page in the browser whose session you want to use.
+            JaneConverter only receives media you explicitly send from the Browser
+            Bridge extension. It never receives your password, cookies, or cache.</p>
+            {source_steps}
             <p><a class="confirm" href="/access/{self._token}/ready">I’m signed in — confirm access</a></p>
             {browser_note}
-            <p class="note">This link expires when you confirm access or close JaneConverter.</p>
+            <p class="note">This link expires when JaneConverter closes or access is cleared.</p>
             """,
         )
 
@@ -290,10 +381,10 @@ class AccountAccessServer:
             f"""
             <h1>Access confirmed</h1>
             <p>Browser detected: <strong>{escape(detected_browser.label)}</strong>.</p>
-            <p>Return to JaneConverter. If the JaneConverter Browser Bridge extension
-            is installed, click its toolbar button and choose <strong>Connect</strong>.
-            This lets the browser stay open while the current app session uses the
-            source-scoped session. No cookie file is created or uploaded.</p>
+            <p>Return to JaneConverter, open the Browser Bridge extension, and choose
+            <strong>Capture current media</strong>. The extension sends only the
+            selected media bytes to this app; no cookie file or browser profile data
+            is created or uploaded.</p>
             """,
         )
 
@@ -337,10 +428,12 @@ h1 {{ color:#f1f5f9; }} a {{ color:#93c5fd; }} .primary,.confirm {{ display:inli
         if cors_origin:
             handler.send_header("Access-Control-Allow-Origin", cors_origin)
             handler.send_header("Vary", "Origin")
-            handler.send_header("Access-Control-Allow-Headers", f"content-type, {BRIDGE_HEADER}")
+            handler.send_header(
+                "Access-Control-Allow-Headers",
+                f"content-type, {BRIDGE_HEADER}, {CAPTURE_ID_HEADER}, {CAPTURE_OFFSET_HEADER}",
+            )
             handler.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         handler.send_header("X-Content-Type-Options", "nosniff")
         handler.send_header("Connection", "close")
         handler.end_headers()
-        if status != 204:
-            handler.wfile.write(body)
+        handler.wfile.write(body)

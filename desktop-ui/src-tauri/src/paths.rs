@@ -97,6 +97,10 @@ pub fn default_output_dir() -> PathBuf {
     data_root().join("converted")
 }
 
+pub fn default_fetched_dir() -> PathBuf {
+    data_root().join("fetched")
+}
+
 pub fn now_stamp() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -264,14 +268,21 @@ pub fn settings_get_internal() -> ConverterSettings {
         .filter(|value| !value.trim().is_empty())
         .cloned()
         .unwrap_or_else(|| default_output_dir().display().to_string());
+    let fetched_dir = values
+        .get("fetched_dir")
+        .filter(|value| !value.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| default_fetched_dir().display().to_string());
     let category = match values.get("category").map(String::as_str) {
         Some("Video") => "Video",
+        Some("Image") => "Image",
         Some("Miscellaneous") => "Miscellaneous",
         _ => "Music",
     };
     let (gpu_available, _) = detect_gpu();
     ConverterSettings {
         output_dir,
+        fetched_dir,
         category: category.into(),
         format: values
             .get("format")
@@ -309,6 +320,7 @@ pub fn write_settings(settings: &ConverterSettings) -> io::Result<()> {
     let retries = settings.retries.min(5).to_string();
     let body = [
         ("output_dir", settings.output_dir.as_str()),
+        ("fetched_dir", settings.fetched_dir.as_str()),
         ("category", settings.category.as_str()),
         ("format", settings.format.as_str()),
         ("bitrate", settings.bitrate.as_str()),

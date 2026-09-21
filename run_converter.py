@@ -29,6 +29,7 @@ from engine.extractor import (
 from engine.converter import (
     convert_media,
     SUPPORTED_AUDIO_FORMATS,
+    SUPPORTED_IMAGE_FORMATS,
     SUPPORTED_VIDEO_FORMATS,
     get_best_hardware_encoder
 )
@@ -36,11 +37,6 @@ from engine.updater import check_for_engine_updates, check_for_repo_updates
 from engine.version import __version__
 from engine.paths import DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR
 from engine.auth import normalize_browser_session
-from engine.browser_bridge import (
-    CookieBridgeError,
-    read_cookie_jar_from_stdin,
-    set_active_browser_cookie_jar,
-)
 
 MIN_FREE_DISK_BYTES = 256 * 1024 * 1024  # keep a reasonable minimum without rejecting small conversions
 
@@ -52,10 +48,11 @@ def media_library_folder(
     content_category: Optional[str] = None,
 ) -> str:
     """Return the organized library folder for a converted item."""
-    media_kind = "Music" if target_format.lower().strip(".") in SUPPORTED_AUDIO_FORMATS else "Videos"
+    normalized_format = target_format.lower().strip(".")
+    media_kind = "Music" if normalized_format in SUPPORTED_AUDIO_FORMATS else "Images" if normalized_format in SUPPORTED_IMAGE_FORMATS else "Videos"
     category = str(content_category or "").strip().lower()
     if category in ("miscellaneous", "misc"):
-        misc_kind = "Audio" if media_kind == "Music" else "Videos"
+        misc_kind = "Audio" if media_kind == "Music" else "Images" if media_kind == "Images" else "Videos"
         return os.path.join(output_dir, "Miscellaneous", misc_kind)
     source_labels = {
         "spotify": "Spotify",
@@ -207,7 +204,8 @@ def process_conversion(
     abort_event: Optional[Any] = None,
     progress_callback: Optional[Callable[[float, str], None]] = None,
     content_category: Optional[str] = None,
-    auth_browser: Optional[str] = None
+    auth_browser: Optional[str] = None,
+    browser_media_path: Optional[str] = None,
 ) -> str:
     """
     Orchestrates downloading/extracting stream, embedding cover art, exporting credits,
@@ -229,9 +227,10 @@ def process_conversion(
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(DEFAULT_TEMP_DIR, exist_ok=True)
     estimated_size = 0
-    if os.path.isfile(source):
+    estimated_source = browser_media_path or source
+    if os.path.isfile(estimated_source):
         try:
-            estimated_size = os.path.getsize(source)
+            estimated_size = os.path.getsize(estimated_source)
         except OSError:
             pass
     ensure_free_disk_space(output_dir, estimated_bytes=estimated_size)
@@ -251,6 +250,7 @@ def process_conversion(
 
     target_format = target_format.lower().strip(".")
     is_audio_target = target_format in SUPPORTED_AUDIO_FORMATS
+    is_image_target = target_format in SUPPORTED_IMAGE_FORMATS
 
     job_id = uuid.uuid4().hex[:8]
     work_dir = os.path.join(DEFAULT_TEMP_DIR, f"job_{job_id}")
@@ -277,7 +277,8 @@ def process_conversion(
             audio_only=is_audio_target,
             abort_event=abort_event,
             progress_callback=report,
-            auth_browser=auth_browser
+            auth_browser=auth_browser,
+            browser_media_path=browser_media_path,
         )
 
         input_media = stream_info["media_path"]
@@ -365,7 +366,7 @@ def process_conversion(
                         "metadata_dir": os.path.abspath(metadata_dir),
                         "source": source,
                         "source_type": stream_info.get("source_type", "other"),
-                        "category": content_category or ("Music" if is_audio_target else "Videos"),
+                        "category": content_category or ("Music" if is_audio_target else "Images" if is_image_target else "Videos"),
                         "title": title,
                     }, manifest_file, indent=2, ensure_ascii=False)
             except OSError as exc:
@@ -455,6 +456,7 @@ def process_playlist_conversion(
 
     target_format = target_format.lower().strip(".")
     is_audio_target = target_format in SUPPORTED_AUDIO_FORMATS
+    is_image_target = target_format in SUPPORTED_IMAGE_FORMATS
 
     total_items = len(selected_entries)
     if total_items == 0:
@@ -671,7 +673,7 @@ def process_playlist_conversion(
                 json.dump({
                     "playlist_title": playlist_title,
                     "source_type": source_type,
-                    "category": content_category or ("Music" if is_audio_target else "Videos"),
+                    "category": content_category or ("Music" if is_audio_target else "Images" if is_image_target else "Videos"),
                     "playlist_dir": os.path.abspath(playlist_dir),
                     "metadata_dir": os.path.abspath(metadata_dir),
                     "total_selected": total_items,
@@ -697,7 +699,8 @@ def process_playlist_conversion(
         "failed_files": failed_files
     }
 
-CLI_FORMATS = sorted(SUPPORTED_AUDIO_FORMATS | SUPPORTED_VIDEO_FORMATS)
+CLI_FORMATS = sorted(SUPPORTED_AUDIO_FORMATS | SUPPORTED_VIDEO_FORMATS | SUPPORTED_IMAGE_FORMATS)
+CLI_CATEGORIES = ("Music", "Video", "Image", "Miscellaneous")
 CLI_BITRATES = {"320k", "256k", "192k", "128k"}
 CLI_BIT_DEPTHS = {"16-bit", "24-bit", "32-bit", "32-bit float"}
 CLI_OGG_QUALITIES = {"q10", "q8", "q6", "q4"}
@@ -727,11 +730,18 @@ def parse_playlist_indexes(value: str, total: int, parser: argparse.ArgumentPars
 def validate_cli_args(args, parser: argparse.ArgumentParser):
     """Validates CLI argument combinations, exiting with a clear message on invalid input."""
     fmt = args.format.lower().strip(".")
-    if fmt not in SUPPORTED_AUDIO_FORMATS and fmt not in SUPPORTED_VIDEO_FORMATS:
+    if fmt not in SUPPORTED_AUDIO_FORMATS and fmt not in SUPPORTED_VIDEO_FORMATS and fmt not in SUPPORTED_IMAGE_FORMATS:
         parser.error(f"Unsupported format '{args.format}'. Choose from: {', '.join(CLI_FORMATS)}")
 
     bitrate = args.bitrate.lower().strip()
-    if fmt in SUPPORTED_VIDEO_FORMATS:
+    if fmt in SUPPORTED_IMAGE_FORMATS:
+        if bitrate == "320k":
+            bitrate = "best"
+        if bitrate not in CLI_VIDEO_QUALITIES:
+            parser.error(
+                f"Invalid image quality '{args.bitrate}'. Choose from: {', '.join(sorted(CLI_VIDEO_QUALITIES))}"
+            )
+    elif fmt in SUPPORTED_VIDEO_FORMATS:
         if bitrate == "320k":
             # Preserve the audio-oriented CLI default while making a bare
             # ``--format mp4`` invocation choose a sensible video preset.
@@ -785,19 +795,15 @@ def main():
     )
     parser.add_argument("--no-cover-art", action="store_true", help="Disable downloading and embedding cover art")
     parser.add_argument("--no-metadata", action="store_true", help="Disable exporting credits and metadata text files")
-    parser.add_argument("--category", choices=("Music", "Video", "Miscellaneous"), default=None,
-                        help="Library category. Miscellaneous stores media under Audio or Videos.")
+    parser.add_argument("--category", choices=CLI_CATEGORIES, default=None,
+                        help="Library category. Image captures are stored under Images; Miscellaneous stores media under Audio or Videos.")
     parser.add_argument(
         "--browser-session",
         choices=("none", "chrome", "edge", "firefox", "brave", "vivaldi", "opera", "chromium", "safari"),
         default="none",
         help="Use an existing logged-in browser session for authorized content; no password or cookie file is stored.",
     )
-    parser.add_argument(
-        "--browser-bridge-stdin",
-        action="store_true",
-        help="Read one consented, source-scoped browser session payload from stdin; never writes a cookie file.",
-    )
+    parser.add_argument("--browser-media-path", help=argparse.SUPPRESS)
     parser.add_argument("--no-update", action="store_true", help="Skip the read-only yt-dlp update availability check on startup")
     parser.add_argument("--check-updates", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--version", action="version", version=f"JaneConverter {__version__}")
@@ -811,11 +817,6 @@ def main():
         return
     if not args.source:
         parser.error("the following arguments are required: --source/-s")
-    if args.browser_bridge_stdin:
-        try:
-            set_active_browser_cookie_jar(read_cookie_jar_from_stdin(sys.stdin.buffer, args.source))
-        except CookieBridgeError as error:
-            parser.error(str(error))
     args.format, args.bitrate = validate_cli_args(args, parser)
 
     if args.list_playlist and not is_url(args.source):
@@ -896,7 +897,8 @@ def main():
             save_metadata=save_meta,
             keep_temp=args.keep_temp,
             content_category=args.category,
-            auth_browser=args.browser_session
+            auth_browser=args.browser_session,
+            browser_media_path=args.browser_media_path,
         )
 
 if __name__ == "__main__":
