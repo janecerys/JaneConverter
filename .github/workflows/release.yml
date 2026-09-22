@@ -81,6 +81,7 @@ jobs:
             dist/JaneConverter-*-windows-x64-setup.exe.sha256
             dist/JaneConverter-*-windows-x64-portable.zip
             dist/JaneConverter-*-windows-x64-portable.zip.sha256
+            browser-extension/releases/JaneConverter-Browser-Bridge-*.zip
 
   linux-x86_64:
     runs-on: ubuntu-22.04

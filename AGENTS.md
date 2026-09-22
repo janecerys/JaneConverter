@@ -11,7 +11,7 @@ JaneConverter is a universal media downloader and converter with a Tauri desktop
 - `src/janeconverter/` - Python conversion engine package
 - `tests/` - Python test suite
 - `desktop-ui/` - Tauri 2 + React + TypeScript desktop app (`src-tauri/` holds the Rust bridge)
-- `browser-extension/` - optional Browser Bridge (not bundled in production packages)
+- `browser-extension/` - optional Browser Bridge (bundled in production packages and published on releases)
 - `packaging/` - release build scripts and packaging contracts
 - `.github/workflows/` - CI and release pipelines
 

@@ -113,6 +113,14 @@ Copy-Item -LiteralPath $ffmpeg -Destination (Join-Path $runtimeBin "ffmpeg.exe")
 Copy-Item -LiteralPath $ffprobe -Destination (Join-Path $runtimeBin "ffprobe.exe")
 Copy-Item -LiteralPath $node -Destination (Join-Path $runtimeBin "node.exe")
 Copy-Item -LiteralPath (Join-Path $repoRoot "LICENSE") -Destination (Join-Path $payloadRoot "LICENSE")
+
+$extensionFolder = Join-Path $payloadRoot "browser-extension"
+New-Item -ItemType Directory -Path $extensionFolder -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $repoRoot "browser-extension\manifest.json") -Destination $extensionFolder
+Copy-Item -Path (Join-Path $repoRoot "browser-extension\*.js") -Destination $extensionFolder
+Copy-Item -Path (Join-Path $repoRoot "browser-extension\*.html") -Destination $extensionFolder
+Copy-Item -LiteralPath (Join-Path $repoRoot "browser-extension\README.md") -Destination $extensionFolder
+
 Invoke-Checked { & (Join-Path $runtimeEngine "JaneConverterEngine.exe") --version | Out-Null } "Frozen engine smoke test"
 
 $forbiddenRuntimeNames = @("JaneConverterPython.exe", "JaneConverterNative.exe", "Program.cs", "pip.exe", "npm.exe", "cargo.exe", "rustc.exe")
@@ -133,6 +141,7 @@ $baseConfig.bundle.active = -not $SkipInstaller
 $baseConfig.bundle.targets = @("nsis")
 $baseConfig.bundle | Add-Member -MemberType NoteProperty -Name resources -Value ([ordered]@{
     $runtimeRoot = "runtime"
+    $extensionFolder = "browser-extension"
 }) -Force
 $baseConfig.bundle | Add-Member -MemberType NoteProperty -Name windows -Value ([ordered]@{
     nsis = [ordered]@{
