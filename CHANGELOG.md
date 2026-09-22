@@ -5,6 +5,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.2.2] - 2026-09-22 - First Milestone Stable Release
+
+### Added
+- Added `[No preset]` button that reveals advanced conversion parameters for custom settings.
+- Added raw stream zero-transcode fast-path for `[Preserve Quality]`, keeping original video and audio intact without re-encoding.
+
+### Changed
+- Configured bundled FFmpeg binary path for yt-dlp to merge separate DASH 4K video (`bv*`) and audio (`ba`) streams instead of falling back to legacy single-stream 720p.
+- Streamlined category tabs to `Audio`, `Video`, and `Image`, removing the redundant Miscellaneous tab.
+- Formatted console download progress as a calm single updating line that updates in-place, eliminating terminal bloat.
+- Overhauled presets: Studio Master (32-bit WAV), Universal Music (320k MP3), Lossless FLAC (24-bit), Universal Video (1080p MP4), Lossless Image (PNG).
+- Reworded video controls into intuitive consumer language (*Picture quality* and *Picture size*).
+
+### Fixed
+- Fixed CLI unpacking crash (`TypeError: cannot unpack non-iterable NoneType object`) on `source`/`original` format.
+- Fixed hardware encoder bitrate starvation and rate control (`-rc:v vbr`) on 4K video conversions.
+
 ## [2.2.1] - 2026-09-22
 
 ### Added
