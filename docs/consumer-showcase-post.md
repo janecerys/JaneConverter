@@ -1,6 +1,6 @@
 # Introducing JaneConverter 2.0: The Studio-Grade Universal Media Converter for Creators and Audiophiles
 
-*Engineered by Jane Cerys ([project//aspyr](https://github.com/janecerys))*
+*Engineered by Jane Cerys ([project//aspyr](https://github.com/jeongchaeul))*
 
 ---
 
@@ -123,8 +123,8 @@ Use this step-by-step recording script to showcase JaneConverter's capabilities 
 
 JaneConverter is available as a standalone desktop application for Windows, with macOS and Linux support coming soon.
 
-- **GitHub Repository**: [github.com/janecerys/JaneConverter](https://github.com/janecerys/JaneConverter)
-- **Direct Installer**: Check the [Releases](https://github.com/janecerys/JaneConverter/releases) page for the latest `.msi` and portable `.zip` distributions.
+- **GitHub Repository**: [github.com/jeongchaeul/JaneConverter](https://github.com/jeongchaeul/JaneConverter)
+- **Direct Installer**: Check the [Releases](https://github.com/jeongchaeul/JaneConverter/releases) page for the latest `.msi` and portable `.zip` distributions.
 - **Open Source & Extensible**: Built with Tauri 2, Rust, React 19, and Python 3.12.
 
 *Crafted with passion for sound clarity and creator independence.*
