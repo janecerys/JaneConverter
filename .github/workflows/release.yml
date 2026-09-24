@@ -81,7 +81,7 @@ jobs:
             dist/JaneConverter-*-windows-x64-setup.exe.sha256
             dist/JaneConverter-*-windows-x64-portable.zip
             dist/JaneConverter-*-windows-x64-portable.zip.sha256
-            browser-extension/releases/JaneConverter-Browser-Bridge-*.zip
+            dist/JaneConverter-Browser-Bridge-*.zip
 
   linux-x86_64:
     runs-on: ubuntu-22.04
@@ -263,7 +263,21 @@ jobs:
       - name: Create GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          gh release create "$GITHUB_REF_NAME" artifacts/*
-          --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes
-          --title "JaneConverter $GITHUB_REF_NAME"
+        run: |
+          files=()
+          while IFS= read -r -d '' f; do
+            files+=("$f")
+          done < <(find artifacts -type f -print0)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No artifact files found to publish."
+            exit 1
+          fi
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $GITHUB_REF_NAME exists, uploading assets..."
+            gh release upload "$GITHUB_REF_NAME" "${files[@]}" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            echo "Creating release $GITHUB_REF_NAME..."
+            gh release create "$GITHUB_REF_NAME" "${files[@]}" \
+              --repo "$GITHUB_REPOSITORY" --verify-tag --generate-notes \
+              --title "JaneConverter $GITHUB_REF_NAME"
+          fi

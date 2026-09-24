@@ -89,10 +89,76 @@ fn ffmpeg_name() -> &'static str {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn copy_dir_all(source: &Path, destination: &Path) -> io::Result<()> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let file_type = entry.file_type()?;
+        let dest_path = destination.join(entry.file_name());
+        if file_type.is_dir() {
+            copy_dir_all(&entry.path(), &dest_path)?;
+        } else if !dest_path.exists() {
+            let _ = fs::copy(entry.path(), dest_path);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn migrate_legacy_local_appdata(target: &Path) {
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        let legacy = PathBuf::from(local).join("JaneConverter");
+        if legacy.is_dir() && legacy != target {
+            let user_entries = [
+                "settings.ini",
+                "config.json",
+                "converted",
+                "fetched",
+                "logs",
+                "JaneConverter.data-root",
+            ];
+            for entry_name in user_entries {
+                let source = legacy.join(entry_name);
+                let dest = target.join(entry_name);
+                if source.exists() && !dest.exists() {
+                    let _ = fs::create_dir_all(target);
+                    if source.is_dir() {
+                        let _ = copy_dir_all(&source, &dest);
+                    } else {
+                        let _ = fs::copy(&source, &dest);
+                    }
+                }
+            }
+        }
+    }
+}
+
+pub fn cleanup_stale_update_installers() {
+    let temp_root = std::env::temp_dir();
+    if let Ok(entries) = fs::read_dir(&temp_root) {
+        for entry in entries.flatten() {
+            if let Ok(file_type) = entry.file_type() {
+                if file_type.is_dir() {
+                    let name = entry.file_name();
+                    let name_str = name.to_string_lossy();
+                    if name_str.starts_with("janeconverter-update-")
+                        || name_str.starts_with("janecoverter-update-")
+                    {
+                        let _ = fs::remove_dir_all(entry.path());
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn user_data_root() -> PathBuf {
     #[cfg(target_os = "windows")]
-    if let Some(root) = std::env::var_os("LOCALAPPDATA").or_else(|| std::env::var_os("APPDATA")) {
-        return PathBuf::from(root).join("JaneConverter");
+    if let Some(root) = std::env::var_os("APPDATA").or_else(|| std::env::var_os("LOCALAPPDATA")) {
+        let path = PathBuf::from(root).join("JaneConverter");
+        migrate_legacy_local_appdata(&path);
+        return path;
     }
 
     #[cfg(target_os = "macos")]

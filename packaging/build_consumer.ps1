@@ -198,6 +198,14 @@ if (-not $SkipPortable) {
     Write-Host "Created $portableOutput" -ForegroundColor Green
 }
 
+$extensionZips = Get-ChildItem -LiteralPath (Join-Path $repoRoot "browser-extension\releases") -Filter "JaneConverter-Browser-Bridge-*.zip" -File |
+    Sort-Object LastWriteTimeUtc -Descending
+if ($extensionZips) {
+    $latestExtensionZip = $extensionZips | Select-Object -First 1
+    Copy-Item -LiteralPath $latestExtensionZip.FullName -Destination (Join-Path $repoRoot "dist\$($latestExtensionZip.Name)") -Force
+    Write-Host "Copied $($latestExtensionZip.Name) to dist" -ForegroundColor Green
+}
+
 if (-not $KeepStaging) {
     Remove-Item -LiteralPath $buildRoot -Recurse -Force
 }

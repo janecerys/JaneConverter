@@ -99,6 +99,17 @@ def _rewrite_legacy_destination(config_path: str, legacy_root: str, new_root: st
         return
 
 
+PROGRAM_FILE_NAMES = {
+    "janeconverter.exe",
+    "uninstall janeconverter.exe",
+    "uninstall.exe",
+    "resources",
+    "_internal",
+    "browser-extension",
+    "license",
+}
+
+
 def migrate_legacy_app_data(legacy_root: str, new_root: str) -> bool:
     """Merge the old AppData store into the project-local store.
 
@@ -119,6 +130,9 @@ def migrate_legacy_app_data(legacy_root: str, new_root: str) -> bool:
 
     migrated = False
     for entry in os.scandir(legacy_root):
+        name_lower = entry.name.lower()
+        if name_lower in PROGRAM_FILE_NAMES or name_lower.endswith(".exe"):
+            continue
         # The current portable settings win when both locations already have
         # a config file. This also avoids generating config (migrated N).json
         # when Windows has temporarily locked the legacy file.
@@ -156,10 +170,11 @@ def get_app_data_dir() -> str:
 
     # Protected install locations (for example Program Files) need a writable
     # per-user fallback. This keeps the application functional for consumers.
-    local_app_data = os.environ.get("LOCALAPPDATA", "").strip()
-    if local_app_data:
-        candidate = os.path.join(local_app_data, "JaneConverter")
+    app_data = os.environ.get("APPDATA", "").strip() or os.environ.get("LOCALAPPDATA", "").strip()
+    if app_data:
+        candidate = os.path.join(app_data, "JaneConverter")
         if _writable_directory(candidate):
+            migrate_legacy_app_data(LEGACY_APP_DATA_DIR, candidate)
             return candidate
     return os.path.join(tempfile.gettempdir(), "JaneConverter")
 

@@ -8,8 +8,9 @@ use model::{
     AccessDiagnostic, AccessStatus, ConversionRequest, FetchedMedia, LibraryEntry, RuntimeInfo,
 };
 use paths::{
-    command_available, data_root, detect_gpu, find_ffmpeg, find_python, packaged_engine,
-    prepare_command, project_root, set_data_root, settings_get_internal, write_settings,
+    cleanup_stale_update_installers, command_available, data_root, detect_gpu, find_ffmpeg,
+    find_python, packaged_engine, prepare_command, project_root, set_data_root,
+    settings_get_internal, write_settings,
 };
 use process::{
     load_playlist as load_playlist_engine, start_conversion as start_engine_conversion,
@@ -18,7 +19,7 @@ use process::{
 use rfd::FileDialog;
 use serde::Deserialize;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -805,15 +806,33 @@ fn install_update(app: tauri::AppHandle, update: UpdateInstallRequest) -> Result
         {
             return Err("The verified application installer could not be found.".into());
         }
-        Command::new(&installer)
-            .spawn()
-            .map_err(|error| format!("Could not launch the verified installer: {error}"))?;
+        let temp_dir = installer.parent().map(Path::to_path_buf);
+        if let Some(dir) = temp_dir {
+            let cmd = format!(
+                "start /wait \"\" \"{}\" & rmdir /s /q \"{}\"",
+                installer.to_string_lossy(),
+                dir.to_string_lossy()
+            );
+            let mut command = Command::new("cmd");
+            command.args(["/C", &cmd]);
+            prepare_command(&mut command);
+            command
+                .spawn()
+                .map_err(|error| format!("Could not launch the verified installer: {error}"))?;
+        } else {
+            let mut command = Command::new(&installer);
+            prepare_command(&mut command);
+            command
+                .spawn()
+                .map_err(|error| format!("Could not launch the verified installer: {error}"))?;
+        }
         app.exit(0);
         Ok(())
     }
 }
 
 pub fn run() {
+    cleanup_stale_update_installers();
     tauri::Builder::default()
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![

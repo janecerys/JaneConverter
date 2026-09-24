@@ -183,6 +183,18 @@ def check_for_release_updates(timeout_seconds: float = 6.0) -> Dict[str, Any]:
     }
 
 
+def cleanup_update_cache() -> None:
+    """Clean up any temporary directories left behind by previous update downloads."""
+    temp_root = Path(tempfile.gettempdir())
+    for prefix in ("janeconverter-update-", "janecoverter-update-"):
+        try:
+            for item in temp_root.glob(f"{prefix}*"):
+                if item.is_dir():
+                    shutil.rmtree(item, ignore_errors=True)
+        except OSError:
+            pass
+
+
 def download_application_update(info: Dict[str, Any], timeout_seconds: float = 60.0) -> Dict[str, Any]:
     """Download and verify an explicitly requested Windows application update.
 
@@ -203,7 +215,8 @@ def download_application_update(info: Dict[str, Any], timeout_seconds: float = 6
     if not installer_name.lower().endswith(".exe"):
         return {"success": False, "error": "The published update is not a Windows installer."}
 
-    temp_dir = Path(tempfile.mkdtemp(prefix="janecoverter-update-"))
+    cleanup_update_cache()
+    temp_dir = Path(tempfile.mkdtemp(prefix="janeconverter-update-"))
     installer_path = temp_dir / installer_name
     headers = {
         "Accept": "application/octet-stream",
