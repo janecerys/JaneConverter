@@ -28,9 +28,9 @@ describe("converter option parity", () => {
   });
 
   it("explains video quality choices in consumer language", () => {
-    expect(videoQualityLabel("best")).toBe("Highest video quality — largest file");
-    expect(videoQualityLabel("balanced")).toBe("Good quality — recommended");
-    expect(videoQualityLabel("small")).toBe("Smaller file — more compression");
+    expect(videoQualityLabel("best")).toBe("Highest quality / least compression");
+    expect(videoQualityLabel("balanced")).toBe("Balanced quality / recommended");
+    expect(videoQualityLabel("small")).toBe("Smaller file / more compression / less detail");
     expect(resolutionLabel("original")).toBe("Keep original size — do not resize");
     expect(resolutionLabel("1080p")).toBe("Full HD — 1080p");
   });

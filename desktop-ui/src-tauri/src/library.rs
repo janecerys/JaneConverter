@@ -189,6 +189,19 @@ fn canonical_library_item(root: &str, path: &str) -> Result<(PathBuf, PathBuf), 
     Ok((root, target))
 }
 
+pub fn draggable_media_file(root: &str, path: &str) -> Result<PathBuf, String> {
+    let metadata = fs::symlink_metadata(path.trim())
+        .map_err(|error| format!("That library file is unavailable: {error}"))?;
+    if metadata.file_type().is_symlink() || !metadata.is_file() {
+        return Err("Only regular media files can be dragged from the library.".into());
+    }
+    let (_root, target) = canonical_library_item(root, path)?;
+    if !media_extension(&target) && !image_extension(&target) {
+        return Err("Only media files can be dragged from the library.".into());
+    }
+    Ok(target)
+}
+
 pub fn delete_inside(root: &str, path: &str) -> Result<(), String> {
     let (_root, target) = canonical_library_item(root, path)?;
     if target.is_dir() {
@@ -390,6 +403,28 @@ mod tests {
         assert!(media_extension(Path::new("song.flac")));
         assert!(media_extension(Path::new("clip.MP4")));
         assert!(!media_extension(Path::new("notes.txt")));
+    }
+
+    #[test]
+    fn drag_source_is_limited_to_media_inside_the_library() {
+        let project = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .canonicalize()
+            .unwrap();
+        let icon = project.join("assets/icon.png");
+        let non_media = project.join("desktop-ui/src-tauri/Cargo.toml");
+        let other_root = project.join("desktop-ui/src-tauri");
+
+        assert_eq!(
+            draggable_media_file(project.to_str().unwrap(), icon.to_str().unwrap()).unwrap(),
+            icon
+        );
+        assert!(
+            draggable_media_file(project.to_str().unwrap(), non_media.to_str().unwrap()).is_err()
+        );
+        assert!(
+            draggable_media_file(other_root.to_str().unwrap(), icon.to_str().unwrap()).is_err()
+        );
     }
 
     #[test]

@@ -219,6 +219,15 @@ export function LibraryView({
     }
   }
 
+  function dragFile(event: React.DragEvent, entry: LibraryEntry) {
+    if (entry.isDirectory) return;
+    event.preventDefault();
+    event.stopPropagation();
+    void bridge.dragLibraryFile(entry.path).catch((error) => {
+      onStatus(error instanceof Error ? error.message : String(error));
+    });
+  }
+
   async function moveLibrary() {
     const destinationParent = await bridge.chooseFolder();
     if (!destinationParent) return;
@@ -313,7 +322,7 @@ export function LibraryView({
           <div className="mono-label">Project library</div>
           <h1 className="mt-2 text-3xl font-semibold tracking-[-.04em] text-white">Converted media.</h1>
           <p className="mt-2 text-sm text-zinc-500">
-            {section === "recent" ? "Find the newest converted media across every library folder." : "Browse the organized folders produced by the existing engine."}
+            {section === "recent" ? "Find recent conversions and drag a file into another app." : "Browse converted media and drag a file into another app."}
           </p>
           <div className="mt-4 inline-flex rounded-xl border border-white/[0.08] bg-white/[0.025] p-1">
             <button
@@ -380,6 +389,9 @@ export function LibraryView({
           return (
             <motion.div
               key={entry.path}
+              draggable={!entry.isDirectory}
+              onDragStartCapture={(event) => dragFile(event, entry)}
+              title={entry.isDirectory ? undefined : "Drag this file into another app"}
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               whileHover={{ scale: 1.002 }}
@@ -392,13 +404,14 @@ export function LibraryView({
                 }
               }}
               onContextMenu={(e) => handleContextMenu(e, entry)}
-              className="panel group relative flex flex-wrap items-center gap-3 px-4 py-3 cursor-pointer select-none transition-all duration-150 hover:border-pink-500/30 hover:bg-white/[0.04] active:bg-white/[0.06]"
+              className={`panel group relative flex flex-wrap items-center gap-3 px-4 py-3 select-none transition-all duration-150 hover:border-pink-500/30 hover:bg-white/[0.04] active:bg-white/[0.06] ${entry.isDirectory ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"}`}
             >
               <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl border border-white/[0.07] bg-black/15 text-zinc-500">
                 {preview ? (
                   <img
                     src={preview}
                     alt=""
+                    draggable={false}
                     className="size-full object-cover"
                     onError={() => removePreview(entry.path)}
                   />

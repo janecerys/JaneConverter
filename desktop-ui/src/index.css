@@ -67,6 +67,11 @@ button { cursor: pointer; }
 .subtle-button:hover { background: rgba(255,255,255,.075); border-color: rgba(255,255,255,.16); color: #fff; }
 .primary-button { background: var(--accent-color, #c52b68) !important; color: white !important; border-radius: 11px; transition: background .18s ease, transform .18s ease, filter .18s ease; }
 .primary-button:hover { filter: brightness(1.15); transform: translateY(-1px); }
+.preset-category-button[aria-pressed="true"] { border-bottom-color: var(--accent-color); background: var(--accent-subtle); color: var(--accent-color); }
+.preset-choice-button[aria-pressed="true"] { border-color: var(--accent-color); background: var(--accent-color); color: #fff; font-weight: 500; box-shadow: 0 1px 9px var(--accent-glow); }
+.preset-choice-button:not([aria-pressed="true"]):hover { border-color: var(--accent-glow); color: #fff; }
+.advanced-settings-switch[aria-checked="true"] .advanced-settings-track { background: var(--accent-color); }
+.preset-category-button:focus-visible, .preset-choice-button:focus-visible, .advanced-settings-switch:focus-visible { outline-color: var(--accent-color); }
 .danger-button { background: rgba(153, 27, 27, .75); color: #fecaca; border: 1px solid rgba(248,113,113,.22); border-radius: 10px; }
 .mono-label { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 10px; letter-spacing: .18em; text-transform: uppercase; color: #686875; }
 .console-line { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11px; line-height: 1.55; color: #a8a8b3; white-space: pre-wrap; overflow-wrap: anywhere; }

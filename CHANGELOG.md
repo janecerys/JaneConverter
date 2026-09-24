@@ -5,6 +5,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.2.3] - 2026-09-25 - Preset Selection and UI Improvements
+
+### Added
+- Added a Studio Cinematic video preset for source-resolution, highest-quality MKV output.
+- Added native file dragging from the converted library into other Windows applications.
+
+### Changed
+- Grouped presets under Audio, Video, and Image tabs with distinct icons and accent-color selection states.
+- Replaced the advanced-parameters dropdown with an Advanced settings switch; incompatible controls remain visible but disabled.
+- Clarified video compression and image-quality labels, and aligned the export-folder controls.
+
+### Fixed
+- Selecting an active preset again now clears it and restores the previous manual conversion settings, without a separate No preset button.
+
 ## [2.2.2] - 2026-09-22 - First Milestone Stable Release
 
 ### Added

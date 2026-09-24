@@ -6,10 +6,10 @@ export const imageFormats = ["jpg", "png", "webp"];
 export const resolutions = ["original", "4k", "1440p", "1080p", "720p", "480p"];
 
 const VIDEO_QUALITY_LABELS: Record<string, string> = {
-  best: "Highest video quality — largest file",
-  high: "High video quality — large file",
-  balanced: "Good quality — recommended",
-  small: "Smaller file — more compression",
+  best: "Highest quality / least compression",
+  high: "High quality / light compression",
+  balanced: "Balanced quality / recommended",
+  small: "Smaller file / more compression / less detail",
 };
 
 const RESOLUTION_LABELS: Record<string, string> = {
@@ -29,8 +29,11 @@ export function resolutionLabel(value: string): string {
   return RESOLUTION_LABELS[value] ?? value;
 }
 
-export function imageQualityLabel(value: string): string {
-  if (value === "best") return "Lossless pixel-for-pixel (PNG)";
+export function imageQualityLabel(value: string, format: string): string {
+  if (value !== "best") return value;
+  if (format === "png") return "Lossless / every pixel preserved";
+  if (format === "webp") return "Highest WebP quality / larger file";
+  if (format === "jpg" || format === "jpeg") return "Highest JPEG quality / larger file";
   return value;
 }
 
@@ -55,6 +58,7 @@ export interface IntentPreset {
   id: string;
   name: string;
   description: string;
+  group: "Music" | "Video" | "Image" | "Other";
   category: Category;
   format: string;
   bitrate: string;
@@ -70,6 +74,7 @@ export const intentPresets: IntentPreset[] = [
     id: "preserve-quality",
     name: "Preserve Quality",
     description: "Keep source quality: takes the raw file or highest-quality stream without re-encoding",
+    group: "Other",
     category: "Video",
     format: "source",
     bitrate: "best",
@@ -83,6 +88,7 @@ export const intentPresets: IntentPreset[] = [
     id: "studio-master",
     name: "Studio Master",
     description: "32-bit uncompressed WAV at 48kHz without dynamic compression, with cover art and credits",
+    group: "Music",
     category: "Audio",
     format: "wav",
     bitrate: "32-bit",
@@ -95,6 +101,7 @@ export const intentPresets: IntentPreset[] = [
     id: "universal-music",
     name: "Universal Music",
     description: "High-bitrate 320k MP3 with EBU R128 (-14 LUFS) streaming volume leveling, cover art, and credits",
+    group: "Music",
     category: "Audio",
     format: "mp3",
     bitrate: "320k",
@@ -107,6 +114,7 @@ export const intentPresets: IntentPreset[] = [
     id: "lossless-flac",
     name: "Lossless FLAC",
     description: "Pristine 24-bit FLAC archive at 48kHz with cover art and credits",
+    group: "Music",
     category: "Audio",
     format: "flac",
     bitrate: "24-bit",
@@ -119,6 +127,7 @@ export const intentPresets: IntentPreset[] = [
     id: "universal-video",
     name: "Universal Video",
     description: "Standard 1080p Full HD MP4 with recommended picture quality",
+    group: "Video",
     category: "Video",
     format: "mp4",
     bitrate: "balanced",
@@ -128,9 +137,23 @@ export const intentPresets: IntentPreset[] = [
     useGpu: true,
   },
   {
+    id: "studio-cinematic",
+    name: "Studio Cinematic",
+    description: "Source-resolution MKV at the highest quality; preserves original video and audio streams when compatible",
+    group: "Video",
+    category: "Video",
+    format: "mkv",
+    bitrate: "best",
+    sampleRate: 48000,
+    resolution: "original",
+    normalize: false,
+    useGpu: false,
+  },
+  {
     id: "lossless-image",
     name: "Lossless Image",
     description: "Uncompressed pixel-for-pixel PNG preserving original full image dimensions and clarity",
+    group: "Image",
     category: "Image",
     format: "png",
     bitrate: "best",
@@ -140,6 +163,8 @@ export const intentPresets: IntentPreset[] = [
     useGpu: false,
   },
 ];
+
+export const intentPresetGroups = ["Music", "Video", "Image", "Other"] as const;
 
 export function detectCategoryFromPath(pathOrUrl: string): Category | null {
   if (!pathOrUrl || !pathOrUrl.trim()) return null;

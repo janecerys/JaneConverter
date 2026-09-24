@@ -2,7 +2,7 @@ import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ConverterView } from "./ConverterView";
-import type { AccessStatus, FetchedMedia } from "../bridge";
+import type { AccessStatus, ConverterSettings, FetchedMedia } from "../bridge";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -36,6 +36,7 @@ function renderView(
   onStart = vi.fn().mockResolvedValue(undefined),
   selectedCapture: FetchedMedia | null = null,
   onSettings = vi.fn(),
+  settingsOverride: Partial<ConverterSettings> = {},
 ) {
   const container = document.createElement("div");
   document.body.appendChild(container);
@@ -45,7 +46,7 @@ function renderView(
   act(() => {
     root.render(
       <ConverterView
-        settings={settings}
+        settings={{ ...settings, ...settingsOverride }}
         runtime={null}
         events={[]}
         access={access}
@@ -68,6 +69,7 @@ function renderView(
 
 describe("Converter account access feedback", () => {
   beforeEach(() => {
+    window.scrollTo = vi.fn();
     bridge.openUrl.mockReset();
     bridge.openUrl.mockResolvedValue(undefined);
   });
@@ -107,14 +109,40 @@ describe("Converter account access feedback", () => {
     view.container.remove();
   });
 
-  it("lets users clear the active preset and use custom settings", async () => {
+  it("unselects a preset and restores the prior manual settings", async () => {
     const view = renderView();
-    const clearButton = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "No preset");
+    const presetButton = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Studio Master");
 
-    expect(clearButton).toBeDefined();
-    await act(async () => { clearButton?.click(); await Promise.resolve(); });
+    expect(presetButton).toBeDefined();
+    expect(view.container.textContent).not.toContain("No preset");
+    await act(async () => { presetButton?.click(); await Promise.resolve(); });
+    expect(presetButton?.getAttribute("aria-pressed")).toBe("true");
+    expect(view.onSettings).toHaveBeenLastCalledWith(expect.objectContaining({ format: "wav" }));
 
-    expect(view.onStatus).toHaveBeenCalledWith("No preset selected. Choose your own conversion settings.");
+    await act(async () => { presetButton?.click(); await Promise.resolve(); });
+    expect(presetButton?.getAttribute("aria-pressed")).toBe("false");
+    expect(view.onSettings).toHaveBeenLastCalledWith(expect.objectContaining({ format: "mp3", bitrate: "320k", category: "Music" }));
+    expect(view.onStatus).toHaveBeenCalledWith(expect.stringContaining("previous conversion settings were restored"));
+
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
+  it("restores video settings and keeps relevant advanced controls available", async () => {
+    const view = renderView(undefined, undefined, undefined, null, vi.fn(), { category: "Video", format: "mkv", bitrate: "best" });
+    const presetButton = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent?.trim() === "Universal Video");
+
+    await act(async () => { presetButton?.click(); await Promise.resolve(); });
+    expect(view.onSettings).toHaveBeenLastCalledWith(expect.objectContaining({ format: "mp4", resolution: "1080p" }));
+    await act(async () => { presetButton?.click(); await Promise.resolve(); });
+    expect(view.onSettings).toHaveBeenLastCalledWith(expect.objectContaining({ format: "mkv", resolution: "original", useGpu: false }));
+
+    const advancedSwitch = view.container.querySelector<HTMLButtonElement>('button[role="switch"]');
+    await act(async () => { advancedSwitch?.click(); await Promise.resolve(); });
+    expect(advancedSwitch?.getAttribute("aria-checked")).toBe("true");
+    expect(view.container.querySelector<HTMLSelectElement>('select[aria-label="Video quality"]')?.disabled).toBe(false);
+    expect(view.container.querySelector<HTMLSelectElement>('select[aria-label="Video resolution"]')?.disabled).toBe(false);
+    expect(view.container.querySelector<HTMLSelectElement>('select[aria-label="Audio sample rate"]')?.disabled).toBe(true);
 
     await act(async () => { view.root.unmount(); });
     view.container.remove();

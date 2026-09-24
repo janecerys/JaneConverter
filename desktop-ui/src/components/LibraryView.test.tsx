@@ -9,6 +9,7 @@ const fakeBridge = vi.hoisted(() => ({
   scanLibrary: vi.fn(),
   openPath: vi.fn(),
   openFile: vi.fn(),
+  dragLibraryFile: vi.fn(),
   chooseFolder: vi.fn(),
   moveLibrary: vi.fn(),
   getThumbnail: vi.fn(),
@@ -38,6 +39,8 @@ describe("Converted library", () => {
     fakeBridge.scanLibrary.mockReset();
     fakeBridge.openPath.mockReset();
     fakeBridge.openFile.mockReset();
+    fakeBridge.dragLibraryFile.mockReset();
+    fakeBridge.dragLibraryFile.mockResolvedValue(undefined);
     fakeBridge.chooseFolder.mockReset();
     fakeBridge.moveLibrary.mockReset();
     fakeBridge.getThumbnail.mockReset();
@@ -153,6 +156,28 @@ describe("Converted library", () => {
 
     expect(fakeBridge.openFile).toHaveBeenCalledWith("D:\\JaneConverter\\converted\\song.mp3");
     expect(fakeBridge.openPath).toHaveBeenCalledWith("D:\\JaneConverter\\converted\\song.mp3");
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
+
+  it("hands a dragged library file to the native bridge without opening it", async () => {
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<LibraryView settings={settings} onSettings={vi.fn()} onStatus={vi.fn()} />);
+    });
+
+    const fileRow = container.querySelector<HTMLElement>('[title="Drag this file into another app"]');
+    expect(fileRow?.draggable).toBe(true);
+    await act(async () => {
+      fileRow?.dispatchEvent(new Event("dragstart", { bubbles: true, cancelable: true }));
+      await Promise.resolve();
+    });
+    expect(fakeBridge.dragLibraryFile).toHaveBeenCalledWith("D:\\JaneConverter\\converted\\song.mp3");
+    expect(fakeBridge.openFile).not.toHaveBeenCalled();
 
     await act(async () => { root.unmount(); });
     container.remove();

@@ -137,6 +137,7 @@ export interface JaneBridge {
   subscribe(listener: (event: ConverterEvent) => void): Promise<UnlistenFn>;
   scanLibrary(path: string): Promise<LibraryEntry[]>;
   recentConversions(path: string, limit: number): Promise<LibraryEntry[]>;
+  dragLibraryFile(path: string): Promise<void>;
   getThumbnail(root: string, path: string): Promise<string | null>;
   moveLibrary(source: string, destinationParent: string): Promise<string>;
   moveFetchedFolder(source: string, destinationParent: string): Promise<string>;
@@ -187,6 +188,7 @@ const demoBridge: JaneBridge = {
   async subscribe() { return () => {}; },
   async scanLibrary() { return []; },
   async recentConversions() { return []; },
+  async dragLibraryFile() { throw new Error("Drag files into other apps from the desktop build."); },
   async getThumbnail() { return null; },
   async moveLibrary(source) { return source; },
   async moveFetchedFolder(source) { return source; },
@@ -222,6 +224,7 @@ const tauriBridge: JaneBridge = {
   subscribe: (listener) => listen<ConverterEvent>("converter-event", (event) => listener(event.payload)),
   scanLibrary: (path) => invoke<LibraryEntry[]>("scan_library", { path }),
   recentConversions: (path, limit) => invoke<LibraryEntry[]>("recent_conversions", { path, limit }),
+  dragLibraryFile: (path) => invoke<void>("drag_library_file", { path }),
   getThumbnail: (root, path) => invoke<string | null>("get_thumbnail", { root, path }),
   moveLibrary: (source, destinationParent) => invoke<string>("move_library", { source, destinationParent }),
   moveFetchedFolder: (source, destinationParent) => invoke<string>("move_fetched_folder", { source, destinationParent }),

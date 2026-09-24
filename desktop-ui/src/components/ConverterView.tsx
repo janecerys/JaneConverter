@@ -4,7 +4,7 @@ import {
   ArrowDownToLine,
   CheckCircle2,
   ChevronDown,
-  ChevronUp,
+  Clapperboard,
   Clipboard,
   Copy,
   ExternalLink,
@@ -19,6 +19,7 @@ import {
   ListMusic,
   LoaderCircle,
   LockKeyhole,
+  Music2,
   Play,
   RefreshCw,
   RotateCcw,
@@ -31,6 +32,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import type { AccessStatus, Category, ConverterEvent, ConverterSettings, FetchedMedia, PlaylistCatalog, RuntimeInfo } from "../bridge";
 import { bridge } from "../bridge";
 import {
+  audioFormats,
   detectCategoryFromPath,
   formatsFor,
   imageFormats,
@@ -63,6 +65,7 @@ function SelectField({
   onChange,
   disabled = false,
   formatValue,
+  hint,
 }: {
   label: string;
   value: string | number;
@@ -70,9 +73,10 @@ function SelectField({
   onChange: (value: string) => void;
   disabled?: boolean;
   formatValue?: (item: string | number) => string;
+  hint?: string;
 }) {
   return (
-    <label className="block min-w-0">
+    <label className={`block min-w-0 ${disabled ? "opacity-50" : ""}`}>
       <span className="mb-2 block text-[11px] font-medium text-zinc-500">{label}</span>
       <span className="relative block">
         <select
@@ -90,6 +94,7 @@ function SelectField({
         </select>
         <ChevronDown aria-hidden="true" className="pointer-events-none absolute right-3 top-1/2 size-3.5 -translate-y-1/2 text-zinc-400" />
       </span>
+      {hint && <span className="mt-1.5 block text-[10px] leading-relaxed text-zinc-600">{hint}</span>}
     </label>
   );
 }
@@ -99,19 +104,22 @@ function Toggle({
   onChange,
   label,
   hint,
+  disabled = false,
 }: {
   checked: boolean;
   onChange: (value: boolean) => void;
   label: string;
   hint?: string;
+  disabled?: boolean;
 }) {
   return (
-    <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/[0.06] bg-black/10 px-3 py-3 transition-colors hover:border-white/[0.12]">
+    <label className={`flex items-start gap-3 rounded-xl border border-white/[0.06] bg-black/10 px-3 py-3 transition-colors ${disabled ? "cursor-not-allowed opacity-45" : "cursor-pointer hover:border-white/[0.12]"}`}>
       <input
         type="checkbox"
         checked={checked}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
-        className="mt-0.5 size-4 accent-[#c52b68]"
+        className="mt-0.5 size-4 accent-[#c52b68] disabled:cursor-not-allowed"
       />
       <span className="min-w-0">
         <span className="block text-xs text-zinc-300">{label}</span>
@@ -158,6 +166,7 @@ export function ConverterView({
   const [notesOpen, setNotesOpen] = useState(false);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [selectedPresetId, setSelectedPresetId] = useState<string | null>(null);
+  const presetBaselineRef = useRef<ConverterSettings | null>(null);
   const [accessBusy, setAccessBusy] = useState(false);
   const [accessNotice, setAccessNotice] = useState("");
   const [accessNoticeTone, setAccessNoticeTone] = useState<"neutral" | "success" | "error">("neutral");
@@ -189,9 +198,13 @@ export function ConverterView({
   const activeFormat = capturedFormat || settings.format;
   const formats = useMemo(() => formatsFor(activeCategory), [activeCategory]);
   const qualities = useMemo(() => qualitiesFor(activeFormat), [activeFormat]);
-  const isVideo = videoFormats.includes(activeFormat);
-  const isImage = imageFormats.includes(activeFormat);
-  const isAudio = !isVideo && !isImage;
+  const isSourceFormat = activeFormat === "source";
+  const isVideo = videoFormats.includes(activeFormat) || (isSourceFormat && activeCategory === "Video");
+  const isImage = imageFormats.includes(activeFormat) || (isSourceFormat && activeCategory === "Image");
+  const isAudio = audioFormats.includes(activeFormat) || (isSourceFormat && (activeCategory === "Audio" || activeCategory === "Music"));
+  const presetCategory = activeCategory === "Video" || activeCategory === "Image" ? activeCategory : "Audio";
+  const visiblePresets = intentPresets.filter((preset) => preset.group === (presetCategory === "Audio" ? "Music" : presetCategory) || preset.group === "Other");
+  const hardwareAccelerationDisabled = !isVideo || isSourceFormat || activeFormat === "gif" || (runtime !== null && runtime !== undefined && !runtime.gpuAvailable);
   const lastEvent = events.length ? events[events.length - 1] : null;
 
   useEffect(() => {
@@ -282,6 +295,7 @@ export function ConverterView({
   }, [queueRunning, running, queue, onStart, onStatus]);
 
   const update = (patch: Partial<ConverterSettings>) => {
+    presetBaselineRef.current = null;
     setSelectedPresetId(null);
     onSettings({ ...settings, ...patch });
   };
@@ -562,8 +576,30 @@ export function ConverterView({
   }
 
   function applyPreset(preset: IntentPreset) {
+    if (selectedPresetId === preset.id) {
+      const previous = presetBaselineRef.current;
+      if (previous) {
+        onSettings({
+          ...settings,
+          category: previous.category,
+          format: previous.format,
+          bitrate: previous.bitrate,
+          sampleRate: previous.sampleRate,
+          resolution: previous.resolution,
+          normalize: previous.normalize,
+          useGpu: previous.useGpu,
+        });
+      }
+      presetBaselineRef.current = null;
+      setSelectedPresetId(null);
+      onStatus(`${preset.name} unselected. Your previous conversion settings were restored.`);
+      return;
+    }
+    if (selectedPresetId === null) presetBaselineRef.current = settings;
+
     if (preset.preserveQuality) {
-      update({
+      onSettings({
+        ...settings,
         category: (["Audio", "Video", "Image"].includes(activeCategory) ? activeCategory : preset.category) as Category,
         format: preset.format,
         resolution: "original",
@@ -575,7 +611,8 @@ export function ConverterView({
       onStatus(`Applied ${preset.name} preset: ${preset.description}.`);
       return;
     }
-    update({
+    onSettings({
+      ...settings,
       category: preset.category,
       format: preset.format,
       bitrate: preset.bitrate,
@@ -864,67 +901,46 @@ export function ConverterView({
 
       {/* Output & Presets Parameters */}
       <section className="panel p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center justify-between gap-3">
           <div>
             <div className="text-sm font-medium text-zinc-200">Output and conversion presets</div>
             <div className="mt-0.5 text-xs text-zinc-600">Select an intent goal or fine-tune settings below.</div>
           </div>
-          <div className="flex items-center gap-1 rounded-xl border border-white/[0.07] bg-black/15 p-1">
+          <span className="hidden items-center gap-1.5 text-[11px] text-zinc-400 sm:inline-flex">
+            <Wand2 className="size-3.5" style={{ color: "var(--accent-color)" }} aria-hidden="true" /> 1-click presets
+          </span>
+        </div>
+
+        {/* Intent Presets Toolbar */}
+        <div className="mt-2.5 overflow-hidden rounded-xl border border-white/[0.08] bg-black/15">
+          <div className="grid grid-cols-3 border-b border-white/[0.08]" aria-label="Preset categories">
             {(["Audio", "Video", "Image"] as const).map((category) => (
               <button
                 key={category}
                 type="button"
+                aria-pressed={presetCategory === category}
                 onClick={() => update({ category })}
-                className={`rounded-lg px-3 py-1.5 text-[11px] transition-colors ${
-                  activeCategory === category ? "bg-white/[0.09] text-white" : "text-zinc-600 hover:text-zinc-300"
-                }`}
+                className="preset-category-button min-h-9 border-b-2 border-transparent px-3 text-xs font-medium text-zinc-400 transition-colors hover:bg-white/[0.04] hover:text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-[-3px]"
               >
                 {category}
               </button>
             ))}
           </div>
-        </div>
-
-        {/* Intent Presets Toolbar */}
-        <div className="mt-3 rounded-xl border border-white/[0.05] bg-black/15 p-2.5">
-          <div className="flex items-center gap-2 mb-1.5">
-            <Wand2 className="size-3.5" style={{ color: "var(--accent-color, #c52b68)" }} />
-            <span className="text-[11px] font-medium text-zinc-400">1-Click Presets:</span>
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedPresetId(null);
-                setShowAdvanced(true);
-                onStatus("No preset selected. Choose your own conversion settings.");
-              }}
-              className={`rounded-lg px-2.5 py-1 text-xs transition-colors ${
-                selectedPresetId === null
-                  ? "text-white font-medium"
-                  : "border border-white/[0.08] bg-black/20 text-zinc-400 hover:border-white/[0.18] hover:text-white"
-              }`}
-              style={selectedPresetId === null ? { backgroundColor: "var(--accent-color, #c52b68)", boxShadow: "0 1px 6px var(--accent-glow, rgba(197,43,104,0.3))" } : undefined}
-              title="Pick quality and parameters manually"
-            >
-              No preset
-            </button>
-            {intentPresets.map((preset) => {
+          <div className="grid gap-1.5 p-2 sm:grid-cols-2 lg:grid-cols-3">
+            {visiblePresets.map((preset) => {
               const isSelected = selectedPresetId === preset.id;
+              const Icon = preset.id === "preserve-quality" ? ShieldCheck : preset.id === "universal-video" ? FileVideo : preset.id === "studio-cinematic" ? Clapperboard : preset.id === "lossless-image" ? FileImage : Music2;
               return (
                 <button
                   key={preset.id}
                   type="button"
+                  aria-pressed={isSelected}
                   onClick={() => applyPreset(preset)}
-                  className={`rounded-lg px-2.5 py-1 text-xs transition-colors ${
-                    isSelected
-                      ? "text-white font-medium"
-                      : "border border-white/[0.08] bg-black/20 text-zinc-400 hover:border-white/[0.18] hover:text-white"
-                  }`}
-                  style={isSelected ? { backgroundColor: "var(--accent-color, #c52b68)", boxShadow: "0 1px 6px var(--accent-glow, rgba(197,43,104,0.3))" } : undefined}
-                  title={preset.description}
+                  className="preset-choice-button flex min-h-9 items-center gap-2 rounded-lg border border-white/[0.08] bg-black/20 px-2.5 text-left text-xs text-zinc-300 transition-colors focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+                  title={isSelected ? `Unselect ${preset.name} and restore your previous settings` : preset.description}
                 >
-                  {preset.name}
+                  <Icon className="size-3.5 shrink-0" aria-hidden="true" />
+                  <span className="truncate">{preset.name}</span>
                 </button>
               );
             })}
@@ -932,7 +948,7 @@ export function ConverterView({
         </div>
 
         {/* Primary Controls */}
-        <div className="mt-3.5 grid gap-3 md:grid-cols-2">
+        <div className="mt-3 grid gap-2 md:grid-cols-2">
           <SelectField
             label="Container format"
             value={activeFormat}
@@ -943,11 +959,16 @@ export function ConverterView({
           <div className="flex items-end">
             <button
               type="button"
+              role="switch"
+              aria-checked={showAdvanced}
+              aria-controls="advanced-conversion-parameters"
               onClick={() => setShowAdvanced((v) => !v)}
-              className="subtle-button flex w-full items-center justify-between px-3 py-2.5 text-xs text-zinc-400 hover:text-white"
+              className="advanced-settings-switch inline-flex min-h-9 items-center gap-2 rounded-lg px-1 text-xs text-zinc-300 transition-colors hover:text-white focus-visible:outline focus-visible:outline-2"
             >
-              <span>{showAdvanced ? "Hide advanced parameters" : "Show advanced parameters (bitrate, sample rate, GPU)"}</span>
-              {showAdvanced ? <ChevronUp className="size-3.5" /> : <ChevronDown className="size-3.5" />}
+              <span aria-hidden="true" className="advanced-settings-track relative h-5 w-9 rounded-full bg-zinc-700 transition-colors">
+                <span className={`absolute left-0.5 top-0.5 size-4 rounded-full bg-white shadow-sm transition-transform ${showAdvanced ? "translate-x-4" : ""}`} />
+              </span>
+              Advanced settings
             </button>
           </div>
         </div>
@@ -956,71 +977,83 @@ export function ConverterView({
         <AnimatePresence>
           {showAdvanced && (
             <motion.div
+              id="advanced-conversion-parameters"
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: "auto" }}
               exit={{ opacity: 0, height: 0 }}
               className="overflow-hidden"
             >
-              <div className="mt-4 border-t border-white/[0.06] pt-4">
-                <div className="grid gap-3 md:grid-cols-3">
+              <div className="mt-3 border-t border-white/[0.06] pt-3">
+                <div className="grid gap-2 md:grid-cols-3">
                   <SelectField
-                    label={isVideo ? "Picture quality (compression)" : isImage ? "Image quality" : "Audio bitrate / quality"}
+                    label={isVideo ? "Video quality" : isImage ? "Image quality" : "Audio bitrate / quality"}
                     value={isImage ? "best" : settings.bitrate}
                     values={qualities}
-                    formatValue={(v) => (isVideo ? videoQualityLabel(String(v)) : isImage ? imageQualityLabel(String(v)) : String(v))}
+                    formatValue={(v) => (isVideo ? videoQualityLabel(String(v)) : isImage ? imageQualityLabel(String(v), activeFormat) : String(v))}
                     onChange={(bitrate) => update({ bitrate })}
+                    disabled={isSourceFormat}
+                    hint={
+                      isSourceFormat
+                        ? "Source output keeps the original quality settings."
+                        : isVideo
+                        ? "Controls compression and file size; resolution is set separately."
+                        : undefined
+                    }
                   />
-                  {isVideo && (
-                    <SelectField
-                      label="Picture size (resolution)"
-                      value={settings.resolution}
-                      values={resolutions}
-                      formatValue={(v) => resolutionLabel(String(v))}
-                      onChange={(resolution) => update({ resolution })}
-                    />
-                  )}
-                  {isAudio && (
-                    <SelectField
-                      label="Audio sample rate"
-                      value={settings.sampleRate}
-                      values={[44100, 48000, 96000]}
-                      onChange={(sampleRate) => update({ sampleRate: Number(sampleRate) })}
-                    />
-                  )}
+                  <SelectField
+                    label="Video resolution"
+                    value={settings.resolution}
+                    values={resolutions}
+                    formatValue={(v) => resolutionLabel(String(v))}
+                    onChange={(resolution) => update({ resolution })}
+                    disabled={!isVideo || isSourceFormat}
+                    hint={!isVideo ? "Available for video output." : isSourceFormat ? "Source output keeps its original dimensions." : undefined}
+                  />
+                  <SelectField
+                    label="Audio sample rate"
+                    value={settings.sampleRate}
+                    values={[44100, 48000, 96000]}
+                    onChange={(sampleRate) => update({ sampleRate: Number(sampleRate) })}
+                    disabled={!isAudio || isSourceFormat}
+                    hint={!isAudio ? "Available for audio output." : isSourceFormat ? "Source output keeps its original audio." : undefined}
+                  />
                 </div>
-                <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-                  {isAudio && (
-                    <Toggle
-                      checked={settings.normalize}
-                      onChange={(normalize) => update({ normalize })}
-                      label="EBU R128 normalization"
-                      hint="-14 LUFS streaming target"
-                    />
-                  )}
-                  {isVideo && (
-                    <Toggle
-                      checked={settings.useGpu}
-                      onChange={(useGpu) => update({ useGpu })}
-                      label="Hardware acceleration"
-                      hint={runtime?.gpuAvailable ? runtime.gpuLabel : "CPU mode available"}
-                    />
-                  )}
-                  {!isImage && (
-                    <>
-                      <Toggle
-                        checked={settings.saveCover}
-                        onChange={(saveCover) => update({ saveCover })}
-                        label="Embed and save cover art"
-                        hint="Artwork / thumbnail where available"
-                      />
-                      <Toggle
-                        checked={settings.saveMetadata}
-                        onChange={(saveMetadata) => update({ saveMetadata })}
-                        label="Export metadata and credits"
-                        hint="Human-readable .txt metadata"
-                      />
-                    </>
-                  )}
+                <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+                  <Toggle
+                    checked={settings.normalize}
+                    onChange={(normalize) => update({ normalize })}
+                    label="EBU R128 normalization"
+                    hint={isAudio ? "-14 LUFS streaming target" : "Available for audio output."}
+                    disabled={!isAudio || isSourceFormat}
+                  />
+                  <Toggle
+                    checked={settings.saveCover}
+                    onChange={(saveCover) => update({ saveCover })}
+                    label="Embed and save cover art"
+                    hint={isImage ? "Available for audio and video sources." : "Artwork or thumbnail when available"}
+                    disabled={isImage}
+                  />
+                  <Toggle
+                    checked={settings.saveMetadata}
+                    onChange={(saveMetadata) => update({ saveMetadata })}
+                    label="Export metadata and credits"
+                    hint="Human-readable .txt metadata"
+                  />
+                  <Toggle
+                    checked={settings.useGpu}
+                    onChange={(useGpu) => update({ useGpu })}
+                    label="Hardware acceleration"
+                    hint={
+                      hardwareAccelerationDisabled
+                        ? !isVideo || isSourceFormat
+                          ? "Available for encoded video output."
+                          : activeFormat === "gif"
+                          ? "GIF output uses its own frame conversion."
+                          : "No supported GPU detected. CPU mode is available."
+                        : runtime?.gpuLabel || "Use the available video hardware encoder."
+                    }
+                    disabled={hardwareAccelerationDisabled}
+                  />
                 </div>
               </div>
             </motion.div>
@@ -1107,12 +1140,12 @@ export function ConverterView({
                 aria-label="Export folder"
                 value={settings.outputDir}
                 onChange={(event) => update({ outputDir: event.target.value })}
-                className="field min-w-0 flex-1 px-3 py-2 text-xs"
+                className="field h-9 min-w-0 flex-1 px-3 text-xs"
               />
-              <button type="button" onClick={() => void browseOutput()} className="subtle-button px-3 py-2 text-xs whitespace-nowrap">
+              <button type="button" onClick={() => void browseOutput()} className="subtle-button inline-flex h-9 min-w-[76px] items-center justify-center gap-1.5 px-3 text-xs whitespace-nowrap">
                 Browse
               </button>
-              <button type="button" onClick={() => void bridge.openPath(settings.outputDir)} className="subtle-button flex items-center gap-1.5 px-3 py-2 text-xs whitespace-nowrap">
+              <button type="button" onClick={() => void bridge.openPath(settings.outputDir)} className="subtle-button inline-flex h-9 min-w-[76px] items-center justify-center gap-1.5 px-3 text-xs whitespace-nowrap">
                 <FolderOpen className="size-3.5" /> Open
               </button>
             </div>

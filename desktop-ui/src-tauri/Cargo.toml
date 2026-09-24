@@ -1,6 +1,6 @@
 [package]
 name = "janeconverter-desktop"
-version = "2.2.2"
+version = "2.2.3"
 description = "The modern JaneConverter desktop surface"
 authors = ["project//aspyr"]
 edition = "2021"
@@ -22,4 +22,5 @@ tauri = { version = "2", features = [] }
 url = "2"
 
 [target.'cfg(windows)'.dependencies]
+drag = "=2.1.1"
 winreg = "0.55"

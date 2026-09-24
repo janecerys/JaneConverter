@@ -370,6 +370,43 @@ fn recent_conversions(path: String, limit: usize) -> Result<Vec<LibraryEntry>, S
 }
 
 #[tauri::command]
+async fn drag_library_file(
+    app: tauri::AppHandle,
+    window: tauri::Window,
+    path: String,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    {
+        let root = settings_get_internal().output_dir;
+        let file = library::draggable_media_file(&root, &path)?;
+        let (sender, receiver) = std::sync::mpsc::channel();
+        app.run_on_main_thread(move || {
+            let result = drag::start_drag(
+                &window,
+                drag::DragItem::Files(vec![file]),
+                drag::Image::Raw(include_bytes!("../../../assets/icon.png").to_vec()),
+                |_, _| {},
+                drag::Options {
+                    mode: drag::DragMode::Copy,
+                    ..drag::Options::default()
+                },
+            )
+            .map_err(|error| format!("Could not start the file drag: {error}"));
+            let _ = sender.send(result);
+        })
+        .map_err(|error| format!("Could not start the file drag: {error}"))?;
+        receiver
+            .recv()
+            .map_err(|error| format!("Could not start the file drag: {error}"))?
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (app, window, path);
+        Err("Dragging library files into other apps is currently available on Windows.".into())
+    }
+}
+
+#[tauri::command]
 fn get_thumbnail(root: String, path: String) -> Result<Option<String>, String> {
     library::thumbnail(&root, &path)
 }
@@ -795,6 +832,7 @@ pub fn run() {
             load_playlist,
             scan_library,
             recent_conversions,
+            drag_library_file,
             get_thumbnail,
             move_library,
             move_fetched_folder,
