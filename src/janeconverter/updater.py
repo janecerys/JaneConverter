@@ -23,8 +23,11 @@ REPO_DIR = str(
     if (_source_root / "pyproject.toml").is_file()
     else Path(__file__).resolve().parents[1]
 )
-GITHUB_LATEST_RELEASE_URL = "https://api.github.com/repos/janecerys/JaneConverter/releases/latest"
-GITHUB_RELEASE_PREFIX = "https://github.com/janecerys/JaneConverter/releases/"
+GITHUB_OWNER = "jeongchaeul"
+GITHUB_REPO = "JaneConverter"
+GITHUB_LATEST_RELEASE_URL = f"https://api.github.com/repos/{GITHUB_OWNER}/{GITHUB_REPO}/releases/latest"
+GITHUB_RELEASE_PREFIX = f"https://github.com/{GITHUB_OWNER}/{GITHUB_REPO}/releases/"
+LEGACY_GITHUB_RELEASE_PREFIX = "https://github.com/janecerys/JaneConverter/releases/"
 
 def _run_git_cmd(args: list, timeout: float = 10.0) -> subprocess.CompletedProcess:
     no_window = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -97,8 +100,9 @@ def _trusted_release_url(value: Any) -> str:
     """Return only URLs belonging to the canonical JaneConverter GitHub release path."""
     candidate = str(value or "").strip()
     parsed = urlparse(candidate)
-    if parsed.scheme == "https" and parsed.netloc.lower() == "github.com" and candidate.startswith(GITHUB_RELEASE_PREFIX):
-        return candidate
+    if parsed.scheme == "https" and parsed.netloc.lower() == "github.com":
+        if candidate.startswith(GITHUB_RELEASE_PREFIX) or candidate.startswith(LEGACY_GITHUB_RELEASE_PREFIX):
+            return candidate
     return ""
 
 

@@ -20,7 +20,7 @@
 
 JaneConverter downloads and converts media through a sleek Tauri desktop app or high-speed Python CLI. It supports audio, video, and image processing with studio-grade SoX resampling, zero-loss stream copy remuxing (`-c copy`), EBU R128 loudness normalization, and hardware-accelerated GPU encoding.
 
-[Latest release](https://github.com/janecerys/JaneConverter/releases/latest) · [Changelog](CHANGELOG.md)
+[Latest release](https://github.com/jeongchaeul/JaneConverter/releases/latest) · [Changelog](CHANGELOG.md)
 
 ## Features
 
@@ -38,7 +38,7 @@ JaneConverter downloads and converts media through a sleek Tauri desktop app or 
 
 ## Install
 
-Download the matching artifact from the [latest release](https://github.com/janecerys/JaneConverter/releases/latest):
+Download the matching artifact from the [latest release](https://github.com/jeongchaeul/JaneConverter/releases/latest):
 
 - Windows x64 installer: `JaneConverter-<version>-windows-x64-setup.exe`
 - Windows x64 portable: `JaneConverter-<version>-windows-x64-portable.zip`
