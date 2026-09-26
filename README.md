@@ -60,6 +60,14 @@ Application data is stored in the OS user-data directory. Set `JANECONVERTER_DAT
 
 Paste a supported URL or choose a local file (or drag and drop files / links directly into the source box), select your desired output settings or 1-click preset, then start the conversion. The desktop app includes playlist selection, a sequential batch queue, a converted-library browser, live logs, diagnostics, and instant abort controls.
 
+### Public Facebook photo posts
+
+Paste a public Facebook post link and choose **Download all photos**. JaneConverter reads the post in a separate, hidden temporary guest WebView, collects the photo URLs Facebook renders for logged-out visitors, then passes that short-lived list directly to the local engine. Photos are validated and saved in a grouped folder under `Images/Facebook`, where the library lists image files alongside audio and video. JaneConverter does not use the normal browser profile, a browser extension, saved login cookies, or a remote download service. Facebook page scripts run in the temporary WebView and make the requests needed to display the post. The temporary profile is removed after capture. Posts that require sign-in or do not expose a complete photo set are stopped without saving a partial album.
+
+### Public Instagram and X/Twitter photo posts
+
+Paste a public Instagram post or X/Twitter post link and choose **Download all photos**. JaneConverter uses a separate, hidden temporary guest WebView to collect the photos the post exposes to logged-out visitors, then downloads them locally into grouped folders under `Images/Instagram` or `Images/Twitter`. Instagram carousel slides are opened in sequence. Posts that require sign-in or do not expose photos to logged-out visitors cannot be captured; X/Twitter posts without photos continue through the standard media downloader. No normal browser profile, saved login cookies, browser extension, or remote download service is used.
+
 Spotify and Apple Music links provide public catalog metadata matching. JaneConverter does not download protected DRM-subscription audio directly.
 
 Browser-captured files appear in the **Fetched Media.** tab and are saved in the configured fetched-media folder. The default is a `fetched` folder beside the converted library; clearing access ends the browser session without deleting those files. Each item supports **Open file**, **Open path**, **Use for conversion**, and **Discard**.

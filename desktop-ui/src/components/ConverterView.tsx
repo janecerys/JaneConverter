@@ -47,6 +47,48 @@ import {
 } from "../options";
 import { PlaylistDialog } from "./PlaylistDialog";
 
+function isFacebookPostLink(value: string): boolean {
+  try {
+    const url = new URL(value.trim());
+    const host = url.hostname.toLowerCase();
+    const path = url.pathname.toLowerCase();
+    return (host === "facebook.com" || host.endsWith(".facebook.com")) && (
+      path.startsWith("/share/p/") ||
+      path.includes("/permalink/") ||
+      path.includes("/posts/") ||
+      path.endsWith("/story.php")
+    );
+  } catch {
+    return false;
+  }
+}
+
+function socialPhotoPlatform(value: string): "instagram" | "twitter" | null {
+  try {
+    const url = new URL(value.trim());
+    const host = url.hostname.toLowerCase();
+    const path = url.pathname.toLowerCase();
+    if ((host === "instagram.com" || host === "www.instagram.com") && /^\/p\/[^/]+\/?$/.test(path)) return "instagram";
+    if ((host === "x.com" || host === "www.x.com" || host === "twitter.com" || host === "www.twitter.com") && /\/status\/\d+/.test(path)) return "twitter";
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+function normalizeDroppedPath(value: string): string {
+  const clean = value.trim();
+  if (!/^file:\/\//i.test(clean)) return clean;
+  try {
+    const url = new URL(clean);
+    const pathname = decodeURIComponent(url.pathname);
+    if (url.hostname) return `\\\\${url.hostname}${pathname.replace(/\//g, "\\")}`;
+    return pathname.replace(/^\/([a-z]:)/i, "$1").replace(/\//g, "\\");
+  } catch {
+    return clean.replace(/^file:\/\/\/?/i, "").replace(/\//g, "\\");
+  }
+}
+
 export interface QueueItem {
   id: string;
   source: string;
@@ -154,7 +196,7 @@ export function ConverterView({
   progress: number;
   status: string;
   onSettings: (next: ConverterSettings) => void;
-  onStart: (source: string, playlistIndexes?: string) => Promise<void>;
+  onStart: (source: string, playlistIndexes?: string, facebookCaptureId?: string, socialCaptureId?: string) => Promise<void>;
   onCancel: () => Promise<void>;
   onCreateAccess: (source: string) => Promise<AccessStatus>;
   onClearAccess: () => Promise<void>;
@@ -170,7 +212,12 @@ export function ConverterView({
   const [accessBusy, setAccessBusy] = useState(false);
   const [accessNotice, setAccessNotice] = useState("");
   const [accessNoticeTone, setAccessNoticeTone] = useState<"neutral" | "success" | "error">("neutral");
-
+  const [facebookCaptureBusy, setFacebookCaptureBusy] = useState(false);
+  const facebookCaptureIdRef = useRef<string | null>(null);
+  const facebookPostLink = isFacebookPostLink(source);
+  const [socialCaptureBusy, setSocialCaptureBusy] = useState(false);
+  const socialCaptureIdRef = useRef<string | null>(null);
+  const socialPlatform = socialPhotoPlatform(source);
   // Queue and completion state
   const [queue, setQueue] = useState<QueueItem[]>([]);
   const [queueRunning, setQueueRunning] = useState(false);
@@ -384,14 +431,34 @@ export function ConverterView({
     onStatus(`Source set to: ${clean.replace(/^.*[\\/]/, "") || clean}`);
   }
 
-  function handleDroppedPaths(paths: string[]) {
+  async function handleDroppedPaths(paths: string[]) {
     if (!paths || paths.length === 0) return;
-    if (paths.length === 1) {
-      handleSingleSource(paths[0]);
+    let inspectedPaths: Array<{ path: string; isLibraryPath: boolean }>;
+    try {
+      inspectedPaths = await Promise.all(paths.map(async (path) => {
+        const normalizedPath = normalizeDroppedPath(path);
+        return {
+          path: normalizedPath,
+          isLibraryPath: await bridge.isConvertedLibraryPath(normalizedPath),
+        };
+      }));
+    } catch (error) {
+      onStatus(error instanceof Error ? error.message : "JaneConverter could not verify the dropped file location, so it was ignored.");
+      return;
+    }
+
+    const rejectedCount = inspectedPaths.filter((item) => item.isLibraryPath).length;
+    const acceptedPaths = inspectedPaths.filter((item) => !item.isLibraryPath).map((item) => item.path);
+    if (rejectedCount > 0) {
+      onStatus("Converted-library files can be dragged out to other apps, but can't be dropped back into JaneConverter.");
+    }
+    if (acceptedPaths.length === 0) return;
+
+    if (acceptedPaths.length === 1) {
+      handleSingleSource(acceptedPaths[0]);
     } else {
-      const newItems: QueueItem[] = paths.map((p, idx) => {
-        let clean = p.trim().replace(/^file:\/\/\/?/, "");
-        if (/^[a-zA-Z]:/.test(clean)) clean = clean.replace(/\//g, "\\");
+      const newItems: QueueItem[] = acceptedPaths.map((p, idx) => {
+        const clean = p.trim();
         return {
           id: `${Date.now()}-${idx}`,
           source: clean,
@@ -402,7 +469,7 @@ export function ConverterView({
         };
       });
       setQueue((curr) => [...curr, ...newItems]);
-      onStatus(`Added ${paths.length} dropped items to conversion queue.`);
+      onStatus(`Added ${acceptedPaths.length} items to conversion queue.`);
     }
   }
 
@@ -444,9 +511,9 @@ export function ConverterView({
     if (droppedText) {
       const lines = droppedText.split(/[\r\n]+/).map((l) => l.trim()).filter(Boolean);
       if (lines.length > 1) {
-        handleDroppedPaths(lines);
+        void handleDroppedPaths(lines);
       } else {
-        handleSingleSource(lines[0]);
+        void handleDroppedPaths([lines[0]]);
       }
     }
   }
@@ -572,7 +639,72 @@ export function ConverterView({
       onStatus("Paste a source URL, choose a local file, or capture media in the browser first.");
       return;
     }
-    await onStart(source.trim(), indexes);
+    const trimmedSource = source.trim();
+    if (isFacebookPostLink(trimmedSource)) {
+      const captureId = crypto.randomUUID();
+      facebookCaptureIdRef.current = captureId;
+      setFacebookCaptureBusy(true);
+      onStatus("Reading the public Facebook post in a hidden guest session...");
+      try {
+        const capture = await bridge.captureFacebookAlbum(trimmedSource, captureId);
+        onStatus(`Found ${capture.photoCount} photos. Starting the local download...`);
+        await onStart(trimmedSource, undefined, capture.captureId);
+      } catch (error) {
+        onStatus(error instanceof Error ? error.message : String(error));
+      } finally {
+        facebookCaptureIdRef.current = null;
+        setFacebookCaptureBusy(false);
+      }
+      return;
+    }
+    const photoPlatform = socialPhotoPlatform(trimmedSource);
+    if (photoPlatform) {
+      const captureId = crypto.randomUUID();
+      socialCaptureIdRef.current = captureId;
+      setSocialCaptureBusy(true);
+      const platformLabel = photoPlatform === "instagram" ? "Instagram" : "X/Twitter";
+      onStatus(`Reading the public ${platformLabel} post in a hidden guest session...`);
+      try {
+        const capture = await bridge.captureSocialPostPhotos(trimmedSource, captureId);
+        onStatus(`Found ${capture.photoCount} photos. Starting the local download...`);
+        await onStart(trimmedSource, undefined, undefined, capture.captureId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (photoPlatform === "twitter" && message === "NO_PUBLIC_PHOTOS") {
+          onStatus("No X/Twitter photos found. Passing the post to the standard media downloader...");
+          await onStart(trimmedSource, indexes);
+        } else {
+          onStatus(message);
+        }
+      } finally {
+        socialCaptureIdRef.current = null;
+        setSocialCaptureBusy(false);
+      }
+      return;
+    }
+    await onStart(trimmedSource, indexes);
+  }
+
+  async function cancelFacebookCapture() {
+    const captureId = facebookCaptureIdRef.current;
+    if (!captureId) return;
+    try {
+      await bridge.cancelFacebookAlbum(captureId);
+      onStatus("Facebook photo capture cancelled.");
+    } catch (error) {
+      onStatus(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  async function cancelSocialPhotoCapture() {
+    const captureId = socialCaptureIdRef.current;
+    if (!captureId) return;
+    try {
+      await bridge.cancelSocialPostPhotos(captureId);
+      onStatus("Public photo capture cancelled.");
+    } catch (error) {
+      onStatus(error instanceof Error ? error.message : String(error));
+    }
   }
 
   function applyPreset(preset: IntentPreset) {
@@ -669,10 +801,11 @@ export function ConverterView({
           <input
             aria-label="Source media URL or local path"
             value={source}
+            disabled={facebookCaptureBusy || socialCaptureBusy}
             onChange={(event) => handleSourceInput(event.target.value)}
             onDragOver={handleDragOver}
             onDrop={handleDropEvent}
-            placeholder="Paste or drag YouTube, Spotify, SoundCloud link, or drop local files..."
+            placeholder="Paste a media or Facebook post link, or drop local files..."
             className="field min-w-0 flex-1 px-3.5 py-3 text-sm placeholder:text-zinc-700"
           />
           <button type="button" onClick={() => void paste()} className="subtle-button flex items-center gap-2 px-3 text-xs">
@@ -1156,20 +1289,26 @@ export function ConverterView({
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                disabled={running || (queue.length > 0 && queueRunning)}
+                disabled={running || facebookCaptureBusy || socialCaptureBusy || (queue.length > 0 && queueRunning)}
                 onClick={() => void convert()}
                 className="primary-button flex h-9.5 flex-1 items-center justify-center gap-2 px-4 text-xs font-semibold shadow-sm transition-all disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <Play className="size-3.5 fill-current" />
-                {running
+                {socialCaptureBusy
+                  ? `Finding ${socialPlatform === "instagram" ? "Instagram" : "X"} photos...`
+                  : facebookCaptureBusy
+                  ? "Finding Facebook photos..."
+                  : running
                   ? "Conversion running"
                   : queue.length > 0
                   ? `Convert queue (${queue.filter((q) => q.status === "queued").length} remaining)`
+                  : facebookPostLink || socialPlatform
+                  ? "Download all photos"
                   : "Convert media"}
               </button>
-              {running && (
-                <button type="button" onClick={() => void onCancel()} className="danger-button flex h-9.5 items-center gap-1.5 px-3 text-xs">
-                  <Square className="size-3" /> Abort
+              {(running || facebookCaptureBusy || socialCaptureBusy) && (
+                <button type="button" onClick={() => facebookCaptureBusy ? void cancelFacebookCapture() : socialCaptureBusy ? void cancelSocialPhotoCapture() : void onCancel()} className="danger-button flex h-9.5 items-center gap-1.5 px-3 text-xs">
+                  <Square className="size-3" /> {facebookCaptureBusy || socialCaptureBusy ? "Cancel" : "Abort"}
                 </button>
               )}
             </div>

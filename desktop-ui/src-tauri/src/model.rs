@@ -35,6 +35,47 @@ pub struct ConversionRequest {
     pub playlist_indexes: Option<String>,
     pub browser_session: Option<String>,
     pub browser_capture_path: Option<String>,
+    pub facebook_capture_id: Option<String>,
+    pub social_capture_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FacebookPhoto {
+    pub id: String,
+    pub url: String,
+    pub width: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FacebookPhotoManifest {
+    pub title: String,
+    pub photos: Vec<FacebookPhoto>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SocialPhotoManifest {
+    pub platform: String,
+    pub title: String,
+    pub photos: Vec<FacebookPhoto>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FacebookCaptureResult {
+    pub capture_id: String,
+    pub title: String,
+    pub photo_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SocialCaptureResult {
+    pub capture_id: String,
+    pub title: String,
+    pub photo_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -50,6 +91,26 @@ pub struct RuntimeInfo {
     pub gpu_available: bool,
     pub gpu_label: String,
     pub packaged: bool,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HardwareSnapshot {
+    pub cpu_name: String,
+    pub logical_cores: usize,
+    pub cpu_system_pct: f64,
+    pub cpu_app_pct: f64,
+    pub ram_system_pct: f64,
+    pub ram_used_gb: f64,
+    pub ram_total_gb: f64,
+    pub ram_app_mb: f64,
+    pub gpu_system_pct: f64,
+    pub gpu_vram_used_mb: u64,
+    pub gpu_vram_total_mb: u64,
+    pub gpu_app_vram_mb: u64,
+    pub gpu_temp_c: Option<u32>,
+    pub gpu_name: String,
+    pub telemetry_source: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

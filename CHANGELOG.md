@@ -5,6 +5,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [2.2.5] - 2026-09-27 - Social Photo Capture and Hardware Pipeline
+
+### Added
+- Added local capture of every photo exposed to logged-out visitors in public Facebook multi-photo posts and Instagram/X posts, with grouped exports and safeguards against incomplete or sign-in-gated captures.
+- Added the Hardware & Pipeline screen with live CPU, memory, and supported NVIDIA GPU telemetry plus conversion-stage progress.
+- Added All, Audios, Videos, Images, and Metadata filters to the converted library.
+- Added a JaneConverter market and competitive audit with a product roadmap.
+
+### Changed
+- Social photo downloads now honor the selected image output format and quality instead of always keeping the downloaded WebP format.
+- Preserved international characters in downloaded album and post names, and made console output safe for unusual Unicode characters.
+- Updated the README with the public Facebook, Instagram, and X/Twitter photo capture workflow and its logged-out access limits.
+
+### Fixed
+- Prevented files dropped back into the library from being treated as a new library root; the root can only be changed with the library controls.
+- Kept files draggable out to other apps while requiring a double-click to open a file from the library.
+
 ## [2.2.3] - 2026-09-25 - Preset Selection and UI Improvements
 
 ### Added

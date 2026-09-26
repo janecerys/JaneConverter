@@ -66,6 +66,11 @@ def sanitize_filename(name: str, max_length: int = 100) -> str:
     """Cleans illegal Windows filesystem characters, control characters, and reserved device names."""
     if not name:
         return "media_file"
+    name = "".join(
+        character for character in name if not 0xD800 <= ord(character) <= 0xDFFF
+    )
+    if not name:
+        return "media_file"
     cleaned = re.sub(r'[\\/*?:"<>|]', '_', name)
     cleaned = re.sub(r'[\x00-\x1f\x7f]', '', cleaned)
     cleaned = re.sub(r'\s+', ' ', cleaned).strip()
@@ -75,6 +80,7 @@ def sanitize_filename(name: str, max_length: int = 100) -> str:
     if len(cleaned) > max_length:
         cleaned = cleaned[:max_length].rstrip(" .")
     return cleaned or "media_file"
+
 
 def identify_source_type(url_or_path: str) -> str:
     """Identifies the media source platform or local file status."""

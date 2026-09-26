@@ -1,13 +1,14 @@
-import { Activity, FileAudio, FolderOpen, Inbox, PanelLeftClose, PanelLeftOpen, Settings2, TerminalSquare } from "lucide-react";
+import { Activity, Cpu, FileAudio, FolderOpen, Inbox, PanelLeftClose, PanelLeftOpen, Settings2, TerminalSquare } from "lucide-react";
 import { motion } from "framer-motion";
 import { useState } from "react";
 
-export type ViewKey = "converter" | "fetched" | "library" | "console" | "settings";
+export type ViewKey = "converter" | "fetched" | "library" | "hardware" | "console" | "settings";
 
 const items: Array<{ key: ViewKey; label: string; icon: typeof FileAudio }> = [
   { key: "converter", label: "Converter", icon: FileAudio },
   { key: "fetched", label: "Fetched media.", icon: Inbox },
   { key: "library", label: "Converted library", icon: FolderOpen },
+  { key: "hardware", label: "Hardware & Pipeline", icon: Cpu },
   { key: "console", label: "Console", icon: TerminalSquare },
   { key: "settings", label: "Settings", icon: Settings2 },
 ];

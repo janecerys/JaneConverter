@@ -17,6 +17,24 @@ export interface RuntimeInfo {
   packaged: boolean;
 }
 
+export interface HardwareSnapshot {
+  cpuName: string;
+  logicalCores: number;
+  cpuSystemPct: number;
+  cpuAppPct: number;
+  ramSystemPct: number;
+  ramUsedGb: number;
+  ramTotalGb: number;
+  ramAppMb: number;
+  gpuSystemPct: number;
+  gpuVramUsedMb: number;
+  gpuVramTotalMb: number;
+  gpuAppVramMb: number;
+  gpuTempC: number | null;
+  gpuName: string;
+  telemetrySource: string;
+}
+
 export interface ConverterSettings {
   outputDir: string;
   fetchedDir: string;
@@ -62,6 +80,20 @@ export interface ConversionRequest extends Omit<ConverterSettings, "fetchedDir">
   playlistIndexes?: string;
   browserSession?: string;
   browserCapturePath?: string;
+  facebookCaptureId?: string;
+  socialCaptureId?: string;
+}
+
+export interface FacebookCaptureResult {
+  captureId: string;
+  title: string;
+  photoCount: number;
+}
+
+export interface SocialCaptureResult {
+  captureId: string;
+  title: string;
+  photoCount: number;
 }
 
 export interface ConverterEvent {
@@ -122,6 +154,7 @@ export interface LibraryEntry {
 
 export interface JaneBridge {
   runtimeInfo(): Promise<RuntimeInfo>;
+  hardwareSnapshot(): Promise<HardwareSnapshot>;
   settingsGet(): Promise<ConverterSettings>;
   settingsSave(settings: ConverterSettings): Promise<void>;
   setDataRoot(path: string): Promise<string>;
@@ -132,10 +165,15 @@ export interface JaneBridge {
   openFile(path: string): Promise<void>;
   openUrl(url: string): Promise<void>;
   startConversion(request: ConversionRequest): Promise<string>;
+  captureFacebookAlbum(source: string, captureId: string): Promise<FacebookCaptureResult>;
+  cancelFacebookAlbum(captureId: string): Promise<void>;
+  captureSocialPostPhotos(source: string, captureId: string): Promise<SocialCaptureResult>;
+  cancelSocialPostPhotos(captureId: string): Promise<void>;
   cancelConversion(jobId: string): Promise<void>;
   loadPlaylist(source: string): Promise<PlaylistCatalog>;
   subscribe(listener: (event: ConverterEvent) => void): Promise<UnlistenFn>;
   scanLibrary(path: string): Promise<LibraryEntry[]>;
+  isConvertedLibraryPath(path: string): Promise<boolean>;
   recentConversions(path: string, limit: number): Promise<LibraryEntry[]>;
   dragLibraryFile(path: string): Promise<void>;
   getThumbnail(root: string, path: string): Promise<string | null>;
@@ -173,6 +211,9 @@ const demoBridge: JaneBridge = {
   async runtimeInfo() {
     return { mode: "browser", pythonReady: false, ffmpegReady: false, ffmpegPath: "", pythonPath: "", dataRoot: "Project-local", projectRoot: "Project-local", gpuAvailable: false, gpuLabel: "Preview mode", packaged: false };
   },
+  async hardwareSnapshot() {
+    return { cpuName: "Preview mode", logicalCores: 0, cpuSystemPct: 0, cpuAppPct: 0, ramSystemPct: 0, ramUsedGb: 0, ramTotalGb: 0, ramAppMb: 0, gpuSystemPct: 0, gpuVramUsedMb: 0, gpuVramTotalMb: 0, gpuAppVramMb: 0, gpuTempC: null, gpuName: "Unavailable in browser preview", telemetrySource: "Unavailable" };
+  },
   async settingsGet() { return { ...demoSettings }; },
   async settingsSave() {},
   async setDataRoot(path) { return path; },
@@ -183,10 +224,15 @@ const demoBridge: JaneBridge = {
   async openFile() {},
   async openUrl() {},
   async startConversion() { return "preview-job"; },
+  async captureFacebookAlbum() { throw new Error("Facebook album capture is available in the JaneConverter desktop app."); },
+  async cancelFacebookAlbum() {},
+  async captureSocialPostPhotos() { return { captureId: "", title: "", photoCount: 0 }; },
+  async cancelSocialPostPhotos() {},
   async cancelConversion() {},
   async loadPlaylist() { return { title: "Preview playlist", items: [] }; },
   async subscribe() { return () => {}; },
   async scanLibrary() { return []; },
+  async isConvertedLibraryPath() { return false; },
   async recentConversions() { return []; },
   async dragLibraryFile() { throw new Error("Drag files into other apps from the desktop build."); },
   async getThumbnail() { return null; },
@@ -209,6 +255,7 @@ const isTauriRuntime = () => "__TAURI_INTERNALS__" in window;
 
 const tauriBridge: JaneBridge = {
   runtimeInfo: () => invoke<RuntimeInfo>("runtime_info"),
+  hardwareSnapshot: () => invoke<HardwareSnapshot>("hardware_snapshot"),
   settingsGet: () => invoke<ConverterSettings>("settings_get"),
   settingsSave: (settings) => invoke<void>("settings_save", { settings }),
   setDataRoot: (path) => invoke<string>("set_data_root_path", { path }),
@@ -219,10 +266,15 @@ const tauriBridge: JaneBridge = {
   openFile: (path) => invoke<void>("open_file", { path }),
   openUrl: (url) => invoke<void>("open_url", { url }),
   startConversion: (request) => invoke<string>("start_conversion", { request }),
+  captureFacebookAlbum: (source, captureId) => invoke<FacebookCaptureResult>("capture_facebook_album", { source, captureId }),
+  cancelFacebookAlbum: (captureId) => invoke<void>("cancel_facebook_album", { captureId }),
+  captureSocialPostPhotos: (source, captureId) => invoke<SocialCaptureResult>("capture_social_post_photos", { source, captureId }),
+  cancelSocialPostPhotos: (captureId) => invoke<void>("cancel_social_post_photos", { captureId }),
   cancelConversion: (jobId) => invoke<void>("cancel_conversion", { jobId }),
   loadPlaylist: (source) => invoke<PlaylistCatalog>("load_playlist", { source }),
   subscribe: (listener) => listen<ConverterEvent>("converter-event", (event) => listener(event.payload)),
   scanLibrary: (path) => invoke<LibraryEntry[]>("scan_library", { path }),
+  isConvertedLibraryPath: (path) => invoke<boolean>("is_converted_library_path", { path }),
   recentConversions: (path, limit) => invoke<LibraryEntry[]>("recent_conversions", { path, limit }),
   dragLibraryFile: (path) => invoke<void>("drag_library_file", { path }),
   getThumbnail: (root, path) => invoke<string | null>("get_thumbnail", { root, path }),

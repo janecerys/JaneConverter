@@ -5,6 +5,7 @@ import {
   Copy,
   ExternalLink,
   FileAudio,
+  FileText,
   Folder,
   FolderInput,
   FolderOpen,
@@ -50,13 +51,47 @@ function joinPath(parent: string, name: string) {
 }
 
 type LibrarySection = "explorer" | "recent";
+type MediaFilter = "all" | "audio" | "video" | "image" | "metadata";
 type PreviewSetter = (update: (current: Record<string, string>) => Record<string, string>) => void;
+
+const MEDIA_FILTERS: Array<{ id: MediaFilter; label: string }> = [
+  { id: "all", label: "All" },
+  { id: "audio", label: "Audios" },
+  { id: "video", label: "Videos" },
+  { id: "image", label: "Images" },
+  { id: "metadata", label: "Metadata" },
+];
+
+const AUDIO_EXTENSIONS = new Set(["mp3", "flac", "wav", "aac", "m4a", "ogg"]);
+const VIDEO_EXTENSIONS = new Set(["mp4", "mkv", "webm", "mov"]);
+const IMAGE_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp", "gif"]);
+
+function isMetadataEntry(entry: LibraryEntry) {
+  return entry.path.split(/[\\/]+/).some((part) => part.toLowerCase() === "metadata");
+}
+
+function matchesMediaFilter(entry: LibraryEntry, filter: MediaFilter) {
+  if (filter === "all" || entry.isDirectory) return true;
+  const extension = entry.extension.toLowerCase();
+  const inMetadataFolder = isMetadataEntry(entry);
+  if (filter === "metadata") return inMetadataFolder;
+  if (inMetadataFolder) return false;
+  if (filter === "audio") return AUDIO_EXTENSIONS.has(extension);
+  if (filter === "video") return VIDEO_EXTENSIONS.has(extension);
+  return IMAGE_EXTENSIONS.has(extension);
+}
 
 type PendingAction =
   | { kind: "move"; destination: string }
   | { kind: "delete"; entry: LibraryEntry };
 
 function mediaIcon(entry: LibraryEntry) {
+  if (isMetadataEntry(entry)) {
+    return <FileText size={17} />;
+  }
+  if (entry.extension === "JPG" || entry.extension === "JPEG" || entry.extension === "PNG" || entry.extension === "WEBP") {
+    return <ImageIcon size={17} />;
+  }
   if (entry.extension === "MP4" || entry.extension === "MKV" || entry.extension === "WEBM" || entry.extension === "MOV" || entry.extension === "GIF") {
     return <Video size={17} />;
   }
@@ -79,6 +114,7 @@ export function LibraryView({
   const [recentEntries, setRecentEntries] = useState<LibraryEntry[]>([]);
   const [recentPreviews, setRecentPreviews] = useState<Record<string, string>>({});
   const [section, setSection] = useState<LibrarySection>("explorer");
+  const [mediaFilter, setMediaFilter] = useState<MediaFilter>("all");
   const [loading, setLoading] = useState(false);
   const [recentLoading, setRecentLoading] = useState(false);
   const [moving, setMoving] = useState(false);
@@ -87,6 +123,8 @@ export function LibraryView({
   const refreshSequence = useRef(0);
   const recentRefreshSequence = useRef(0);
   const cancelConfirmRef = useRef<HTMLButtonElement>(null);
+  const libraryDragActive = useRef(false);
+  const suppressClickUntil = useRef(0);
 
   useEffect(() => {
     if (!contextMenu) return;
@@ -223,9 +261,26 @@ export function LibraryView({
     if (entry.isDirectory) return;
     event.preventDefault();
     event.stopPropagation();
-    void bridge.dragLibraryFile(entry.path).catch((error) => {
-      onStatus(error instanceof Error ? error.message : String(error));
-    });
+    libraryDragActive.current = true;
+    void bridge.dragLibraryFile(entry.path)
+      .catch((error) => {
+        onStatus(error instanceof Error ? error.message : String(error));
+      })
+      .finally(() => {
+        libraryDragActive.current = false;
+        suppressClickUntil.current = Date.now() + 400;
+      });
+  }
+
+  function rejectLibraryDrop(event: React.DragEvent) {
+    event.preventDefault();
+    event.stopPropagation();
+  }
+
+  function preventClickAfterDragOut(event: React.MouseEvent) {
+    if (!libraryDragActive.current && Date.now() > suppressClickUntil.current) return;
+    event.preventDefault();
+    event.stopPropagation();
   }
 
   async function moveLibrary() {
@@ -302,7 +357,9 @@ export function LibraryView({
 
   const confirmation = pendingActionCopy();
   const atRoot = pathKey(currentPath) === pathKey(root);
-  const visibleEntries = section === "recent" ? recentEntries : entries;
+  const visibleEntries = section === "recent"
+    ? recentEntries
+    : entries.filter((entry) => matchesMediaFilter(entry, mediaFilter));
   const visiblePreviews = section === "recent" ? recentPreviews : previews;
   const activeLoading = section === "recent" ? recentLoading : loading;
 
@@ -316,7 +373,11 @@ export function LibraryView({
   }
 
   return (
-    <div className="mx-auto max-w-[1180px] space-y-5 pb-10">
+    <div
+      className="mx-auto max-w-[1180px] space-y-5 pb-10"
+      onClickCapture={preventClickAfterDragOut}
+      onDropCapture={rejectLibraryDrop}
+    >
       <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <div className="mono-label">Project library</div>
@@ -342,6 +403,21 @@ export function LibraryView({
               Recents
             </button>
           </div>
+          {section === "explorer" && (
+            <div className="mt-2 inline-flex flex-wrap rounded-xl border border-white/[0.08] bg-white/[0.025] p-1" role="group" aria-label="Filter library by media type">
+              {MEDIA_FILTERS.map((filter) => (
+                <button
+                  key={filter.id}
+                  type="button"
+                  aria-pressed={mediaFilter === filter.id}
+                  onClick={() => setMediaFilter(filter.id)}
+                  className={"rounded-lg px-3 py-2 text-xs transition-colors " + (mediaFilter === filter.id ? "bg-white/[0.09] text-white" : "text-zinc-500 hover:text-zinc-300")}
+                >
+                  {filter.label}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
         <button type="button" onClick={() => void (section === "recent" ? refreshRecent() : refresh())} className="subtle-button flex items-center gap-2 px-3 py-2 text-xs">
           <RefreshCw className={"size-3.5 " + (activeLoading ? "animate-spin" : "")} /> Refresh
@@ -380,18 +456,19 @@ export function LibraryView({
       </section>
 
       <section className="space-y-2">
-        {!visibleEntries.length && <div className="panel py-14 text-center text-sm text-zinc-600">{activeLoading ? "Scanning converted media..." : section === "recent" ? "No recent conversions found in this library." : "No converted media found in this folder."}</div>}
+        {!visibleEntries.length && <div className="panel py-14 text-center text-sm text-zinc-600">{activeLoading ? "Scanning converted media..." : section === "recent" ? "No recent conversions found in this library." : mediaFilter === "all" ? "No converted media found in this folder." : `No ${MEDIA_FILTERS.find((filter) => filter.id === mediaFilter)?.label.toLowerCase()} found in this folder.`}</div>}
         {visibleEntries.slice(0, 500).map((entry) => {
           const preview = visiblePreviews[entry.path];
+          const metadata = isMetadataEntry(entry);
           const details = entry.isDirectory
             ? entry.mediaCount + " media item" + (entry.mediaCount === 1 ? "" : "s") + " - " + size(entry.totalBytes)
             : entry.extension + " - " + size(entry.totalBytes);
           return (
             <motion.div
               key={entry.path}
-              draggable={!entry.isDirectory}
-              onDragStartCapture={(event) => dragFile(event, entry)}
-              title={entry.isDirectory ? undefined : "Drag this file into another app"}
+              draggable={!entry.isDirectory && !metadata}
+              onDragStartCapture={metadata ? undefined : (event) => dragFile(event, entry)}
+              title={entry.isDirectory || metadata ? undefined : "Drag this file into another app"}
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               whileHover={{ scale: 1.002 }}
@@ -399,12 +476,14 @@ export function LibraryView({
               onClick={() => {
                 if (entry.isDirectory) {
                   navigate(entry.path);
-                } else {
-                  void openFile(entry.path);
                 }
               }}
+              onDoubleClick={(event) => {
+                if (entry.isDirectory || (event.target instanceof Element && event.target.closest("button"))) return;
+                void openFile(entry.path);
+              }}
               onContextMenu={(e) => handleContextMenu(e, entry)}
-              className={`panel group relative flex flex-wrap items-center gap-3 px-4 py-3 select-none transition-all duration-150 hover:border-pink-500/30 hover:bg-white/[0.04] active:bg-white/[0.06] ${entry.isDirectory ? "cursor-pointer" : "cursor-grab active:cursor-grabbing"}`}
+              className={`panel group relative flex flex-wrap items-center gap-3 px-4 py-3 select-none transition-all duration-150 hover:border-pink-500/30 hover:bg-white/[0.04] active:bg-white/[0.06] ${entry.isDirectory ? "cursor-pointer" : "cursor-default"}`}
             >
               <div className="grid size-12 shrink-0 place-items-center overflow-hidden rounded-xl border border-white/[0.07] bg-black/15 text-zinc-500">
                 {preview ? (

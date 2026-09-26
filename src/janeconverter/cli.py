@@ -14,17 +14,21 @@ import argparse
 import time
 from typing import Optional, Dict, Any, Callable
 
-if sys.stdout is not None and hasattr(sys.stdout, "encoding") and sys.stdout.encoding != "utf-8":
+for _stream in (sys.stdin, sys.stdout, sys.stderr):
+    if _stream is None or not hasattr(_stream, "reconfigure"):
+        continue
     try:
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
-    except Exception:
+        if _stream is sys.stdin:
+            _stream.reconfigure(encoding="utf-8")
+        else:
+            _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):
         pass
 
 from .extractor import (
     is_url, sanitize_filename, fetch_media_stream,
     is_playlist_url, fetch_playlist_entries, download_and_convert_thumbnail, format_duration,
-    identify_source_type
+    identify_source_type,
 )
 from .converter import (
     convert_media,
@@ -37,6 +41,9 @@ from .updater import check_for_engine_updates, check_for_repo_updates, download_
 from .version import __version__
 from .paths import DEFAULT_CONVERTED_DIR, DEFAULT_TEMP_DIR
 from .auth import normalize_browser_session
+from .facebook_capture import download_facebook_photo_manifest
+from .social_photo_capture import download_social_photo_manifest
+from .hardware_snapshot import get_hardware_snapshot
 
 MIN_FREE_DISK_BYTES = 256 * 1024 * 1024  # keep a reasonable minimum without rejecting small conversions
 
@@ -68,6 +75,7 @@ def media_library_folder(
         "soundcloud": "SoundCloud",
         "tiktok": "TikTok",
         "twitter": "Twitter",
+        "instagram": "Instagram",
         "facebook": "Facebook",
         "reddit": "Reddit",
         "twitch": "Twitch",
@@ -213,6 +221,8 @@ def process_conversion(
     content_category: Optional[str] = None,
     auth_browser: Optional[str] = None,
     browser_media_path: Optional[str] = None,
+    facebook_photo_manifest: Optional[Dict[str, Any]] = None,
+    social_photo_manifest: Optional[Dict[str, Any]] = None,
 ) -> str:
     """
     Orchestrates downloading/extracting stream, embedding cover art, exporting credits,
@@ -260,6 +270,42 @@ def process_conversion(
         target_format in ("source", "original") and str(content_category or "").lower() in ("audio", "music")
     )
     is_image_target = target_format in SUPPORTED_IMAGE_FORMATS
+
+    if facebook_photo_manifest is not None:
+        photo_format = target_format if is_image_target else None
+        photo_folder = media_library_folder(output_dir, photo_format or "source", "facebook", "Images")
+        album = download_facebook_photo_manifest(
+            facebook_photo_manifest,
+            photo_folder,
+            progress_callback=report,
+            abort_event=abort_event,
+            target_format=photo_format,
+            quality=bitrate if photo_format else "best",
+        )
+        report(1.0, f"Downloaded all {album['photo_count']} public Facebook photos.")
+        print("\n" + "=" * 60)
+        print(f"DONE! Exported: {album['folder_path']}")
+        print("=" * 60)
+        return album["folder_path"]
+
+    if social_photo_manifest is not None:
+        platform = social_photo_manifest.get("platform")
+        source_type = platform if platform in ("instagram", "twitter") else "other"
+        photo_format = target_format if is_image_target else None
+        photo_folder = media_library_folder(output_dir, photo_format or "source", source_type, "Images")
+        album = download_social_photo_manifest(
+            social_photo_manifest,
+            photo_folder,
+            progress_callback=report,
+            abort_event=abort_event,
+            target_format=photo_format,
+            quality=bitrate if photo_format else "best",
+        )
+        report(1.0, f"Downloaded all {album['photo_count']} {platform} photos.")
+        print("\n" + "=" * 60)
+        print(f"DONE! Exported: {album['folder_path']}")
+        print("=" * 60)
+        return album["folder_path"]
 
     job_id = uuid.uuid4().hex[:8]
     work_dir = os.path.join(DEFAULT_TEMP_DIR, f"job_{job_id}")
@@ -825,15 +871,41 @@ def main():
         help="Use an existing logged-in browser session for authorized content; no password or cookie file is stored.",
     )
     parser.add_argument("--browser-media-path", help=argparse.SUPPRESS)
+    parser.add_argument("--facebook-photo-manifest-stdin", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--social-photo-manifest-stdin", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--no-update", action="store_true", help="Skip the read-only yt-dlp update availability check on startup")
     parser.add_argument("--check-updates", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--download-update", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--update-url", help=argparse.SUPPRESS)
     parser.add_argument("--update-checksum-url", help=argparse.SUPPRESS)
     parser.add_argument("--update-version", help=argparse.SUPPRESS)
+    parser.add_argument("--hardware-snapshot-json", action="store_true", help=argparse.SUPPRESS)
+    parser.add_argument("--hardware-target-pid", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--version", action="version", version=f"JaneConverter {__version__}")
 
     args = parser.parse_args()
+    if args.hardware_snapshot_json:
+        if not args.hardware_target_pid or args.hardware_target_pid < 1:
+            parser.error("A valid target process is required for hardware telemetry.")
+        print(json.dumps(get_hardware_snapshot(args.hardware_target_pid)))
+        return
+
+    facebook_photo_manifest = None
+    social_photo_manifest = None
+    if args.facebook_photo_manifest_stdin:
+        if args.playlist or args.list_playlist:
+            parser.error("Facebook photo manifests cannot be combined with playlist mode.")
+        try:
+            facebook_photo_manifest = json.load(sys.stdin)
+        except (json.JSONDecodeError, OSError) as error:
+            parser.error(f"Could not read the Facebook photo manifest: {error}")
+    if args.social_photo_manifest_stdin:
+        if args.playlist or args.list_playlist or facebook_photo_manifest is not None:
+            parser.error("Social photo manifests cannot be combined with playlist mode or Facebook photo manifests.")
+        try:
+            social_photo_manifest = json.load(sys.stdin)
+        except (json.JSONDecodeError, OSError) as error:
+            parser.error(f"Could not read the social photo manifest: {error}")
     if args.check_updates:
         print(json.dumps({
             "engine": check_for_engine_updates(),
@@ -935,6 +1007,8 @@ def main():
             content_category=args.category,
             auth_browser=args.browser_session,
             browser_media_path=args.browser_media_path,
+            facebook_photo_manifest=facebook_photo_manifest,
+            social_photo_manifest=social_photo_manifest,
         )
 
 if __name__ == "__main__":

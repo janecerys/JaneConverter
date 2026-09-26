@@ -1,0 +1,186 @@
+"""Download public photo URLs collected from isolated Instagram/X guest pages."""
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import tempfile
+import urllib.parse
+from typing import Any, Callable, Optional
+
+import requests
+from PIL import Image
+
+from .extractor import sanitize_filename
+from .image_format import convert_image_format
+
+
+MAX_PHOTOS = 500
+MAX_IMAGE_BYTES = 100 * 1024 * 1024
+MAX_ALBUM_BYTES = 2 * 1024 * 1024 * 1024
+IMAGE_EXTENSIONS = {
+    "image/jpeg": ".jpg",
+    "image/png": ".png",
+    "image/webp": ".webp",
+}
+REDIRECT_STATUSES = {301, 302, 303, 307, 308}
+MAX_REDIRECTS = 5
+MEDIA_HOSTS = {
+    "instagram": ("cdninstagram.com", "fbcdn.net", "fbsbx.com"),
+    "twitter": ("pbs.twimg.com",),
+}
+
+
+def _media_url(value: Any, platform: str) -> str:
+    if not isinstance(value, str) or len(value) > 16_384:
+        raise ValueError(f"{platform} returned an invalid photo link.")
+    parsed = urllib.parse.urlsplit(value)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    allowed = MEDIA_HOSTS.get(platform, ())
+    if (
+        parsed.scheme != "https"
+        or parsed.username
+        or parsed.password
+        or not any(host == suffix or host.endswith("." + suffix) for suffix in allowed)
+    ):
+        raise ValueError(f"{platform} returned a photo link outside its public media CDN.")
+    return value
+
+
+def _get_photo(session: requests.Session, url: str, platform: str) -> requests.Response:
+    current_url = url
+    for redirect_count in range(MAX_REDIRECTS + 1):
+        response = session.get(
+            current_url,
+            headers={"Referer": f"https://www.{platform}.com/"},
+            stream=True,
+            timeout=(10, 35),
+            allow_redirects=False,
+        )
+        if response.status_code not in REDIRECT_STATUSES:
+            return response
+        location = response.headers.get("Location")
+        response.close()
+        if not location or redirect_count == MAX_REDIRECTS:
+            raise RuntimeError(f"{platform} returned too many or invalid photo redirects.")
+        try:
+            current_url = _media_url(urllib.parse.urljoin(current_url, location), platform)
+        except ValueError as error:
+            raise RuntimeError(f"{platform} redirected a photo outside its public media CDN.") from error
+    raise RuntimeError(f"{platform} returned too many photo redirects.")
+
+
+def download_social_photo_manifest(
+    manifest: Any,
+    output_dir: str,
+    progress_callback: Optional[Callable[[float, str], None]] = None,
+    abort_event: Optional[Any] = None,
+    target_format: Optional[str] = None,
+    quality: str = "best",
+) -> dict[str, Any]:
+    """Save every unique public photo in an Instagram or X browser manifest."""
+    if not isinstance(manifest, dict):
+        raise ValueError("The public photo list is missing or invalid.")
+    platform_key = manifest.get("platform")
+    if platform_key not in MEDIA_HOSTS:
+        raise ValueError("The public photo list has an unsupported platform.")
+    platform = "Instagram" if platform_key == "instagram" else "X/Twitter"
+    raw_photos = manifest.get("photos")
+    if not isinstance(raw_photos, list) or not raw_photos:
+        raise RuntimeError(f"No {platform} photos were available to download.")
+    if len(raw_photos) > MAX_PHOTOS:
+        raise RuntimeError(f"This {platform} post exposes more than {MAX_PHOTOS} photos; nothing was downloaded.")
+
+    photos: dict[str, dict[str, Any]] = {}
+    for item in raw_photos:
+        if not isinstance(item, dict):
+            raise ValueError(f"{platform} returned an invalid photo entry.")
+        photo_id = item.get("id")
+        if not isinstance(photo_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", photo_id):
+            raise ValueError(f"{platform} returned an invalid photo identifier.")
+        photo = {
+            "url": _media_url(item.get("url"), platform_key),
+            "width": max(0, min(int(item.get("width", 0)), 20_000)),
+        }
+        existing = photos.get(photo_id)
+        if existing is None or photo["width"] > existing["width"]:
+            photos[photo_id] = photo
+    if not photos:
+        raise RuntimeError(f"No {platform} photos were available to download.")
+
+    raw_title = manifest.get("title")
+    title = sanitize_filename(raw_title if isinstance(raw_title, str) else "")
+    if title == "media_file":
+        title = f"{platform} Post"
+    parent = os.path.abspath(output_dir)
+    os.makedirs(parent, exist_ok=True)
+    target_dir = os.path.join(parent, title)
+    suffix = 2
+    while os.path.lexists(target_dir):
+        target_dir = os.path.join(parent, f"{title} ({suffix})")
+        suffix += 1
+
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+        ),
+        "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
+    })
+    staging_dir = tempfile.mkdtemp(prefix=f".{platform_key}-photos-", dir=parent)
+    total_bytes = 0
+
+    def report(progress: float, message: str) -> None:
+        if progress_callback:
+            progress_callback(progress, message)
+
+    try:
+        for index, photo in enumerate(photos.values(), start=1):
+            if abort_event and abort_event.is_set():
+                raise KeyboardInterrupt(f"{platform} photo download aborted by user.")
+            report(0.05 + 0.9 * ((index - 1) / len(photos)), f"Downloading {platform} photo {index} of {len(photos)}...")
+            with _get_photo(session, photo["url"], platform_key) as response:
+                response.raise_for_status()
+                _media_url(response.url, platform_key)
+                content_type = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
+                extension = IMAGE_EXTENSIONS.get(content_type)
+                if not extension:
+                    raise RuntimeError(f"{platform} returned an unsupported image type for photo {index}.")
+                length = response.headers.get("Content-Length")
+                if length and int(length) > MAX_IMAGE_BYTES:
+                    raise RuntimeError(f"{platform} photo {index} is larger than the 100 MB per-image limit.")
+                image_path = os.path.join(staging_dir, f"{title}_{index:03d}{extension}")
+                image_bytes = 0
+                with open(image_path, "wb") as image_file:
+                    for chunk in response.iter_content(chunk_size=256 * 1024):
+                        if not chunk:
+                            continue
+                        image_bytes += len(chunk)
+                        total_bytes += len(chunk)
+                        if image_bytes > MAX_IMAGE_BYTES:
+                            raise RuntimeError(f"{platform} photo {index} is larger than the 100 MB per-image limit.")
+                        if total_bytes > MAX_ALBUM_BYTES:
+                            raise RuntimeError(f"The {platform} post exceeds the 2 GB total download limit.")
+                        image_file.write(chunk)
+                with Image.open(image_path) as image:
+                    image.verify()
+                convert_image_format(image_path, target_format, quality)
+        os.replace(staging_dir, target_dir)
+    except requests.RequestException as error:
+        raise RuntimeError(f"Could not download a {platform} photo. The post may have changed or the link may have expired.") from error
+    except (OSError, ValueError) as error:
+        raise RuntimeError(f"Could not save or validate one of the {platform} photos.") from error
+    finally:
+        session.close()
+        if os.path.isdir(staging_dir):
+            shutil.rmtree(staging_dir, ignore_errors=True)
+
+    report(1.0, f"Saved all {len(photos)} {platform} photos.")
+    return {
+        "title": title,
+        "folder_path": os.path.abspath(target_dir),
+        "photo_count": len(photos),
+        "total_bytes": total_bytes,
+    }

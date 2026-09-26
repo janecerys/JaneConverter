@@ -214,4 +214,96 @@ describe("Converted library", () => {
     await act(async () => { root.unmount(); });
     container.remove();
   });
+
+  it("filters library files by audio, video, image, and metadata type", async () => {
+    fakeBridge.scanLibrary.mockResolvedValue([
+      {
+        path: "D:\\JaneConverter\\converted\\Albums",
+        name: "Albums",
+        isDirectory: true,
+        isPlaylist: false,
+        mediaCount: 3,
+        totalBytes: 3072,
+        extension: "",
+      },
+      {
+        path: "D:\\JaneConverter\\converted\\song.mp3",
+        name: "song.mp3",
+        isDirectory: false,
+        isPlaylist: false,
+        mediaCount: 1,
+        totalBytes: 1024,
+        extension: "MP3",
+      },
+      {
+        path: "D:\\JaneConverter\\converted\\clip.mp4",
+        name: "clip.mp4",
+        isDirectory: false,
+        isPlaylist: false,
+        mediaCount: 1,
+        totalBytes: 1024,
+        extension: "MP4",
+      },
+      {
+        path: "D:\\JaneConverter\\converted\\photo.jpg",
+        name: "photo.jpg",
+        isDirectory: false,
+        isPlaylist: false,
+        mediaCount: 1,
+        totalBytes: 1024,
+        extension: "JPG",
+      },
+      {
+        path: "D:\\JaneConverter\\converted\\Albums\\metadata\\manifest.json",
+        name: "manifest.json",
+        isDirectory: false,
+        isPlaylist: false,
+        mediaCount: 1,
+        totalBytes: 100,
+        extension: "JSON",
+      },
+    ]);
+    const container = document.createElement("div");
+    document.body.appendChild(container);
+    const root = createRoot(container);
+
+    await act(async () => {
+      root.render(<LibraryView settings={settings} onSettings={vi.fn()} onStatus={vi.fn()} />);
+    });
+    const selectFilter = async (label: string) => {
+      await act(async () => {
+        Array.from(container.querySelectorAll("button")).find((button) => button.textContent?.trim() === label)?.click();
+        await Promise.resolve();
+      });
+    };
+
+    expect(container.querySelector('[aria-label="Open song.mp3"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Open clip.mp4"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Open photo.jpg"]')).not.toBeNull();
+
+    await selectFilter("Images");
+    expect(container.querySelector('[aria-label="Open photo.jpg"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Open song.mp3"]')).toBeNull();
+    expect(container.querySelector('[aria-label="Open clip.mp4"]')).toBeNull();
+
+    await selectFilter("Audios");
+    expect(container.querySelector('[aria-label="Open song.mp3"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Open photo.jpg"]')).toBeNull();
+
+    await selectFilter("Videos");
+    expect(container.querySelector('[aria-label="Open clip.mp4"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Open song.mp3"]')).toBeNull();
+
+    await selectFilter("Metadata");
+    expect(container.querySelector('[aria-label="Open manifest.json"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Open photo.jpg"]')).toBeNull();
+
+    await selectFilter("All");
+    expect(container.querySelector('[aria-label="Open song.mp3"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Open clip.mp4"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Open photo.jpg"]')).not.toBeNull();
+
+    await act(async () => { root.unmount(); });
+    container.remove();
+  });
 });

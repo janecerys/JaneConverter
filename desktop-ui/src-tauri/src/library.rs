@@ -29,6 +29,18 @@ fn image_extension(path: &Path) -> bool {
     )
 }
 
+fn library_file_extension(path: &Path) -> bool {
+    media_extension(path) || image_extension(path)
+}
+
+fn is_metadata_path(path: &Path) -> bool {
+    path.ancestors().any(|ancestor| {
+        ancestor
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().eq_ignore_ascii_case("metadata"))
+    })
+}
+
 fn directory_summary(path: &Path) -> (usize, u64) {
     let mut count = 0;
     let mut bytes = 0;
@@ -44,7 +56,7 @@ fn directory_summary(path: &Path) -> (usize, u64) {
             let (nested_count, nested_bytes) = directory_summary(&child);
             count += nested_count;
             bytes += nested_bytes;
-        } else if kind.is_file() && media_extension(&child) {
+        } else if kind.is_file() && library_file_extension(&child) && !is_metadata_path(&child) {
             count += 1;
             bytes += entry
                 .metadata()
@@ -101,7 +113,7 @@ pub fn scan(path: &str) -> Result<Vec<LibraryEntry>, String> {
                 total_bytes: bytes,
                 extension: String::new(),
             });
-        } else if kind.is_file() && media_extension(&child) {
+        } else if kind.is_file() && (is_metadata_path(&child) || library_file_extension(&child)) {
             result.push(media_file_entry(
                 &child,
                 entry
@@ -139,7 +151,7 @@ fn collect_recent(
         }
         if kind.is_dir() {
             collect_recent(&child, depth + 1, result)?;
-        } else if kind.is_file() && media_extension(&child) {
+        } else if kind.is_file() && library_file_extension(&child) && !is_metadata_path(&child) {
             let metadata = entry.metadata().map_err(|error| error.to_string())?;
             let modified = metadata.modified().unwrap_or(UNIX_EPOCH);
             result.push((modified, media_file_entry(&child, metadata.len())));
@@ -187,6 +199,13 @@ fn canonical_library_item(root: &str, path: &str) -> Result<(PathBuf, PathBuf), 
         );
     }
     Ok((root, target))
+}
+
+pub fn is_library_path(root: &Path, candidate: &Path) -> bool {
+    let (Ok(root), Ok(candidate)) = (fs::canonicalize(root), fs::canonicalize(candidate)) else {
+        return false;
+    };
+    candidate == root || candidate.starts_with(root)
 }
 
 pub fn draggable_media_file(root: &str, path: &str) -> Result<PathBuf, String> {
@@ -428,13 +447,61 @@ mod tests {
     }
 
     #[test]
-    fn preview_sources_include_covers_without_listing_them_as_media() {
+    fn preview_and_library_sources_accept_images() {
         assert!(image_extension(Path::new("cover.jpg")));
         assert!(!media_extension(Path::new("cover.jpg")));
+        assert!(library_file_extension(Path::new("photo.jpeg")));
+        assert!(library_file_extension(Path::new("photo.webp")));
     }
 
     #[test]
-    fn recent_returns_nested_media_and_ignores_non_media_files() {
+    fn scan_lists_downloaded_images_and_counts_them_in_album_folders() {
+        let root = std::env::temp_dir().join(format!("janec-images-{}", crate::paths::now_stamp()));
+        let album = root.join("Images").join("Facebook").join("Public album");
+        fs::create_dir_all(&album).expect("create Facebook album folder");
+        fs::write(album.join("photo_001.jpg"), b"first photo").expect("write first photo");
+        fs::write(album.join("photo_002.webp"), b"second photo").expect("write second photo");
+        let metadata = album.join("metadata");
+        fs::create_dir_all(&metadata).expect("create metadata folder");
+        fs::write(metadata.join("manifest.json"), b"{}").expect("write album metadata");
+        fs::write(metadata.join("credits.txt"), b"credits").expect("write photo credits");
+
+        let entries = scan(album.to_str().expect("album path")).expect("scan album photos");
+        assert_eq!(entries.len(), 3);
+        assert!(entries.iter().any(|entry| entry.extension == "JPG"));
+        assert!(entries.iter().any(|entry| entry.extension == "WEBP"));
+        assert!(entries
+            .iter()
+            .any(|entry| entry.is_directory && entry.name == "metadata"));
+
+        let metadata_entries =
+            scan(metadata.to_str().expect("metadata path")).expect("scan album metadata");
+        assert_eq!(metadata_entries.len(), 2);
+        assert!(metadata_entries
+            .iter()
+            .any(|entry| entry.name == "manifest.json"));
+        assert!(metadata_entries
+            .iter()
+            .any(|entry| entry.name == "credits.txt"));
+
+        let parent_entries = scan(
+            album
+                .parent()
+                .expect("Facebook parent")
+                .to_str()
+                .expect("parent path"),
+        )
+        .expect("scan Facebook folder");
+        assert_eq!(parent_entries[0].media_count, 2);
+        assert_eq!(
+            parent_entries[0].total_bytes,
+            b"first photosecond photo".len() as u64
+        );
+        fs::remove_dir_all(root).expect("clean Facebook album test folder");
+    }
+
+    #[test]
+    fn recent_returns_nested_media_and_images_and_ignores_non_media_files() {
         let root = std::env::temp_dir().join(format!("janec-recent-{}", crate::paths::now_stamp()));
         let nested = root.join("Videos").join("Facebook");
         fs::create_dir_all(&nested).expect("create recent test folders");
@@ -445,10 +512,10 @@ mod tests {
         let entries =
             recent(root.to_str().expect("recent test path"), 10).expect("scan recent media");
 
-        assert_eq!(entries.len(), 2);
+        assert_eq!(entries.len(), 3);
         assert!(entries.iter().any(|entry| entry.name == "first.mp4"));
         assert!(entries.iter().any(|entry| entry.name == "second.mp3"));
-        assert!(entries.iter().all(|entry| entry.extension != "JPG"));
+        assert!(entries.iter().any(|entry| entry.name == "cover.jpg"));
         fs::remove_dir_all(root).expect("clean recent test folders");
     }
 }

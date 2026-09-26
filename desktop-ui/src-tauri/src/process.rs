@@ -1,6 +1,9 @@
-use crate::model::{ConversionRequest, ConverterEvent, PlaylistCatalog, PlaylistItem};
+use crate::model::{
+    ConversionRequest, ConverterEvent, FacebookPhotoManifest, PlaylistCatalog, PlaylistItem,
+    SocialPhotoManifest,
+};
 use crate::paths::{find_python, packaged_engine, prepare_command, project_root};
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -91,6 +94,7 @@ pub fn build_conversion_args_with_capture(
     request: &ConversionRequest,
     browser: Option<String>,
     browser_media_path: Option<PathBuf>,
+    has_facebook_manifest: bool,
 ) -> Result<Vec<String>, String> {
     if request.source.trim().is_empty() && browser_media_path.is_none() {
         return Err("Paste a media URL or choose a local file first.".into());
@@ -154,6 +158,12 @@ pub fn build_conversion_args_with_capture(
         }
         args.extend(["--browser-media-path".into(), path.display().to_string()]);
     }
+    if has_facebook_manifest {
+        args.push("--facebook-photo-manifest-stdin".into());
+    }
+    if request.social_capture_id.is_some() {
+        args.push("--social-photo-manifest-stdin".into());
+    }
     if let Some(indexes) = &request.playlist_indexes {
         if !indexes.trim().is_empty() {
             args.extend([
@@ -198,10 +208,29 @@ pub fn start_conversion(
     request: ConversionRequest,
     browser: Option<String>,
     browser_media_path: Option<PathBuf>,
+    facebook_manifest: Option<FacebookPhotoManifest>,
+    social_manifest: Option<SocialPhotoManifest>,
     slots: ConversionSlots,
     output: impl FnOnce(i32, bool) + Send + 'static,
 ) -> Result<(), String> {
-    let args = build_conversion_args_with_capture(&request, browser, browser_media_path)?;
+    let has_facebook_manifest = facebook_manifest.is_some();
+    let manifest_json = if let Some(manifest) = social_manifest.as_ref() {
+        Some(serde_json::to_vec(manifest))
+            .transpose()
+            .map_err(|error| format!("Could not prepare the social photo list: {error}"))?
+    } else {
+        facebook_manifest
+            .as_ref()
+            .map(serde_json::to_vec)
+            .transpose()
+            .map_err(|error| format!("Could not prepare the Facebook photo list: {error}"))?
+    };
+    let args = build_conversion_args_with_capture(
+        &request,
+        browser,
+        browser_media_path,
+        has_facebook_manifest,
+    )?;
     std::fs::create_dir_all(&request.output_dir)
         .map_err(|error| format!("Could not use the export folder: {error}"))?;
     let mut command = Command::new(find_python());
@@ -209,13 +238,28 @@ pub fn start_conversion(
         .args(&args)
         .current_dir(project_root())
         .env("PYTHONUNBUFFERED", "1")
-        .stdin(Stdio::null())
+        .stdin(if manifest_json.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     prepare_command(&mut command);
     let mut child = command
         .spawn()
         .map_err(|error| format!("Could not start the Python engine: {error}"))?;
+    if let Some(manifest_json) = manifest_json {
+        let mut input = child.stdin.take().ok_or_else(|| {
+            "The Python engine did not accept the captured photo list.".to_string()
+        })?;
+        if let Err(error) = input.write_all(&manifest_json) {
+            terminate_child(&mut child);
+            return Err(format!(
+                "Could not pass the captured photo list to the local engine: {error}"
+            ));
+        }
+    }
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     let child = Arc::new(Mutex::new(child));
@@ -400,8 +444,10 @@ mod tests {
             playlist_indexes: None,
             browser_session: Some("Chrome".into()),
             browser_capture_path: None,
+            facebook_capture_id: None,
+            social_capture_id: None,
         };
-        let args = build_conversion_args_with_capture(&request, None, None)
+        let args = build_conversion_args_with_capture(&request, None, None, false)
             .expect("display labels should be accepted");
         let flag = args
             .iter()
@@ -433,10 +479,13 @@ mod tests {
             playlist_indexes: None,
             browser_session: None,
             browser_capture_path: None,
+            facebook_capture_id: None,
+            social_capture_id: None,
         };
 
-        let args = build_conversion_args_with_capture(&request, None, Some(capture_path.clone()))
-            .expect("a valid browser capture should satisfy source validation");
+        let args =
+            build_conversion_args_with_capture(&request, None, Some(capture_path.clone()), false)
+                .expect("a valid browser capture should satisfy source validation");
         let flag = args
             .iter()
             .position(|value| value == "--browser-media-path")
@@ -463,8 +512,10 @@ mod tests {
             playlist_indexes: None,
             browser_session: None,
             browser_capture_path: None,
+            facebook_capture_id: None,
+            social_capture_id: None,
         };
-        let args = build_conversion_args_with_capture(&request, None, None)
+        let args = build_conversion_args_with_capture(&request, None, None, false)
             .expect("public conversion should be valid");
         assert!(!args.iter().any(|value| value == "--browser-session"));
     }

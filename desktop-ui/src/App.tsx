@@ -5,6 +5,7 @@ import { Sidebar, type ViewKey } from "./components/Sidebar";
 import { ConverterView } from "./components/ConverterView";
 import { LibraryView } from "./components/LibraryView";
 import { ConsoleView } from "./components/ConsoleView";
+import { HardwarePipelineView } from "./components/HardwarePipelineView";
 import { SettingsView } from "./components/SettingsView";
 import { FetchedMediaView } from "./components/FetchedMediaView";
 
@@ -191,12 +192,12 @@ export default function App() {
     void bridge.settingsSave(next).catch((error) => statusMessage(error instanceof Error ? error.message : String(error)));
   }
 
-  async function start(source: string, playlistIndexes?: string) {
+  async function start(source: string, playlistIndexes?: string, facebookCaptureId?: string, socialCaptureId?: string) {
     try {
       const normalizedSource = source.trim();
       const accessSource = access.source?.trim() || "";
       const browserSession = accessSource && normalizedSource && accessSource === normalizedSource ? access.browser || undefined : undefined;
-      const nextJob = await bridge.startConversion({ ...settings, source, playlistIndexes, browserSession, browserCapturePath: !normalizedSource ? selectedCapture?.path : undefined });
+      const nextJob = await bridge.startConversion({ ...settings, source, playlistIndexes, browserSession, browserCapturePath: !normalizedSource ? selectedCapture?.path : undefined, facebookCaptureId, socialCaptureId });
       activeJobRef.current = nextJob;
       setJobId(nextJob);
       setProgress(.02);
@@ -248,6 +249,8 @@ export default function App() {
       ? <FetchedMediaView access={access} settings={settings} onSettings={updateSettings} onSelect={(item) => { setSelectedCapture(item); setActiveView("converter"); statusMessage(item.name + " selected and ready to convert."); }} onDiscard={(item) => { if (selectedCapture?.path === item.path) setSelectedCapture(null); }} onStatus={statusMessage} />
       : activeView === "library"
       ? <LibraryView settings={settings} onSettings={updateSettings} onStatus={statusMessage} />
+      : activeView === "hardware"
+        ? <HardwarePipelineView runtime={runtime} settings={settings} active={Boolean(jobId)} progress={progress} progressMessage={status} />
       : activeView === "console"
         ? <ConsoleView events={events} onClear={() => setEvents([])} onStatus={statusMessage} />
         : (

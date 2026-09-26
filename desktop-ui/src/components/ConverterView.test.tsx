@@ -11,6 +11,9 @@ const bridge = vi.hoisted(() => ({
   chooseFolder: vi.fn(),
   openPath: vi.fn(),
   openUrl: vi.fn(),
+  isConvertedLibraryPath: vi.fn().mockResolvedValue(false),
+  captureFacebookAlbum: vi.fn(),
+  cancelFacebookAlbum: vi.fn(),
 }));
 
 vi.mock("../bridge", () => ({ bridge }));
@@ -195,6 +198,37 @@ describe("Converter account access feedback", () => {
     });
 
     expect(onStart).toHaveBeenCalledWith("", undefined);
+
+    await act(async () => { view.root.unmount(); });
+    view.container.remove();
+  });
+
+  it("captures a public Facebook album before starting its local download", async () => {
+    const source = "https://www.facebook.com/share/p/1EpX6FjAuC/";
+    const onStart = vi.fn().mockResolvedValue(undefined);
+    bridge.captureFacebookAlbum.mockReset();
+    bridge.captureFacebookAlbum.mockResolvedValue({
+      captureId: "12345678-1234-1234-1234-123456789abc",
+      title: "Public album",
+      photoCount: 9,
+    });
+    const view = renderView(undefined, undefined, onStart);
+    const input = view.container.querySelector('input[aria-label="Source media URL or local path"]') as HTMLInputElement;
+
+    await act(async () => {
+      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+      setter?.call(input, source);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    const button = Array.from(view.container.querySelectorAll("button")).find((item) => item.textContent === "Download all photos");
+
+    await act(async () => {
+      button?.click();
+      await Promise.resolve();
+    });
+
+    expect(bridge.captureFacebookAlbum).toHaveBeenCalledWith(source, expect.any(String));
+    expect(onStart).toHaveBeenCalledWith(source, undefined, "12345678-1234-1234-1234-123456789abc");
 
     await act(async () => { view.root.unmount(); });
     view.container.remove();

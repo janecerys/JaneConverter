@@ -176,6 +176,11 @@ def test_sanitize_filename_allows_normal_titles():
     assert sanitize_filename("My Song - 2026") == "My Song - 2026"
 
 
+def test_sanitize_filename_preserves_cjk_and_emoji_but_removes_unpaired_surrogates():
+    title = "\u8c22\u695a\u73b2\udc8d \U0001f4f7"
+    assert sanitize_filename(title) == "\u8c22\u695a\u73b2 \U0001f4f7"
+
+
 # ---------------------------------------------------------------------------
 # CLI argument validation
 # ---------------------------------------------------------------------------
